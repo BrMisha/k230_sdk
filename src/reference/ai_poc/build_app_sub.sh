@@ -227,6 +227,14 @@ for subdir in $(ls -d */); do
             cp -a ../../big/kmodel/ai_poc/images/bus.jpg ${k230_bin}/$subdir_name            
             cp -a shell/ob_detect_*.sh ${k230_bin}/$subdir_name
       fi
+      
+      if [ "$subdir_name" = "driver_assistant_detector" ]; then
+            cp out/bin/driver_assistant_detector.elf ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/kmodel/tl_yolov8n_320.kmodel ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/kmodel/tl_yolov8n_640.kmodel ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/images/traffic_light.jpg ${k230_bin}/$subdir_name
+            #cp -a shell/tl_detect_*.sh ${k230_bin}/$subdir_name
+      fi      
 
       if [ "$subdir_name" = "person_detect" ]; then
             cp out/bin/person_detect.elf ${k230_bin}/$subdir_name
