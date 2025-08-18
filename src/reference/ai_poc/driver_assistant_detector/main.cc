@@ -161,32 +161,10 @@ void video_proc_sahi(char *argv[])
             cv::imwrite("object_det.jpg", ori_img);
         }
 
-        cv::Mat osd_frame(osd_height, osd_width, CV_8UC4, cv::Scalar(0, 0, 0, 0));
-
-        #if defined(STUDIO_HDMI)
-        {
-            ScopedTiming st("osd draw", atoi(argv[5]));
-            Utils::draw_detections(osd_frame, results, {osd_frame.cols, osd_frame.rows}, {SENSOR_WIDTH, SENSOR_HEIGHT});
-        }
-        #else
-        {
-            ScopedTiming st("osd draw", 1);
-            cv::rotate(osd_frame, osd_frame, cv::ROTATE_90_COUNTERCLOCKWISE);
-            Utils::draw_detections(osd_frame, results, {osd_frame.cols, osd_frame.rows}, {SENSOR_WIDTH, SENSOR_HEIGHT});
-            cv::rotate(osd_frame, osd_frame, cv::ROTATE_90_CLOCKWISE);
-        }
-        #endif
-
-        {
-            ScopedTiming st("osd copy", 1);
-            memcpy(pic_vaddr, osd_frame.data, osd_width * osd_height * 4);
-            //显示通道插入帧
-            kd_mpi_vo_chn_insert_frame(osd_id+3, &vf_info);  //K_VO_OSD0
-
-            ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
-            if (ret) {
-                printf("sample_vicap...kd_mpi_vicap_dump_release failed.\n");
-            }
+        // Release the VICAP frame buffer
+        ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
+        if (ret) {
+            printf("sample_vicap...kd_mpi_vicap_dump_release failed.\n");
         }
     }
 
