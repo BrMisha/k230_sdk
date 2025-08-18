@@ -79,6 +79,8 @@ void video_proc_sahi(char *argv[])
         std::abort();
     }
 
+    const int MAX_SIZE = atoi(argv[7]);
+
     // Create standard OBDet and SAHI (without physical memory addresses)
     OBDet obDet(argv[1], atof(argv[2]), atof(argv[3]), atoi(argv[5]));
     SAHI sahi(&obDet, cv::Size(320, 320), atof(argv[6]));
@@ -90,7 +92,7 @@ void video_proc_sahi(char *argv[])
         ScopedTiming st("total time", 1);
 
         {
-            ScopedTiming st("read capture", atoi(argv[5]));
+            ScopedTiming st("read capture", 1); //0.006741 ms
             // VICAP_CHN_ID_1 out rgb888p
             memset(&dump_info, 0 , sizeof(k_video_frame_info));
             ret = kd_mpi_vicap_dump_frame(vicap_dev, VICAP_CHN_ID_1, VICAP_DUMP_YUV, &dump_info, 1000);
@@ -102,7 +104,7 @@ void video_proc_sahi(char *argv[])
             
 
         {
-            ScopedTiming st("isp copy", atoi(argv[5]));
+            ScopedTiming st("isp copy", 1); //1.65852 ms
             // 从vivcap中读取一帧图像到dump_info
             auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
             memcpy(vaddr, (void *)vbvaddr, SENSOR_HEIGHT * SENSOR_WIDTH * 3);  // 这里以后可以去掉，不用copy
@@ -113,7 +115,7 @@ void video_proc_sahi(char *argv[])
         int matsize = SENSOR_WIDTH * SENSOR_HEIGHT;
         cv::Mat ori_img;
         {
-            ScopedTiming st("convert to cv::Mat", atoi(argv[5]));
+            ScopedTiming st("convert to cv::Mat", 1); //1.60641 ms
             cv::Mat ori_img_R = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, vaddr);
             cv::Mat ori_img_G = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, vaddr + 1 * matsize);
             cv::Mat ori_img_B = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, vaddr + 2 * matsize);
@@ -126,6 +128,18 @@ void video_proc_sahi(char *argv[])
 
         // Use SAHI for detection
         {
+            if (ori_img.cols > MAX_SIZE) {
+                float scale = static_cast<float>(MAX_SIZE) / ori_img.cols;
+                int new_width = MAX_SIZE;
+                int new_height = static_cast<int>(ori_img.rows * scale);
+                cv::resize(ori_img, ori_img, cv::Size(new_width, new_height));
+                ori_img.cols = new_width;
+                ori_img.rows = new_height;
+                std::cout << "Resized image to: " << ori_img.cols << "x" << ori_img.rows << std::endl;
+
+                cv::imwrite("scaled.jpg", ori_img);
+            }
+
             //ScopedTiming st("SAHI detection", atoi(argv[5]));
             auto st = std::make_unique<ScopedTiming>("SAHI detection", 1);
             results.clear();
@@ -156,7 +170,7 @@ void video_proc_sahi(char *argv[])
         }
         #else
         {
-            ScopedTiming st("osd draw", atoi(argv[5]));
+            ScopedTiming st("osd draw", 1);
             cv::rotate(osd_frame, osd_frame, cv::ROTATE_90_COUNTERCLOCKWISE);
             Utils::draw_detections(osd_frame, results, {osd_frame.cols, osd_frame.rows}, {SENSOR_WIDTH, SENSOR_HEIGHT});
             cv::rotate(osd_frame, osd_frame, cv::ROTATE_90_CLOCKWISE);
@@ -164,7 +178,7 @@ void video_proc_sahi(char *argv[])
         #endif
 
         {
-            ScopedTiming st("osd copy", atoi(argv[5]));
+            ScopedTiming st("osd copy", 1);
             memcpy(pic_vaddr, osd_frame.data, osd_width * osd_height * 4);
             //显示通道插入帧
             kd_mpi_vo_chn_insert_frame(osd_id+3, &vf_info);  //K_VO_OSD0

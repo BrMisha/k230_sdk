@@ -60,26 +60,31 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
     int overlap_height = static_cast<int>(slice_size.height * overlap_ratio_);
     int stride_x = slice_size.width - overlap_width;
     int stride_y = slice_size.height - overlap_height;
-    
+
+    auto duration_sum = std::chrono::steady_clock::duration::zero();
     
     // Process slices immediately without storing them
     int slice_counter = 1;
     for (int y = 0; y < image.rows; y += stride_y) {
         for (int x = 0; x < image.cols; x += stride_x) {
-            // Calculate slice boundaries
+            // Calculate slice boundaries and scale factors upfront
             int x_end = std::min(x + slice_size.width, image.cols);
             int y_end = std::min(y + slice_size.height, image.rows);
             
-            cv::Rect region(x, y, x_end - x, y_end - y);
-            cv::Mat slice = image(region);  // No .clone() - direct reference
-
-            float scale_x = 1.0f;
-            float scale_y = 1.0f;
+            // Calculate original region size
+            int original_width = x_end - x;
+            int original_height = y_end - y;
             
-            // Handle edge slices (resize if needed)
+            // Calculate scale factors
+            float scale_x = static_cast<float>(original_width) / slice_size.width;
+            float scale_y = static_cast<float>(original_height) / slice_size.height;
+            
+            // Create region that will be extracted at the exact slice_size
+            cv::Rect region(x, y, original_width, original_height);
+            cv::Mat slice = image(region);
+            
+            // Only resize if the slice is not already the correct size
             if (slice.cols != slice_size.width || slice.rows != slice_size.height) {
-                scale_x = static_cast<float>(slice.cols) / slice_size.width;
-                scale_y = static_cast<float>(slice.rows) / slice_size.height;
                 cv::resize(slice, slice, slice_size);
             }
             
@@ -87,13 +92,16 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
              /*std::string slice_filename = "slides/" + std::to_string(slice_counter) + ".jpg";
              cv::imwrite(slice_filename, slice);
              slice_counter++;*/
-            
+
+            auto m_start = std::chrono::steady_clock::now();
             // DETECT IMMEDIATELY using OBDet workflow - no storage needed
             detector_->pre_process(slice);
             detector_->inference();
             
             std::vector<Detection> slice_results;
             detector_->post_process({static_cast<size_t>(slice_size.width), static_cast<size_t>(slice_size.height)}, slice_results);
+            auto duration = std::chrono::steady_clock::now() - m_start;
+            duration_sum += duration;
             
             // Transform coordinates to original image space
             for (auto& det : slice_results) {
@@ -109,6 +117,10 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
             // slice goes out of scope here - memory automatically freed
         }
     }
+    
+    // Print total detection timing
+    auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration_sum).count();
+    std::cout << "Total SAHI detection time: " << total_ms << " ms" << std::endl;
     
     // Merge overlapping detections
     auto merged_results = merge_detections(all_detections);
