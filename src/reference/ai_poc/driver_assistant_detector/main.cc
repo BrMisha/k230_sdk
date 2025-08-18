@@ -27,6 +27,7 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <memory>
 #include "utils.h"
 #include "vi_vo.h"
 #include "ob_det.h"
@@ -125,9 +126,12 @@ void video_proc_sahi(char *argv[])
 
         // Use SAHI for detection
         {
-            ScopedTiming st("SAHI detection", atoi(argv[5]));
+            //ScopedTiming st("SAHI detection", atoi(argv[5]));
+            auto st = std::make_unique<ScopedTiming>("SAHI detection", 1);
             results.clear();
             results = sahi.detect(ori_img);
+            st.reset();
+
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto& det = results[i];
