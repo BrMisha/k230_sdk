@@ -43,12 +43,12 @@ void print_usage(const char *name)
 {
     cout << "Usage: " << name << "<kmodel_det> <score_thres> <nms_thres> <input_mode> <debug_mode> <overlap_ratio>" << endl
          << "Options:" << endl
-         << "  kmodel_det      多目标检测 kmodel路径\n"
-         << "  score_thres     多目标检测 分数阈值\n"
-         << "  nms_thres       多目标检测 非极大值抑制阈值\n"
-         << "  input_mode      本地图片(图片路径)/ 摄像头(None) \n"
-         << "  debug_mode      是否需要调试，0、1、2分别表示不调试、简单调试、详细调试\n"
-         << "  overlap_ratio   SAHI重叠比率 (0.0-0.5, 例如: 0.2)\n"
+         << "  kmodel_det      Multi-object detection kmodel path\n"
+         << "  score_thres     Multi-object detection score threshold\n"
+         << "  nms_thres       Multi-object detection non-maximum suppression threshold\n"
+         << "  input_mode      Local image (image path) / Camera (None)\n"
+         << "  debug_mode      Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
+         << "  overlap_ratio   SAHI overlap ratio (0.0-0.5, e.g.: 0.2)\n"
          << "\n"
          << endl;
 }
@@ -56,7 +56,7 @@ void print_usage(const char *name)
 void video_proc_sahi(char *argv[])
 {
     vivcap_start();
-
+/*
     k_video_frame_info vf_info;
     void *pic_vaddr = NULL;       //osd
 
@@ -66,7 +66,7 @@ void video_proc_sahi(char *argv[])
     vf_info.v_frame.height = osd_height;
     vf_info.v_frame.stride[0] = osd_width;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    block = vo_insert_frame(&vf_info, &pic_vaddr);
+    block = vo_insert_frame(&vf_info, &pic_vaddr);*/
 
     // alloc memory
     size_t paddr = 0;
@@ -101,15 +101,16 @@ void video_proc_sahi(char *argv[])
                 continue;
             }
         }
-            
 
         {
             ScopedTiming st("isp copy", 1); //1.65852 ms
-            // 从vivcap中读取一帧图像到dump_info
+            // Read one frame from vivcap to dump_info
             auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
-            memcpy(vaddr, (void *)vbvaddr, SENSOR_HEIGHT * SENSOR_WIDTH * 3);  // 这里以后可以去掉，不用copy
+            memcpy(vaddr, (void *)vbvaddr, size);  // This copy can be removed in the future
             kd_mpi_sys_munmap(vbvaddr, size);
         }
+
+
 
         // Convert planar RGB buffer to cv::Mat
         int matsize = SENSOR_WIDTH * SENSOR_HEIGHT;
@@ -168,7 +169,7 @@ void video_proc_sahi(char *argv[])
         }
     }
 
-    vo_osd_release_block();
+    //vo_osd_release_block();
     vivcap_stop();
 
 
