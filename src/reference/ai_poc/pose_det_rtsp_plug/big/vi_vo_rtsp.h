@@ -80,17 +80,21 @@
 #define osd_width                           (480)
 #define osd_height                          (800)
 #elif defined(CONFIG_BOARD_K230_CANMV_01STUDIO)
-#define SENSOR_CHANNEL (3)     
-#define SENSOR_HEIGHT (720)  
-#define SENSOR_WIDTH (1280)    
-#define ISP_CHN0_WIDTH  (800)
-#define ISP_CHN0_HEIGHT (480)
+#define SENSOR_CHANNEL (3)
+#define SENSOR_HEIGHT (720)
+#define SENSOR_WIDTH (1280)
+//#define SENSOR_HEIGHT (1080)
+//#define SENSOR_WIDTH (1920)
+#define ISP_CHN0_WIDTH  (1920)
+#define ISP_CHN0_HEIGHT (1080)
 #define ISP_INPUT_WIDTH (1920)
 #define ISP_INPUT_HEIGHT (1080)
 #define vicap_install_osd                   (1)
 #define osd_id                              K_VO_OSD3
-#define osd_width                           (480)
-#define osd_height                          (800)
+//#define osd_width                           (480)
+//#define osd_height                          (800)
+#define osd_width                           SENSOR_WIDTH
+#define osd_height                          SENSOR_HEIGHT
 #else
 #define SENSOR_CHANNEL (3)     // isp通道数
 #define SENSOR_HEIGHT (1280)  // isp高度，ai输入，竖屏
@@ -424,7 +428,7 @@ int vivcap_start()
     sensor_type = OV_OV5647_MIPI_CSI2_1920X1080_30FPS_10BIT_LINEAR_V2;
     kd_mpi_vicap_set_mclk(VICAP_MCLK0, VICAP_PLL0_CLK_DIV4, 16, 1);
 #elif defined(CONFIG_BOARD_K230_CANMV_01STUDIO)
-    sensor_type = OV_OV5647_MIPI_CSI2_1920X1080_30FPS_10BIT_LINEAR_V2;
+    sensor_type = GC2093_MIPI_CSI2_1920X1080_30FPS_10BIT_LINEAR;
     kd_mpi_vicap_set_mclk(VICAP_MCLK0, VICAP_PLL0_CLK_DIV4, 16, 1);
 #elif defined(CONFIG_BOARD_K230D_CANMV)
     sensor_type = OV_OV5647_MIPI_1920X1080_30FPS_10BIT_LINEAR;
@@ -520,7 +524,7 @@ int vivcap_start()
     chn_attr.buffer_num = VICAP_MAX_FRAME_COUNT;//at least 3 buffers for isp
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((ISP_CHN0_WIDTH * ISP_CHN0_HEIGHT * 3 / 2), 0x1000);
-    // ！！！！！！！！===============  这里是编码的时候为了 4k对齐设置的 12; 0x1000);=============== ！！！！！！！！！
+    // ！！！！！！！！===============This is set to 4K alignment for encoding, 12; 0x1000);=============== ！！！！！！！！！
     chn_attr.alignment = 12;
     vicap_chn = VICAP_CHN_ID_0;
 
