@@ -95,11 +95,11 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
 
             auto m_start = std::chrono::steady_clock::now();
             // DETECT IMMEDIATELY using OBDet workflow - no storage needed
-            detector_->pre_process(slice);
+            detector_->pre_process(slice);!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             detector_->inference();
             
             std::vector<Detection> slice_results;
-            detector_->post_process({static_cast<size_t>(slice_size.width), static_cast<size_t>(slice_size.height)}, slice_results);
+            //detector_->post_process({static_cast<size_t>(slice_size.width), static_cast<size_t>(slice_size.height)}, slice_results);
             auto duration = std::chrono::steady_clock::now() - m_start;
             duration_sum += duration;
             
