@@ -568,7 +568,8 @@ void output_thread(char *argv[])
     
     std::vector<OutputPose> results;*/
 
-    OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, debug_mode);
+    OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
+    //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
     std::vector<Detection> results;
 
@@ -594,6 +595,7 @@ void output_thread(char *argv[])
     cv::Mat osd_frame3(osd_height, osd_width, CV_8UC1, cv::Scalar(0));
     std::vector<cv::Mat> channels_argb;
     cv::Mat osd_frame;
+    cv::Mat detector_frame;
     while (!isp_stop)
     {
         ScopedTiming st("total time", 1);
@@ -622,8 +624,6 @@ void output_thread(char *argv[])
         pd.inference();
         bool find_ = pd.post_process(results,params);*/
 
-
-
         {      
             ScopedTiming st("cv::merge", debug_mode);
             memcpy(osd_frame1.data, (void *)vaddr, SENSOR_HEIGHT * SENSOR_WIDTH);
@@ -634,12 +634,41 @@ void output_thread(char *argv[])
             channels_argb.push_back(osd_frame2);
             channels_argb.push_back(osd_frame3);
             cv::merge(channels_argb, osd_frame);
+            //cv::imwrite("osd_frame.jpg", bgr);
+
+            int matsize = SENSOR_WIDTH * SENSOR_HEIGHT;
+            cv::Mat ori_img_R = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr);
+            cv::Mat ori_img_G = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr + 1 * matsize);
+            cv::Mat ori_img_B = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr + 2 * matsize);
+            std::vector<cv::Mat> sensor_rgb;
+            sensor_rgb.push_back(ori_img_R);
+            sensor_rgb.push_back(ori_img_G);
+            sensor_rgb.push_back(ori_img_B);
+            cv::merge(sensor_rgb, detector_frame);
+        }
+
+        //cv::imwrite("osd_frame.jpg", osd_frame);
+        //cv::imwrite("detector_frame.jpg", detector_frame);
+
+        {
+            ScopedTiming st("Image resize", 1);
+
+            const int MAX_SIZE = 3000;
+            if (detector_frame.cols > MAX_SIZE) {
+                float scale = static_cast<float>(MAX_SIZE) / detector_frame.cols;
+                int new_width = MAX_SIZE;
+                int new_height = static_cast<int>(detector_frame.rows * scale);
+                cv::resize(detector_frame, detector_frame, cv::Size(new_width, new_height));
+                detector_frame.cols = new_width;
+                detector_frame.rows = new_height;
+                std::cout << "Resized image to: " << detector_frame.cols << "x" << detector_frame.rows << std::endl;
+            }
         }
 
         {
             ScopedTiming st("SAHI detection", 1);
             results.clear();
-            results = sahi.detect(osd_frame);
+            results = sahi.detect(detector_frame);
         }
 
         {
@@ -657,11 +686,14 @@ void output_thread(char *argv[])
             }
 
             Utils::draw_detections(osd_frame, results);
+            //cv::imwrite("object_det.jpg", osd_frame);
         }
 
         {
             ScopedTiming st("venc_send_frame", debug_mode);
             // Convert RGB image to ARGB image, send to encoder
+
+            //memcpy(pic_vaddr, osd_frame.data, osd_frame.cols * osd_frame.rows * osd_frame.channels());
             memcpy(pic_vaddr, osd_frame.data, osd_width * osd_height * 4);
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
