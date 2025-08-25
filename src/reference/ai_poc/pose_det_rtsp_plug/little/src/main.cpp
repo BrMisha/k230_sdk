@@ -222,6 +222,7 @@ void* read_send(void* arg)
             unsigned int len = ((unsigned int *)pBuf)[2];
             k_char *data = pBuf + sizeof(unsigned long) + sizeof(unsigned int);
 
+            printf("Timestamp: %lu, len: %d\n", pts, len);
             server->OnVEncData(0, (void *)data, (size_t)len, pts);
         }
     }
