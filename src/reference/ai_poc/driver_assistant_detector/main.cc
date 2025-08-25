@@ -692,8 +692,7 @@ void output_thread(char *argv[])
             ScopedTiming st("venc_send_frame", debug_mode);
             // Convert RGB image to ARGB image, send to encoder
 
-            //memcpy(pic_vaddr, osd_frame.data, osd_frame.cols * osd_frame.rows * osd_frame.channels());
-            memcpy(pic_vaddr, osd_frame.data, osd_width * osd_height * 4);
+            memcpy(pic_vaddr, osd_frame.data, osd_frame.cols * osd_frame.rows * osd_frame.channels());
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
             CHECK_RET(ret, __func__, __LINE__);
