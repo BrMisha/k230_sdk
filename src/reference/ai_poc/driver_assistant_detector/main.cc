@@ -571,7 +571,7 @@ void output_thread(char *argv[])
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
-    std::vector<Detection> results;
+    std::vector<DetectionNormalized> results;
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
     // Some initialization settings here, choose to use 1080P, ARGB8888 format data
@@ -619,8 +619,8 @@ void output_thread(char *argv[])
         }
 
         channels_argb.clear();
-        /*results.clear();
-        pd.pre_process();
+        results.clear();
+        /*pd.pre_process();
         pd.inference();
         bool find_ = pd.post_process(results,params);*/
 
@@ -634,16 +634,11 @@ void output_thread(char *argv[])
             channels_argb.push_back(osd_frame2);
             channels_argb.push_back(osd_frame3);
             cv::merge(channels_argb, osd_frame);
-            //cv::imwrite("osd_frame.jpg", bgr);
 
-            int matsize = SENSOR_WIDTH * SENSOR_HEIGHT;
-            cv::Mat ori_img_R = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr);
-            cv::Mat ori_img_G = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr + 1 * matsize);
-            cv::Mat ori_img_B = cv::Mat(SENSOR_HEIGHT, SENSOR_WIDTH, CV_8UC1, (uint8_t*)vaddr + 2 * matsize);
             std::vector<cv::Mat> sensor_rgb;
-            sensor_rgb.push_back(ori_img_R);
-            sensor_rgb.push_back(ori_img_G);
-            sensor_rgb.push_back(ori_img_B);
+            sensor_rgb.push_back(osd_frame1);
+            sensor_rgb.push_back(osd_frame2);
+            sensor_rgb.push_back(osd_frame3);
             cv::merge(sensor_rgb, detector_frame);
         }
 
@@ -653,7 +648,7 @@ void output_thread(char *argv[])
         {
             ScopedTiming st("Image resize", 1);
 
-            const int MAX_SIZE = 3000;
+            const int MAX_SIZE = 700;
             if (detector_frame.cols > MAX_SIZE) {
                 float scale = static_cast<float>(MAX_SIZE) / detector_frame.cols;
                 int new_width = MAX_SIZE;
@@ -667,8 +662,9 @@ void output_thread(char *argv[])
 
         {
             ScopedTiming st("SAHI detection", 1);
-            results.clear();
-            results = sahi.detect(detector_frame);
+            auto r = sahi.detect(detector_frame);
+            for (auto it = r.cbegin(); it != r.cend(); ++it)
+                results.push_back(it->normalize(detector_frame.rows, detector_frame.cols));
         }
 
         {
@@ -683,9 +679,12 @@ void output_thread(char *argv[])
                           << "box=[" << det.box.x << "," << det.box.y << ","
                           << det.box.width << "x" << det.box.height << "]"
                           << std::endl;
+
+                auto d = Detection::from_normalized(det, osd_frame.rows, osd_frame.cols);
+                Utils::draw_detection(osd_frame, d);
             }
 
-            Utils::draw_detections(osd_frame, results);
+            //Utils::draw_detections(osd_frame, results);
             //cv::imwrite("object_det.jpg", osd_frame);
         }
 

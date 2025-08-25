@@ -51,7 +51,7 @@ void Utils::dump_color_image(const char *file_name, const FrameSize &frame_size,
     cv::Mat image_r = cv::Mat(frame_size.height, frame_size.width, CV_8UC1, data);
     cv::Mat image_g = cv::Mat(frame_size.height, frame_size.width, CV_8UC1, data+frame_size.height*frame_size.width);
     cv::Mat image_b = cv::Mat(frame_size.height, frame_size.width, CV_8UC1, data+2*frame_size.height*frame_size.width);
-    
+
     std::vector<cv::Mat> color_vec(3);
     color_vec.clear();
     color_vec.push_back(image_b);
@@ -371,7 +371,7 @@ void Utils::affine(FrameCHWSize ori_shape, std::vector<uint8_t> &ori_data, float
     hrt::sync(ai2d_in_tensor, sync_op_t::sync_write_back, true).expect("write back input failed");
 
     // run ai2d
-    
+
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
     ai2d_crop_param_t crop_param{false, 0, 0, 0, 0};
     ai2d_shift_param_t shift_param{false, 0};
@@ -403,25 +403,29 @@ void Utils::affine(float *affine_matrix, std::unique_ptr<ai2d_builder> &builder,
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
-void Utils::draw_detections(cv::Mat& frame, vector<Detection>& results)
+void Utils::draw_detection(cv::Mat& frame, const Detection& detection)
+{
+    cv::Rect box = detection.box;
+    cv::Scalar color = color_three[detection.class_id];
+
+    // Detection box
+    cv::rectangle(frame, box, color, 2);
+
+    // Detection box text
+    std::string classString = detection.className + ' ' + std::to_string(detection.confidence).substr(0, 4);
+    cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
+    cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
+
+    cv::rectangle(frame, textBox, color, cv::FILLED);
+    cv::putText(frame, classString, cv::Point(box.x + 5, box.y - 10), cv::FONT_HERSHEY_DUPLEX, 1, cv::Scalar(0,0,0), 2, 0);
+}
+
+void Utils::draw_detections(cv::Mat& frame, const vector<Detection>& results)
 {
     for (int i = 0; i < results.size(); ++i)
     {
         Detection detection = results[i];
-
-        cv::Rect box = detection.box;
-        cv::Scalar color = color_three[detection.class_id];
-        
-        // Detection box
-        cv::rectangle(frame, box, color, 2);
-
-        // Detection box text
-        std::string classString = detection.className + ' ' + std::to_string(detection.confidence).substr(0, 4);
-        cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
-        cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
-
-        cv::rectangle(frame, textBox, color, cv::FILLED);
-        cv::putText(frame, classString, cv::Point(box.x + 5, box.y - 10), cv::FONT_HERSHEY_DUPLEX, 1, cv::Scalar(0,0,0), 2, 0);
+        draw_detection(frame, detection);
     }
 }
 
@@ -439,7 +443,7 @@ void Utils::draw_detections(cv::Mat& frame, vector<Detection>& results, FrameSiz
 
         cv::Rect box = cv::Rect(rect_x, rect_y, rect_w, rect_h);
         cv::Scalar color = color_four[detection.class_id];
-        
+
         // Detection box
         cv::rectangle(frame, box, color, 2);
 
@@ -458,4 +462,46 @@ void Utils::chw_rgb2bgr(const FrameSize &frame_size, unsigned char *data, std::v
     chw_bgr_vec.insert(chw_bgr_vec.end(), data+2*frame_size.height*frame_size.width, data+3*frame_size.height*frame_size.width);
     chw_bgr_vec.insert(chw_bgr_vec.end(), data+frame_size.height*frame_size.width, data+2*frame_size.height*frame_size.width);
     chw_bgr_vec.insert(chw_bgr_vec.end(), data, data+frame_size.height*frame_size.width);
+}
+
+DetectionNormalized Detection::normalize(int rows, int cols) const
+{
+    DetectionNormalized normalized;
+    normalized.class_id = this->class_id;
+    normalized.className = this->className;
+    normalized.confidence = this->confidence;
+    normalized.color = this->color;
+
+    float frame_width = static_cast<float>(cols);
+    float frame_height = static_cast<float>(rows);
+
+    normalized.box = cv::Rect2f(
+        static_cast<float>(this->box.x) / frame_width,
+        static_cast<float>(this->box.y) / frame_height,
+        static_cast<float>(this->box.width) / frame_width,
+        static_cast<float>(this->box.height) / frame_height
+    );
+
+    return normalized;
+}
+
+Detection Detection::from_normalized(const DetectionNormalized &n, int rows, int cols)
+{
+    Detection detection;
+    detection.class_id = n.class_id;
+    detection.className = n.className;
+    detection.confidence = n.confidence;
+    detection.color = n.color;
+
+    float frame_width = static_cast<float>(cols);
+    float frame_height = static_cast<float>(rows);
+
+    detection.box = cv::Rect(
+        static_cast<int>(n.box.x * frame_width),
+        static_cast<int>(n.box.y * frame_height),
+        static_cast<int>(n.box.width * frame_width),
+        static_cast<int>(n.box.height * frame_height)
+    );
+
+    return detection;
 }
