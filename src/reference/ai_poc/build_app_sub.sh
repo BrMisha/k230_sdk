@@ -56,15 +56,24 @@ for subdir in $(ls -d */); do
       
       if [ "$subdir_name" = "llamac" ] && { [ "$curr_pro" = "llamac" ] || [ "$curr_pro" = "all" ]; }; then
             /opt/toolchain/Xuantie-900-gcc-linux-5.10.4-glibc-x86_64-V2.6.0/bin/riscv64-unknown-linux-gnu-g++ -O3 llamac/llama_run.cc -o out/llama_run -lm
+      elif [ "$subdir_name" = "pose_det_rtsp_plug" ] && { [ "$curr_pro" = "pose_det_rtsp_plug" ] || [ "$curr_pro" = "all" ]; }; then
+            echo "******************$subdir_name 开始编译******************"
+            cd pose_det_rtsp_plug/little/
+            ./build.sh
+            cd ../../
+            echo "******************$subdir_name 编译完成******************"
+      elif [ "$subdir_name" = "driver_assistant_front" ] && { [ "$curr_pro" = "driver_assistant_front" ] || [ "$curr_pro" = "all" ]; }; then
+            echo "******************$subdir_name 开始编译******************"
+            cd driver_assistant_front/
+            ./build.sh
+            cd ../
+            echo "******************$subdir_name 编译完成******************"
+      elif [ "$subdir_name" = "translate_en_ch" ] && { [ "$curr_pro" = "translate_en_ch" ] || [ "$curr_pro" = "all" ]; }; then
+            echo "******************$subdir_name 开始编译******************"
+            cp -a ../../big/kmodel/ai_poc/utils/*.a ${k230_bin}
+            echo "******************$subdir_name 编译完成******************"
       elif { [ "$curr_pro" = "$subdir_name" ] || [ "$curr_pro" = "all" ]; }; then
             echo "******************$subdir_name 开始编译******************"
-            if [ "$subdir_name" = "pose_det_rtsp_plug" ]; then
-                  cd pose_det_rtsp_plug/little/
-                  ./build.sh
-                  cd ../../
-            elif [ "$subdir_name" = "translate_en_ch" ]; then
-                  cp -a ../../big/kmodel/ai_poc/utils/*.a ${k230_bin}
-            fi
             pushd out
             if [ "$is_01studio" -eq 1 ]; then
                   cmake -DCMAKE_BUILD_TYPE=Release                \
@@ -234,7 +243,15 @@ for subdir in $(ls -d */); do
             #cp -a ../../big/kmodel/ai_poc/kmodel/tl_yolov8n_640.kmodel ${k230_bin}/$subdir_name
             #cp -a ../../big/kmodel/ai_poc/images/traffic_light.jpg ${k230_bin}/$subdir_name
             #cp -a shell/tl_detect_*.sh ${k230_bin}/$subdir_name
-      fi      
+      fi
+
+      if [ "$subdir_name" = "driver_assistant_front" ]; then
+            cp driver_assistant_front/out/driver_assistant_front ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/kmodel/tl_yolov8n_320.kmodel ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/kmodel/tl_yolov8n_640.kmodel ${k230_bin}/$subdir_name
+            #cp -a ../../big/kmodel/ai_poc/images/traffic_light.jpg ${k230_bin}/$subdir_name
+            #cp -a shell/tl_detect_*.sh ${k230_bin}/$subdir_name
+      fi
 
       if [ "$subdir_name" = "person_detect" ]; then
             cp out/bin/person_detect.elf ${k230_bin}/$subdir_name
