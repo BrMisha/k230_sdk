@@ -166,8 +166,6 @@ typedef struct
     k_bool ch_done;
 } venc_conf_t;
 
-char filename[50];
-FILE *output_file = NULL;
 std::atomic<bool> isp_stop(false);
 
 VENC_SAMPLE_STATUS g_venc_sample_status = VENC_SAMPLE_STATUS_IDLE;
@@ -175,7 +173,7 @@ venc_conf_t g_venc_conf;
 
 // TODO: WRAP TO MUTEX!!!
 std::vector<DetectionCommon> last_detections;
-k_u64  last_detections_pts = UINT64_MAX;
+std::atomic<k_u64>  last_detections_pts = UINT64_MAX;
 
 //****************function***********************************
 
@@ -412,7 +410,7 @@ static void *venc_output_thread(void *arg)
                     printf("last_detections_pts valid\n");
                 }
                 else {
-                    printf("last_detections_pts IS INVALID: %lu\n", last_detections_pts);
+                    printf("last_detections_pts IS INVALID!!!!!!!\n");
                 }
                 last_detections_pts = UINT64_MAX;
 
@@ -459,9 +457,6 @@ static void *venc_output_thread(void *arg)
         free(output.pack);
     }
 
-    // Close file
-    if (output_file)
-        fclose(output_file);
     venc_debug("%s>done, ch %d: out_frames %d, size %d bits\n", __func__, info->ch_id, out_frames, total_len * 8);
     return arg;
 }
@@ -469,28 +464,25 @@ static void *venc_output_thread(void *arg)
 /**
 * Initialize frame to be sent to encoder after AI computation
 */
-k_vb_blk_handle init_venc_frame(k_video_frame_info *vf_info, void **pic_vaddr,k_u32 g_pool_id)
+k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr,k_u32 g_pool_id)
 {
     k_u64 phys_addr = 0;
     k_u32 *virt_addr;
     k_vb_blk_handle handle;
     k_s32 size;
 
-    if (vf_info == NULL)
-        return K_FALSE;
-
-    if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_ABGR_8888 || vf_info->v_frame.pixel_format == PIXEL_FORMAT_ARGB_8888)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 4;
-    else if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_RGB_565 || vf_info->v_frame.pixel_format == PIXEL_FORMAT_BGR_565)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 2;
-    else if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_ABGR_4444 || vf_info->v_frame.pixel_format == PIXEL_FORMAT_ARGB_4444)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 2;
-    else if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_RGB_888 || vf_info->v_frame.pixel_format == PIXEL_FORMAT_BGR_888)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 3;
-    else if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info->v_frame.pixel_format == PIXEL_FORMAT_ABGR_1555)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 2;
-    else if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        size = vf_info->v_frame.height * vf_info->v_frame.width * 3 / 2;      
+    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_8888 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_8888)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 4;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_565 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_BGR_565)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_4444 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_4444)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_888 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_BGR_888)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 3;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_1555)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;      
 
     printf("vb block size is %x \n", size);
 
@@ -516,11 +508,11 @@ k_vb_blk_handle init_venc_frame(k_video_frame_info *vf_info, void **pic_vaddr,k_
         return K_FAILED;
     }
 
-    vf_info->mod_id = K_ID_VO;
-    vf_info->pool_id = g_pool_id;
-    vf_info->v_frame.phys_addr[0] = phys_addr;
-    if (vf_info->v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        vf_info->v_frame.phys_addr[1] = phys_addr + (vf_info->v_frame.height * vf_info->v_frame.stride[0]);
+    vf_info.mod_id = K_ID_VO;
+    vf_info.pool_id = g_pool_id;
+    vf_info.v_frame.phys_addr[0] = phys_addr;
+    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
+        vf_info.v_frame.phys_addr[1] = phys_addr + (vf_info.v_frame.height * vf_info.v_frame.stride[0]);
     *pic_vaddr = virt_addr;
 
     printf("phys_addr is %lx g_pool_id is %d \n", phys_addr, g_pool_id);
@@ -556,9 +548,6 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 
     ret = kd_mpi_venc_close_fd();
     CHECK_RET(ret, __func__, __LINE__);
-
-    if (output_file)
-        fclose(output_file);
 
     g_venc_conf.ch_done = K_TRUE;
     free(buf);
@@ -611,7 +600,7 @@ void output_thread(char *argv[])
     vf_info.v_frame.height = osd_height;
     vf_info.v_frame.stride[0] = osd_width;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    k_vb_blk_handle block_enc = init_venc_frame(&vf_info, &pic_vaddr,g_pool_id);
+    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);
     k_u64  time_pts = 0;
     //**********************************************************************************************
 
