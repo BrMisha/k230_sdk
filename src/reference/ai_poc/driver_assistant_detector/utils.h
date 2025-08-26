@@ -113,7 +113,6 @@ const std::vector<cv::Scalar> color_four = {cv::Scalar(255, 220, 20, 60), cv::Sc
 struct DetectionNormalized
 {
     int class_id{0};
-    std::string className{};
     float confidence{0.0};
     cv::Scalar color{};
     cv::Rect2f box{};
@@ -125,7 +124,6 @@ struct DetectionNormalized
 struct Detection
 {
     int class_id{0};
-    std::string className{};
     float confidence{0.0};
     cv::Scalar color{};
     cv::Rect box{};

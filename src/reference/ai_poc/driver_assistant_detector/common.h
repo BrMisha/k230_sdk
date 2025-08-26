@@ -7,11 +7,14 @@
 #include <cstdint>
 
 struct DetectionCommon {
-    char className[24];
+    int class_id;
     float confidence{0.0};
     uint16_t x, y, w, h;
 } __attribute__((packed));
 
-static_assert(sizeof(DetectionCommon) == 36, "Detection size must be 36 bytes");
+static_assert(sizeof(DetectionCommon) == 16, "Detection size must be 36 bytes");
+
+const std::vector<std::string> detect_classes{"objects-5YaV", "arrow_right", "tl_arrow_forward", "tl_arrow_left", "tl_green", "tl_red",
+          "traffic_light", "traffic_light_back", "traffic_light_green", "traffic_light_red", "traffic_light_yellow"};
 
 #endif //DETECTORMODULE_COMMON_H

@@ -702,7 +702,7 @@ void output_thread(char *argv[])
             for (int i = 0; i < results.size(); ++i) {
                 const auto& det = results[i];
                 std::cout << "Object " << (i+1) << ": "
-                          << det.className << " (ID:" << det.class_id << ") "
+                          << detect_classes[det.class_id] << " (ID:" << det.class_id << ") "
                           << "confidence=" << det.confidence << " "
                           << "box=[" << det.box.x << "," << det.box.y << ","
                           << det.box.width << "x" << det.box.height << "]"
@@ -731,11 +731,8 @@ void output_thread(char *argv[])
 
                     DetectionCommon dc;
                     memset(&dc, 0, sizeof(DetectionCommon));
-
-                    strncpy(dc.className, d.className.c_str(), sizeof(dc.className));
-                    dc.className[sizeof(dc.className) - 1] = '\0'; // Ensure null termination
+                    dc.class_id = d.class_id;
                     dc.confidence = d.confidence;
-                    
 
                     dc.x = static_cast<uint16_t>(d.box.x);
                     dc.y = static_cast<uint16_t>(d.box.y);

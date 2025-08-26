@@ -225,7 +225,7 @@ void* read_send(void* arg)
             std::vector<DetectionCommon> detections;
             for (uint16_t i = 0; i < detections_count; i++) {
                 DetectionCommon d;
-                memcpy(&d, &pBuf, sizeof(DetectionCommon));
+                memcpy(&d, pBuf, sizeof(DetectionCommon));
                 pBuf += sizeof(DetectionCommon);
                 detections.push_back(d);
             }
@@ -234,8 +234,8 @@ void* read_send(void* arg)
                 printf("Received %zu detections:\n", detections.size());
                 for (size_t i = 0; i < detections.size(); i++) {
                     const auto& det = detections[i];
-                    printf("  Detection %zu: %s (conf=%.2f) at (%d,%d) size %dx%d\n",
-                           i + 1, det.className, det.confidence,
+                    printf("  Detection %zu: %s (conf=%.1f) at (%d,%d) size %dx%d\n",
+                           i + 1, detect_classes[det.class_id].c_str(), det.confidence,
                            det.x, det.y, det.w, det.h);
                 }
             }

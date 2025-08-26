@@ -25,6 +25,7 @@
 // utils.cpp
 #include <iostream>
 #include "utils.h"
+#include "common.h"
 
 using std::ofstream;
 using std::vector;
@@ -412,7 +413,7 @@ void Utils::draw_detection(cv::Mat& frame, const Detection& detection)
     cv::rectangle(frame, box, color, 2);
 
     // Detection box text
-    std::string classString = detection.className + ' ' + std::to_string(detection.confidence).substr(0, 4);
+    std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
     cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
     cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -448,7 +449,7 @@ void Utils::draw_detections(cv::Mat& frame, vector<Detection>& results, FrameSiz
         cv::rectangle(frame, box, color, 2);
 
         // Detection box text
-        std::string classString = detection.className + ' ' + std::to_string(detection.confidence).substr(0, 4);
+        std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
         cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
         cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -468,7 +469,6 @@ DetectionNormalized Detection::normalize(int rows, int cols) const
 {
     DetectionNormalized normalized;
     normalized.class_id = this->class_id;
-    normalized.className = this->className;
     normalized.confidence = this->confidence;
     normalized.color = this->color;
 
@@ -489,7 +489,6 @@ Detection Detection::from_normalized(const DetectionNormalized &n, int rows, int
 {
     Detection detection;
     detection.class_id = n.class_id;
-    detection.className = n.className;
     detection.confidence = n.confidence;
     detection.color = n.color;
 
