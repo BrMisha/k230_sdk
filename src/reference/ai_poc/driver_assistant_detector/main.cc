@@ -55,6 +55,8 @@
 #include "vi_vo.h"
 #include "k_datafifo.h"
 
+#include "common.h"
+
 #define ENABLE_VDEC_DEBUG    1
 #define BIND_VO_LAYER   1
 
@@ -170,6 +172,10 @@ std::atomic<bool> isp_stop(false);
 
 VENC_SAMPLE_STATUS g_venc_sample_status = VENC_SAMPLE_STATUS_IDLE;
 venc_conf_t g_venc_conf;
+
+// TODO: WRAP TO MUTEX!!!
+std::vector<DetectionCommon> last_detections;
+k_u64  last_detections_pts = UINT64_MAX;
 
 //****************function***********************************
 
@@ -400,9 +406,31 @@ static void *venc_output_thread(void *arg)
 
             if (availWriteLen >= BLOCK_LEN)
             {
-                memcpy(buf, (void *)&(output.pack[i].pts), sizeof(k_u64));
-                memcpy(buf + sizeof(k_u64), (void *)&(output.pack[i].len), sizeof(k_u32));
-                memcpy(buf + sizeof(k_u64) + sizeof(k_u32), (void *)pData, output.pack[i].len);
+                std::vector<DetectionCommon> detections;
+                if (last_detections_pts == output.pack[i].pts) {
+                    detections = std::move(last_detections);
+                    printf("last_detections_pts valid\n");
+                }
+                else {
+                    printf("last_detections_pts IS INVALID: %lu\n", last_detections_pts);
+                }
+                last_detections_pts = UINT64_MAX;
+
+                // copy detections into the buf
+                uint16_t s = detections.size();
+                memcpy(buf, &s, sizeof(s));
+                size_t total_size = sizeof(s);
+                for (auto &it : detections) {
+                    memcpy(buf + total_size, &it, sizeof(DetectionCommon));
+                    total_size += sizeof(DetectionCommon);
+                }
+
+                memcpy(buf + total_size, (void *)&(output.pack[i].pts), sizeof(k_u64));
+                total_size += sizeof(k_u64);
+                memcpy(buf + total_size, (void *)&(output.pack[i].len), sizeof(k_u32));
+                total_size += sizeof(k_u32);
+                memcpy(buf + total_size, (void *)pData, output.pack[i].len);
+                total_size += output.pack[i].len;
                 
                 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
                 if (K_SUCCESS != s32Ret)
@@ -571,7 +599,6 @@ void output_thread(char *argv[])
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
-    std::vector<DetectionNormalized> results;
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
     // Some initialization settings here, choose to use 1080P, ARGB8888 format data
@@ -585,6 +612,7 @@ void output_thread(char *argv[])
     vf_info.v_frame.stride[0] = osd_width;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
     k_vb_blk_handle block_enc = init_venc_frame(&vf_info, &pic_vaddr,g_pool_id);
+    k_u64  time_pts = 0;
     //**********************************************************************************************
 
     printf("start loop\n");
@@ -619,7 +647,7 @@ void output_thread(char *argv[])
         }
 
         channels_argb.clear();
-        results.clear();
+        std::vector<DetectionNormalized> results;
         /*pd.pre_process();
         pd.inference();
         bool find_ = pd.post_process(results,params);*/
@@ -694,6 +722,32 @@ void output_thread(char *argv[])
 
             memcpy(pic_vaddr, osd_frame.data, osd_frame.cols * osd_frame.rows * osd_frame.channels());
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
+            vf_info.v_frame.pts = time_pts++;
+
+            if (last_detections_pts == UINT64_MAX) {
+                last_detections.clear();
+                for (auto it = results.cbegin(); it != results.cend(); ++it) {
+                    auto d = Detection::from_normalized(*it, osd_frame.rows, osd_frame.cols);
+
+                    DetectionCommon dc;
+                    memset(&dc, 0, sizeof(DetectionCommon));
+
+                    strncpy(dc.className, d.className.c_str(), sizeof(dc.className));
+                    dc.className[sizeof(dc.className) - 1] = '\0'; // Ensure null termination
+                    dc.confidence = d.confidence;
+                    
+
+                    dc.x = static_cast<uint16_t>(d.box.x);
+                    dc.y = static_cast<uint16_t>(d.box.y);
+                    dc.w = static_cast<uint16_t>(d.box.width);
+                    dc.h = static_cast<uint16_t>(d.box.height);
+                    
+                    last_detections.push_back(dc);
+                }
+
+                last_detections_pts = vf_info.v_frame.pts;
+            }
+
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
             CHECK_RET(ret, __func__, __LINE__);
 
@@ -789,6 +843,7 @@ int main(int argc, char *argv[])
         memset(&info, 0, sizeof(info));
         info.ch_id = ve_ch;
         info.output_frames = output_frames;
+
         // Start thread to write output stream to h265 file
         pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;

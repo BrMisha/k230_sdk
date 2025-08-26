@@ -12,10 +12,12 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <vector>
 
 #include "k_datafifo.h"
 #include "rtsp_server.h"
 #include "media.h"
+#include "../../driver_assistant_detector/common.h"
 
 // datafifo
 #define READER_INDEX    0
@@ -217,6 +219,28 @@ void* read_send(void* arg)
                 printf("read done error:%x\n", s32Ret);
                 break;
             }
+
+            auto detections_count = ((uint16_t*)pBuf)[0];
+            pBuf += 2;
+            std::vector<DetectionCommon> detections;
+            for (uint16_t i = 0; i < detections_count; i++) {
+                DetectionCommon d;
+                memcpy(&d, &pBuf, sizeof(DetectionCommon));
+                pBuf += sizeof(DetectionCommon);
+                detections.push_back(d);
+            }
+
+            if (detections.size() > 0) {
+                printf("Received %zu detections:\n", detections.size());
+                for (size_t i = 0; i < detections.size(); i++) {
+                    const auto& det = detections[i];
+                    printf("  Detection %zu: %s (conf=%.2f) at (%d,%d) size %dx%d\n",
+                           i + 1, det.className, det.confidence,
+                           det.x, det.y, det.w, det.h);
+                }
+            }
+
+            //printf("Detections count:%d\n", detections_count);
 
             unsigned long pts = ((unsigned long *)pBuf)[0];
             unsigned int len = ((unsigned int *)pBuf)[2];
