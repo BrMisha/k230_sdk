@@ -110,6 +110,13 @@ const std::vector<cv::Scalar> color_four = {cv::Scalar(255, 220, 20, 60), cv::Sc
         cv::Scalar(255, 95, 54, 80), cv::Scalar(255, 128, 76, 255), cv::Scalar(255, 201, 57, 1), cv::Scalar(255, 246, 0, 122),
         cv::Scalar(255, 191, 162, 208)};
 
+struct DetectionNormalized
+{
+    int class_id{0};
+    float confidence{0.0};
+    cv::Scalar color{};
+    cv::Rect2f box{};
+};
 
 /**
  * @brief 多目标检测集合
@@ -117,10 +124,12 @@ const std::vector<cv::Scalar> color_four = {cv::Scalar(255, 220, 20, 60), cv::Sc
 struct Detection
 {
     int class_id{0};
-    std::string className{};
     float confidence{0.0};
     cv::Scalar color{};
     cv::Rect box{};
+
+    DetectionNormalized normalize(int rows, int cols) const;
+    static Detection from_normalized(const DetectionNormalized &n, int rows, int cols);
 };
 
 /**
@@ -418,13 +427,15 @@ public:
      */
     static void affine(float *affine_matrix, std::unique_ptr<ai2d_builder> &builder, runtime_tensor &ai2d_in_tensor, runtime_tensor &ai2d_out_tensor);
 
+    static void draw_detection(cv::Mat& frame, const Detection& detection);
+
     /**
      * @brief 将多目标检测结果画在图像中
      * @param frame         原始图像
      * @param detections    检测框集合
      * @return None
      */
-    static void draw_detections(cv::Mat& frame, vector<Detection>& detections);
+    static void draw_detections(cv::Mat& frame, const vector<Detection>& detections);
 
     /**
      * @brief 将多目标检测结果画在屏幕的osd中

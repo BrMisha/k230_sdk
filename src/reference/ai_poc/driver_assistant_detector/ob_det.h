@@ -122,9 +122,9 @@ class OBDet : public AIBase
     FrameCHWSize isp_shape_;                     // isp对应的地址大小
 
     // 多目标检测类别名字
-    std::vector<std::string> classes{"objects-5YaV", "arrow_right", "tl_arrow_forward", "tl_arrow_left", "tl_green", "tl_red",
+    /*std::vector<std::string> classes{"objects-5YaV", "arrow_right", "tl_arrow_forward", "tl_arrow_left", "tl_green", "tl_red",
               "traffic_light", "traffic_light_back", "traffic_light_green", "traffic_light_red", "traffic_light_yellow"};
-
+*/
     // 多目标检测 分数阈值
     float score_thres;
 

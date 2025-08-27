@@ -137,9 +137,9 @@ std::vector<Detection> SAHI::merge_detections(
     }
     
     // Group detections by class for class-wise NMS
-    std::map<std::string, std::vector<size_t>> class_groups;
+    std::map<int, std::vector<size_t>> class_groups;
     for (size_t i = 0; i < all_detections.size(); ++i) {
-        class_groups[all_detections[i].className].push_back(i);
+        class_groups[all_detections[i].class_id].push_back(i);
     }
     
     std::vector<Detection> merged_results;

@@ -12,10 +12,12 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <vector>
 
 #include "k_datafifo.h"
 #include "rtsp_server.h"
 #include "media.h"
+#include "../../driver_assistant_detector/common.h"
 
 // datafifo
 #define READER_INDEX    0
@@ -25,6 +27,9 @@ static const k_s32 BLOCK_LEN = 1024000;
 static k_datafifo_handle hDataFifo[2] = {(k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE};
 
 using namespace std::chrono_literals;
+
+FILE *output_file_video = NULL;
+FILE *output_file_detections = NULL;
 
 static void release(void* pStream)
 {
@@ -218,12 +223,49 @@ void* read_send(void* arg)
                 break;
             }
 
+            auto detections_count = ((uint16_t*)pBuf)[0];
+            pBuf += 2;
+            std::vector<DetectionCommon> detections;
+            for (uint16_t i = 0; i < detections_count; i++) {
+                DetectionCommon d;
+                memcpy(&d, pBuf, sizeof(DetectionCommon));
+                pBuf += sizeof(DetectionCommon);
+                detections.push_back(d);
+            }
+
+            if (detections.size() > 0) {
+                printf("Received %zu detections:\n", detections.size());
+                for (size_t i = 0; i < detections.size(); i++) {
+                    const auto& det = detections[i];
+                    printf("  Detection %zu: %s (conf=%.1f) at (%d,%d) size %dx%d\n",
+                           i + 1, detect_classes[det.class_id].c_str(), det.confidence,
+                           det.x, det.y, det.w, det.h);
+                }
+            }
+
             unsigned long pts = ((unsigned long *)pBuf)[0];
             unsigned int len = ((unsigned int *)pBuf)[2];
             k_char *data = pBuf + sizeof(unsigned long) + sizeof(unsigned int);
 
+            if (output_file_video && output_file_detections) {
+                fwrite(data, 1, len, output_file_video);
+
+                fprintf(output_file_detections, "%lu;", pts);
+                for (auto &it : detections) {
+                    fprintf(output_file_detections, "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
+                            it.confidence, it.x, it.y, it.w, it.h);
+                }
+                fprintf(output_file_detections, "\n");
+            }
+
             printf("Timestamp: %lu, len: %d\n", pts, len);
             server->OnVEncData(0, (void *)data, (size_t)len, pts);
+            for (auto &it : detections) {
+                char s[50];
+                auto len = snprintf(s, sizeof(s), "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
+                            it.confidence, it.x, it.y, it.w, it.h);
+                //server->OnDetData(0, (uint8_t*)s, len, pts);
+            }
         }
     }
 }
@@ -235,11 +277,39 @@ int main(int argc, char *argv[]) {
     KdMediaInputConfig config;
     int ret = parse_config(argc, argv, config);
 
+    for (int i=0; i<0xFFFF; ++i) {
+        char filename[50];
+        sprintf(filename, "bb/%d.h265", i);
+        FILE* file = fopen(filename, "r");
+        if (!file) {
+            sprintf(filename, "bb/%d.txt", i);
+            file = fopen(filename, "r");
+            if (!file) {
+                sprintf(filename, "bb/%d.h265", i);
+                printf("output_file_video %s\n", filename);
+                output_file_video = fopen(filename, "wb");
+
+                sprintf(filename, "bb/%d.txt", i);
+                printf("output_file_detections %s\n", filename);
+                output_file_detections = fopen(filename, "w");
+
+                break;
+            }
+            fclose(file);
+        }
+        else fclose(file);
+    }
+
+    if (!output_file_video || !output_file_detections) {
+        std::cerr << "Can't open video file!" << std::endl;
+        return -1;
+    }
+
     // 初始化 datafifo
     k_s32 s32Ret = K_SUCCESS;
     k_u64 phyAddr[2];
     sscanf(argv[2], "%lx", &phyAddr[READER_INDEX]);
-    s32Ret = datafifo_init(phyAddr[READER_INDEX]);   
+    s32Ret = datafifo_init(phyAddr[READER_INDEX]);
 
     // 创建 rtsp 服务
     MyRtspServer *server = new MyRtspServer();
@@ -267,5 +337,9 @@ int main(int argc, char *argv[]) {
     delete server;
     // datafifo反初始化
     datafifo_deinit();
+
+    fclose(output_file_video);
+    fclose(output_file_detections);
+
     return 0;
 }

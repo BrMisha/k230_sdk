@@ -24,6 +24,7 @@
  */
 
 #include "ob_det.h"
+#include "common.h"
 
 OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, const int debug_mode)
 :score_thres(score_thres), nms_thres(nms_thres), AIBase(kmodel_file,"OBDet", debug_mode)
@@ -36,7 +37,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, const 
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = classes.size() + 4;
+    dimensions_det = detect_classes.size() + 4;
 
     output_det = new float[rows_det * dimensions_det];
 }
@@ -51,7 +52,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, FrameC
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = classes.size() + 4;
+    dimensions_det = detect_classes.size() + 4;
 
     output_det = new float[rows_det * dimensions_det];
 
@@ -131,7 +132,7 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
     {
         float *classes_scores = data+4;
 
-        cv::Mat scores(1, classes.size(), CV_32FC1, classes_scores);
+        cv::Mat scores(1, detect_classes.size(), CV_32FC1, classes_scores);
         cv::Point class_id;
         double maxClassScore;
 
@@ -178,7 +179,6 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
                                   dis(gen),
                                   dis(gen));
 
-        result.className = classes[result.class_id];
         result.box = boxes[idx];
 
         detections.push_back(result);

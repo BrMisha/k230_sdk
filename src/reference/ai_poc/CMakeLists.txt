@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 3.5)
 project(nncase_sdk C CXX)
 
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../big/nncase/")
