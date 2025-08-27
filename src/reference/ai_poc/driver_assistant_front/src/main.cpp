@@ -260,6 +260,12 @@ void* read_send(void* arg)
 
             printf("Timestamp: %lu, len: %d\n", pts, len);
             server->OnVEncData(0, (void *)data, (size_t)len, pts);
+            for (auto &it : detections) {
+                char s[50];
+                auto len = snprintf(s, sizeof(s), "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
+                            it.confidence, it.x, it.y, it.w, it.h);
+                //server->OnDetData(0, (uint8_t*)s, len, pts);
+            }
         }
     }
 }
