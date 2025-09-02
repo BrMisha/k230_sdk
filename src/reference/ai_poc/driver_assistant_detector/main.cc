@@ -36,6 +36,7 @@
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include <mutex>
 
 #include "k_module.h"
 #include "k_type.h"
@@ -171,9 +172,13 @@ std::atomic<bool> isp_stop(false);
 VENC_SAMPLE_STATUS g_venc_sample_status = VENC_SAMPLE_STATUS_IDLE;
 venc_conf_t g_venc_conf;
 
-// TODO: WRAP TO MUTEX!!!
-std::vector<DetectionCommon> last_detections;
-std::atomic<k_u64>  last_detections_pts = UINT64_MAX;
+struct last_detection_t {
+    std::vector<DetectionCommon> detections;
+    k_u64  pts;
+};
+
+std::mutex last_detections_mutex;
+std::queue<last_detection_t> last_detections;
 
 //****************function***********************************
 
@@ -405,14 +410,25 @@ static void *venc_output_thread(void *arg)
             if (availWriteLen >= BLOCK_LEN)
             {
                 std::vector<DetectionCommon> detections;
-                if (last_detections_pts == output.pack[i].pts) {
-                    detections = std::move(last_detections);
-                    printf("last_detections_pts valid\n");
+                if (output.pack[i].type != K_VENC_HEADER)
+                {
+                    std::lock_guard<std::mutex> lock(last_detections_mutex);
+
+                    //printf("last_detections %d, %lu\n", last_detections.size(), output.pack[i].pts);
+
+                    if (last_detections.size() != 0) {
+                        auto item = std::move(last_detections.front());
+                        last_detections.pop();
+
+                        if (item.pts == output.pack[i].pts) {
+                            detections = std::move(item.detections);
+                            //printf("last_detections_pts valid\n");
+                        }
+                        else {
+                            printf("last_detections_pts IS INVALID!!!!!!!!!!!!!!!!!!!! %lu %lu\n", item.pts, output.pack[i].pts);
+                        }
+                    }
                 }
-                else {
-                    printf("last_detections_pts IS INVALID!!!!!!!\n");
-                }
-                last_detections_pts = UINT64_MAX;
 
                 // copy detections into the buf
                 uint16_t s = detections.size();
@@ -717,8 +733,10 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             vf_info.v_frame.pts = time_pts++;
 
-            if (last_detections_pts == UINT64_MAX) {
-                last_detections.clear();
+            {
+                last_detection_t    ld;
+                ld.pts = vf_info.v_frame.pts;
+
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
                     auto d = Detection::from_normalized(*it, osd_frame.cols, osd_frame.rows);
 
@@ -732,10 +750,11 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                     dc.w = static_cast<uint16_t>(d.box.width);
                     dc.h = static_cast<uint16_t>(d.box.height);
 
-                    last_detections.push_back(dc);
+                    ld.detections.push_back(dc);
                 }
 
-                last_detections_pts = vf_info.v_frame.pts;
+                std::lock_guard<std::mutex> lock(last_detections_mutex);
+                last_detections.push(ld);
             }
 
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
