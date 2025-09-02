@@ -128,8 +128,8 @@ struct Detection
     cv::Scalar color{};
     cv::Rect box{};
 
-    DetectionNormalized normalize(int rows, int cols) const;
-    static Detection from_normalized(const DetectionNormalized &n, int rows, int cols);
+    DetectionNormalized normalize(int width, int height) const;
+    static Detection from_normalized(const DetectionNormalized &n, int width, int height);
 };
 
 /**

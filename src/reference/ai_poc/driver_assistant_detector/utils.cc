@@ -465,41 +465,41 @@ void Utils::chw_rgb2bgr(const FrameSize &frame_size, unsigned char *data, std::v
     chw_bgr_vec.insert(chw_bgr_vec.end(), data, data+frame_size.height*frame_size.width);
 }
 
-DetectionNormalized Detection::normalize(int rows, int cols) const
+DetectionNormalized Detection::normalize(int width, int height) const
 {
     DetectionNormalized normalized;
     normalized.class_id = this->class_id;
     normalized.confidence = this->confidence;
     normalized.color = this->color;
 
-    float frame_width = static_cast<float>(cols);
-    float frame_height = static_cast<float>(rows);
+    float cof_x = 1.0 / static_cast<float>(width / 2);
+    float cof_y = 1.0 / static_cast<float>(height / 2);
 
     normalized.box = cv::Rect2f(
-        static_cast<float>(this->box.x) / frame_width,
-        static_cast<float>(this->box.y) / frame_height,
-        static_cast<float>(this->box.width) / frame_width,
-        static_cast<float>(this->box.height) / frame_height
+        (box.x - (width / 2)) * cof_x,
+        (box.y - (height / 2)) * cof_y,
+        static_cast<float>(this->box.width) * cof_x,
+        static_cast<float>(this->box.height) * cof_y
     );
 
     return normalized;
 }
 
-Detection Detection::from_normalized(const DetectionNormalized &n, int rows, int cols)
+Detection Detection::from_normalized(const DetectionNormalized &n, int width, int height)
 {
     Detection detection;
     detection.class_id = n.class_id;
     detection.confidence = n.confidence;
     detection.color = n.color;
 
-    float frame_width = static_cast<float>(cols);
-    float frame_height = static_cast<float>(rows);
+    float cof_x = 1.0 / static_cast<float>(width / 2);
+    float cof_y = 1.0 / static_cast<float>(height / 2);
 
     detection.box = cv::Rect(
-        static_cast<int>(n.box.x * frame_width),
-        static_cast<int>(n.box.y * frame_height),
-        static_cast<int>(n.box.width * frame_width),
-        static_cast<int>(n.box.height * frame_height)
+        static_cast<int>(n.box.x / cof_x) + (width / 2),
+        static_cast<int>(n.box.y / cof_y) + (height / 2),
+        static_cast<int>(n.box.width / cof_x),
+        static_cast<int>(n.box.height / cof_y)
     );
 
     return detection;

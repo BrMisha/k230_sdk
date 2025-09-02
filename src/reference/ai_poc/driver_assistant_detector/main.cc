@@ -558,7 +558,7 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 /**
 * Decoder output thread logic
 */
-void output_thread(char *argv[])
+void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width)
 {
     vivcap_start();
 
@@ -574,15 +574,15 @@ void output_thread(char *argv[])
         std::abort();
     }
 
-    int debug_mode=atoi(argv[4]);
+    /*int debug_mode=atoi(argv[4]);
     char *fd_kmodel_path=argv[1];
     float facedet_obj_thresh=atof(argv[2]);
     float facedet_nms_thresh=atof(argv[3]);
-    float overlap_ratio=atof(argv[5]);
+    float overlap_ratio=atof(argv[5]);*/
     /*poseDetect pd(fd_kmodel_path.c_str(), facedet_obj_thresh,facedet_nms_thresh, {SENSOR_CHANNEL, SENSOR_HEIGHT, SENSOR_WIDTH}, reinterpret_cast<uintptr_t>(vaddr), reinterpret_cast<uintptr_t>(paddr), debug_mode);
 
     cv::Vec4d params = pd.params;
-    
+
     std::vector<OutputPose> results;*/
 
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
@@ -594,7 +594,7 @@ void output_thread(char *argv[])
     // Use buffer pool 2 as AI result sending buffer here
     k_u32 g_pool_id=2;
     k_video_frame_info vf_info;
-    void *pic_vaddr = NULL;       
+    void *pic_vaddr = NULL;
     memset(&vf_info, 0, sizeof(vf_info));
     vf_info.v_frame.width = osd_width;
     vf_info.v_frame.height = osd_height;
@@ -641,7 +641,7 @@ void output_thread(char *argv[])
         pd.inference();
         bool find_ = pd.post_process(results,params);*/
 
-        {      
+        {
             ScopedTiming st("cv::merge", debug_mode);
             memcpy(osd_frame1.data, (void *)vaddr, SENSOR_HEIGHT * SENSOR_WIDTH);
             memcpy(osd_frame2.data, (void *)vaddr + SENSOR_HEIGHT * SENSOR_WIDTH, SENSOR_HEIGHT * SENSOR_WIDTH);
@@ -665,10 +665,9 @@ void output_thread(char *argv[])
         {
             ScopedTiming st("Image resize", 1);
 
-            const int MAX_SIZE = 700;
-            if (detector_frame.cols > MAX_SIZE) {
-                float scale = static_cast<float>(MAX_SIZE) / detector_frame.cols;
-                int new_width = MAX_SIZE;
+            if (detector_frame.cols > detection_max_width) {
+                float scale = static_cast<float>(detection_max_width) / detector_frame.cols;
+                int new_width = detection_max_width;
                 int new_height = static_cast<int>(detector_frame.rows * scale);
                 cv::resize(detector_frame, detector_frame, cv::Size(new_width, new_height));
                 detector_frame.cols = new_width;
@@ -680,8 +679,13 @@ void output_thread(char *argv[])
         {
             ScopedTiming st("SAHI detection", 1);
             auto r = sahi.detect(detector_frame);
-            for (auto it = r.cbegin(); it != r.cend(); ++it)
-                results.push_back(it->normalize(detector_frame.rows, detector_frame.cols));
+            for (auto it = r.cbegin(); it != r.cend(); ++it) {
+                results.push_back(it->normalize(detector_frame.cols, detector_frame.rows));
+                /*
+                auto v = it->normalize(detector_frame.cols, detector_frame.rows);
+                printf("nnnnnnnnnn %dx%d; %d %d %d %d; %.2f %.2f %.2f %.2f \n", detector_frame.cols, detector_frame.rows,
+                    it->box.x, it->box.y, it->box.width, it->box.height, v.box.x, v.box.y, v.box.width, v.box.height);*/
+            }
         }
 
         {
@@ -690,14 +694,14 @@ void output_thread(char *argv[])
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto& det = results[i];
+                auto d = Detection::from_normalized(det, osd_frame.cols, osd_frame.rows);
                 std::cout << "Object " << (i+1) << ": "
-                          << detect_classes[det.class_id] << " (ID:" << det.class_id << ") "
-                          << "confidence=" << det.confidence << " "
-                          << "box=[" << det.box.x << "," << det.box.y << ","
-                          << det.box.width << "x" << det.box.height << "]"
+                          << detect_classes[d.class_id] << " (ID:" << d.class_id << ") "
+                          << "confidence=" << d.confidence << " "
+                          << "box=[" << d.box.x << "," << d.box.y << ","
+                          << d.box.width << "x" << d.box.height << "]"
                           << std::endl;
 
-                auto d = Detection::from_normalized(det, osd_frame.rows, osd_frame.cols);
                 Utils::draw_detection(osd_frame, d);
             }
 
@@ -716,7 +720,7 @@ void output_thread(char *argv[])
             if (last_detections_pts == UINT64_MAX) {
                 last_detections.clear();
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, osd_frame.rows, osd_frame.cols);
+                    auto d = Detection::from_normalized(*it, osd_frame.cols, osd_frame.rows);
 
                     DetectionCommon dc;
                     memset(&dc, 0, sizeof(DetectionCommon));
@@ -727,7 +731,7 @@ void output_thread(char *argv[])
                     dc.y = static_cast<uint16_t>(d.box.y);
                     dc.w = static_cast<uint16_t>(d.box.width);
                     dc.h = static_cast<uint16_t>(d.box.height);
-                    
+
                     last_detections.push_back(dc);
                 }
 
@@ -777,13 +781,20 @@ void print_usage(const char *name)
 int main(int argc, char *argv[])
 {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 6)
+    if (argc != 7)
     {
         print_usage(argv[0]);
         return -1;
     }
 
     {
+        int debug_mode=atoi(argv[1]);
+        char *fd_kmodel_path=argv[2];
+        float facedet_obj_thresh=atof(argv[3]);
+        float facedet_nms_thresh=atof(argv[4]);
+        float overlap_ratio=atof(argv[5]);
+        int detection_max_width=atoi(argv[6]);
+
         k_s32 ret;
         //**********************encoder****************************************
         // Encoder configuration, encoding channel number is 0
@@ -797,7 +808,7 @@ int main(int argc, char *argv[])
         k_payload_type ve_type     = K_PT_H265;
         k_venc_profile profile  = VENC_PROFILE_H265_MAIN;
         memset(&g_venc_conf, 0, sizeof(venc_conf_t));
-        
+
         // VB initialization, (venc and vicap)
         sample_vb_init(chnum, K_FALSE);
         // Configure encoding channel attributes
@@ -834,8 +845,8 @@ int main(int argc, char *argv[])
         pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
 
-        // Start video stream AI thread 
-        std::thread face_det_enc(output_thread, argv);
+        // Start video stream AI thread
+        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width);
         while (getchar() != 'q')
         {
             usleep(10000);
