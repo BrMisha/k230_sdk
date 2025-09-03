@@ -250,6 +250,9 @@ void* read_send(void* arg)
                     }
                     fprintf(output_file_detections, "\n");
                 }
+
+                fflush(output_file_video);
+                fflush(output_file_detections);
             }
 
             printf("Timestamp: %lu, len: %d\n", pts, len);
