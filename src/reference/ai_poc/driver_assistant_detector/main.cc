@@ -586,7 +586,7 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 /**
 * Decoder output thread logic
 */
-void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width)
+void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width, bool osd_mode)
 {
     vivcap_start();
 
@@ -731,7 +731,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                           << d.box.width << "x" << d.box.height << "]"
                           << std::endl;
 
-                Utils::draw_detection(osd_frame, d);
+                if (osd_mode) Utils::draw_detection(osd_frame, d);
             }
 
             //Utils::draw_detections(osd_frame, results);
@@ -813,7 +813,7 @@ void print_usage(const char *name)
 int main(int argc, char *argv[])
 {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 7)
+    if (argc != 8)
     {
         print_usage(argv[0]);
         return -1;
@@ -826,6 +826,7 @@ int main(int argc, char *argv[])
         float facedet_nms_thresh=atof(argv[4]);
         float overlap_ratio=atof(argv[5]);
         int detection_max_width=atoi(argv[6]);
+        bool osd_mode=atoi(argv[7]);
 
         k_s32 ret;
         //**********************encoder****************************************
@@ -833,10 +834,10 @@ int main(int argc, char *argv[])
         int chnum = 1;
         int ve_ch = 0;
         k_u32 output_frames = 10;
-        k_u32 bitrate   = 4000;   //kbps
+        k_u32 bitrate   = 2000;   //kbps
         int width       = SENSOR_WIDTH;
         int height      = SENSOR_HEIGHT;
-        k_venc_rc_mode rc_mode  = K_VENC_RC_MODE_CBR;
+        k_venc_rc_mode rc_mode  = K_VENC_RC_MODE_VBR;
         k_payload_type ve_type     = K_PT_H265;
         k_venc_profile profile  = VENC_PROFILE_H265_MAIN;
         memset(&g_venc_conf, 0, sizeof(venc_conf_t));
@@ -851,9 +852,10 @@ int main(int argc, char *argv[])
         ve_attr.venc_attr.stream_buf_size = VE_STREAM_BUF_SIZE;
         ve_attr.venc_attr.stream_buf_cnt = VE_OUTPUT_BUF_CNT;
         ve_attr.rc_attr.rc_mode = rc_mode;
-        ve_attr.rc_attr.cbr.src_frame_rate = 30;
-        ve_attr.rc_attr.cbr.dst_frame_rate = 30;
-        ve_attr.rc_attr.cbr.bit_rate = bitrate;
+        ve_attr.rc_attr.vbr.src_frame_rate = 10;
+        ve_attr.rc_attr.vbr.dst_frame_rate = 10;
+        ve_attr.rc_attr.vbr.bit_rate = bitrate;
+        ve_attr.rc_attr.vbr.max_bit_rate = bitrate * 2;
         ve_attr.venc_attr.type = ve_type;
         ve_attr.venc_attr.profile = profile;
         venc_debug("payload type is H265\n");
@@ -878,7 +880,7 @@ int main(int argc, char *argv[])
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
 
         // Start video stream AI thread
-        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width);
+        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
         while (getchar() != 'q')
         {
             usleep(10000);
