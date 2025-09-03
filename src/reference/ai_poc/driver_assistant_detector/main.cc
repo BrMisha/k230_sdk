@@ -37,6 +37,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <mutex>
+#include <memory>
 
 #include "k_module.h"
 #include "k_type.h"
@@ -409,35 +410,46 @@ static void *venc_output_thread(void *arg)
 
             if (availWriteLen >= BLOCK_LEN)
             {
-                std::vector<DetectionCommon> detections;
+                size_t total_size = 0;
+
                 if (output.pack[i].type != K_VENC_HEADER)
                 {
-                    std::lock_guard<std::mutex> lock(last_detections_mutex);
+                    std::vector<DetectionCommon> detections;
+                    {
+                        std::lock_guard<std::mutex> lock(last_detections_mutex);
 
-                    //printf("last_detections %d, %lu\n", last_detections.size(), output.pack[i].pts);
+                        //printf("last_detections %d, %lu\n", last_detections.size(), output.pack[i].pts);
 
-                    if (last_detections.size() != 0) {
-                        auto item = std::move(last_detections.front());
-                        last_detections.pop();
+                        if (last_detections.size() != 0) {
+                            auto item = std::move(last_detections.front());
+                            last_detections.pop();
 
-                        if (item.pts == output.pack[i].pts) {
-                            detections = std::move(item.detections);
-                            //printf("last_detections_pts valid\n");
-                        }
-                        else {
-                            printf("last_detections_pts IS INVALID!!!!!!!!!!!!!!!!!!!! %lu %lu\n", item.pts, output.pack[i].pts);
+                            if (item.pts == output.pack[i].pts) {
+                                detections = std::move(item.detections);
+                                //printf("last_detections_pts valid\n");
+                            }
+                            else {
+                                printf("last_detections_pts IS INVALID!!!!!!!!!!!!!!!!!!!! %lu %lu\n", item.pts, output.pack[i].pts);
+                            }
                         }
                     }
-                }
 
-                // copy detections into the buf
-                uint16_t s = detections.size();
-                memcpy(buf, &s, sizeof(s));
-                size_t total_size = sizeof(s);
-                for (auto &it : detections) {
-                    memcpy(buf + total_size, &it, sizeof(DetectionCommon));
-                    total_size += sizeof(DetectionCommon);
+                    uint16_t s = detections.size();
+                    memcpy(buf, &s, sizeof(s));
+                    total_size = sizeof(s);
+                    for (auto &it : detections) {
+                        memcpy(buf + total_size, &it, sizeof(DetectionCommon));
+                        total_size += sizeof(DetectionCommon);
+                    }
                 }
+                else {
+                    uint16_t s = UINT16_MAX;
+                    memcpy(buf, &s, sizeof(s));
+                    total_size = sizeof(s);
+                }
+                //printf("-----venc_output_thread %lu %lu %d\n", output.pack[i].pts, detections.size(), output.pack[i].type);
+                // copy detections into the buf
+
 
                 memcpy(buf + total_size, (void *)&(output.pack[i].pts), sizeof(k_u64));
                 total_size += sizeof(k_u64);
@@ -617,7 +629,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     vf_info.v_frame.stride[0] = osd_width;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
     k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);
-    k_u64  time_pts = 0;
+    k_u64  time_pts = 100;
     //**********************************************************************************************
 
     printf("start loop\n");
@@ -631,7 +643,8 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     cv::Mat detector_frame;
     while (!isp_stop)
     {
-        ScopedTiming st("total time", 1);
+        ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
+
         {
             ScopedTiming st("read capture", debug_mode);
             // Read one frame from vivcap to dump_info

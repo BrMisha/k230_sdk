@@ -39,8 +39,8 @@ public:
 	 * @param enable_profile 是否开始计时
 	 * @return None
 	 */
-	ScopedTiming(std::string info = "ScopedTiming", int enable_profile = 1)
-		: m_info(info), enable_profile(enable_profile)
+	ScopedTiming(std::string info = "ScopedTiming", int enable_profile = 1, bool flush = false)
+		: m_info(info), enable_profile(enable_profile), m_flush(flush)
 	{
 		if (enable_profile)
 		{
@@ -60,9 +60,12 @@ public:
 			double elapsed_ms = std::chrono::duration<double, std::milli>(m_stop - m_start).count();
 			std::cout << m_info << " took " << elapsed_ms << " ms" << std::endl;
 		}
+
+		if (m_flush) fflush(stdout);
 	}
 
 private:
+	bool m_flush;
 	int enable_profile;							   // 是否统计时间
 	std::string m_info;							   // 计时对象名称
 	std::chrono::steady_clock::time_point m_start; // 计时开始时间

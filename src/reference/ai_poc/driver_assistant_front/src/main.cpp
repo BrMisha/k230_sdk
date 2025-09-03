@@ -226,20 +226,12 @@ void* read_send(void* arg)
             auto detections_count = ((uint16_t*)pBuf)[0];
             pBuf += 2;
             std::vector<DetectionCommon> detections;
-            for (uint16_t i = 0; i < detections_count; i++) {
-                DetectionCommon d;
-                memcpy(&d, pBuf, sizeof(DetectionCommon));
-                pBuf += sizeof(DetectionCommon);
-                detections.push_back(d);
-            }
-
-            if (detections.size() > 0) {
-                printf("Received %zu detections:\n", detections.size());
-                for (size_t i = 0; i < detections.size(); i++) {
-                    const auto& det = detections[i];
-                    printf("  Detection %zu: %s (conf=%.1f) at (%d,%d) size %dx%d\n",
-                           i + 1, detect_classes[det.class_id].c_str(), det.confidence,
-                           det.x, det.y, det.w, det.h);
+            if (detections_count != UINT16_MAX) {
+                for (uint16_t i = 0; i < detections_count; i++) {
+                    DetectionCommon d;
+                    memcpy(&d, pBuf, sizeof(DetectionCommon));
+                    pBuf += sizeof(DetectionCommon);
+                    detections.push_back(d);
                 }
             }
 
@@ -250,15 +242,27 @@ void* read_send(void* arg)
             if (output_file_video && output_file_detections) {
                 fwrite(data, 1, len, output_file_video);
 
-                fprintf(output_file_detections, "%lu;", pts);
-                for (auto &it : detections) {
-                    fprintf(output_file_detections, "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
-                            it.confidence, it.x, it.y, it.w, it.h);
+                if (detections_count != UINT16_MAX) {
+                    fprintf(output_file_detections, "%lu;", pts);
+                    for (auto &it : detections) {
+                        fprintf(output_file_detections, "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
+                                it.confidence, it.x, it.y, it.w, it.h);
+                    }
+                    fprintf(output_file_detections, "\n");
                 }
-                fprintf(output_file_detections, "\n");
             }
 
             printf("Timestamp: %lu, len: %d\n", pts, len);
+            if (detections.size() > 0) {
+                printf("    Received %zu detections:\n", detections.size());
+                for (size_t i = 0; i < detections.size(); i++) {
+                    const auto& det = detections[i];
+                    printf("      Detection %zu: %s (conf=%.1f) at (%d,%d) size %dx%d\n",
+                           i + 1, detect_classes[det.class_id].c_str(), det.confidence,
+                           det.x, det.y, det.w, det.h);
+                }
+            }
+
             server->OnVEncData(0, (void *)data, (size_t)len, pts);
             for (auto &it : detections) {
                 char s[50];
