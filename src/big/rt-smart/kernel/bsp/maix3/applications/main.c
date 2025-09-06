@@ -15,7 +15,8 @@
 #include "msh.h"
 
 #ifndef RT_SHELL_PATH
-#define RT_SHELL_PATH "/bin/init.sh"
+//#define RT_SHELL_PATH "/bin/init.sh"
+#define RT_SHELL_PATH "/sharefs/driver_assistant_detector/driver_assistant_detector.sh"
 #endif
 
 int main(void)
@@ -23,7 +24,7 @@ int main(void)
     int result;
     struct statfs buffer;
     printf("RT-SMART Hello RISC-V.\n");
-
+/*
     char path[64];
     strcpy(path, RT_SHELL_PATH);
     strrchr(path, '/')[0] = 0;
@@ -33,6 +34,13 @@ int main(void)
         {
             rt_thread_delay(RT_TICK_PER_SECOND);
         }
+    }
+    msh_exec(RT_SHELL_PATH, strlen(RT_SHELL_PATH)+1);
+*/
+
+    while(dfs_statfs("/sharefs", &buffer) != 0)
+    {
+        rt_thread_delay(RT_TICK_PER_SECOND);
     }
 
     msh_exec(RT_SHELL_PATH, strlen(RT_SHELL_PATH)+1);
