@@ -72,10 +72,12 @@ static void Usage() {
     exit(-1);
 }
 
-int parse_config(int argc, char *argv[], KdMediaInputConfig &config) {
+int parse_config(int argc, char *argv[], KdMediaInputConfig &config, bool &daemon_mode) {
+    daemon_mode = false;
+
     int result;
     opterr = 0;
-    while ((result = getopt(argc, argv, "H:t:p:")) != -1) {
+    while ((result = getopt(argc, argv, "H:t:p:d")) != -1) {
         switch(result) {
         case 'H' : {
             Usage(); break;
@@ -89,6 +91,10 @@ int parse_config(int argc, char *argv[], KdMediaInputConfig &config) {
             break;
         }
         case 'p': {
+            break;
+        }
+        case 'd': {
+            daemon_mode = true;
             break;
         }
         default: Usage(); break;
@@ -282,7 +288,10 @@ int main(int argc, char *argv[]) {
     std::cout << "./rtspServer -p 1628c000 -t h265" << std::endl;
 
     KdMediaInputConfig config;
-    int ret = parse_config(argc, argv, config);
+    bool daemon_mode;
+    int ret = parse_config(argc, argv, config, daemon_mode);
+
+    sleep(2);
 
     for (int i=0; i<0xFFFF; ++i) {
         char filename[50];
@@ -329,13 +338,16 @@ int main(int argc, char *argv[]) {
     // 启动 数据发送 线程
     std::thread readThread(read_send, server);
 
-    printf("Input q to exit: \n");
-    while (getchar() != 'q')
-    {
-        usleep(10000);
+    if (!daemon_mode) {
+        printf("Input q to exit: \n");
+        while (getchar() != 'q')
+        {
+            usleep(10000);
+        }
+
+        send_stop = true;
     }
 
-    send_stop = true;
     readThread.join();
 
     // 关闭rtsp服务
