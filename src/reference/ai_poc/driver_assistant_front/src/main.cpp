@@ -292,13 +292,16 @@ void* read_send(void* arg)
 int main(int argc, char *argv[]) {
     std::cout << "./rtspServer -H to show usage" << std::endl;
     std::cout << "./rtspServer -p 1628c000 -t h265 -b /mnt/bb" << std::endl;
+    // ffplay -rtsp_transport tcp -fflags nobuffer+ignidx+igndts -flags low_delay -framedrop -sync ext -i rtsp://10.42.0.156:8554/BackChannelTest
+
 
     KdMediaInputConfig config;
     std::string bb_path;
     bool daemon_mode;
     int ret = parse_config(argc, argv, config, bb_path, daemon_mode);
 
-    sleep(2);
+    // TODO: We need this delay to wait till detector open FIFO
+    if (daemon_mode) sleep(20);
 
     for (int i=0; i<0xFFFF; ++i) {
         char filename[50];
