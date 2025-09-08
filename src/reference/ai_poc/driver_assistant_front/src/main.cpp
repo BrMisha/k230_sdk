@@ -72,10 +72,12 @@ static void Usage() {
     exit(-1);
 }
 
-int parse_config(int argc, char *argv[], KdMediaInputConfig &config) {
+int parse_config(int argc, char *argv[], KdMediaInputConfig &config, std::string &bb, bool &daemon_mode) {
+    daemon_mode = false;
+
     int result;
     opterr = 0;
-    while ((result = getopt(argc, argv, "H:t:p:")) != -1) {
+    while ((result = getopt(argc, argv, "H:t:p:b:d")) != -1) {
         switch(result) {
         case 'H' : {
             Usage(); break;
@@ -89,6 +91,14 @@ int parse_config(int argc, char *argv[], KdMediaInputConfig &config) {
             break;
         }
         case 'p': {
+            break;
+        }
+        case 'b': {
+            bb = optarg;
+            break;
+        }
+        case 'd': {
+            daemon_mode = true;
             break;
         }
         default: Usage(); break;
@@ -253,6 +263,8 @@ void* read_send(void* arg)
 
                 fflush(output_file_video);
                 fflush(output_file_detections);
+                fsync(fileno(output_file_video));
+                fsync(fileno(output_file_detections));
             }
 
             printf("Timestamp: %lu, len: %d\n", pts, len);
@@ -279,24 +291,31 @@ void* read_send(void* arg)
 
 int main(int argc, char *argv[]) {
     std::cout << "./rtspServer -H to show usage" << std::endl;
-    std::cout << "./rtspServer -p 1628c000 -t h265" << std::endl;
+    std::cout << "./rtspServer -p 1628c000 -t h265 -b /mnt/bb" << std::endl;
+    // ffplay -rtsp_transport tcp -fflags nobuffer+ignidx+igndts -flags low_delay -framedrop -sync ext -i rtsp://10.42.0.156:8554/BackChannelTest
+
 
     KdMediaInputConfig config;
-    int ret = parse_config(argc, argv, config);
+    std::string bb_path;
+    bool daemon_mode;
+    int ret = parse_config(argc, argv, config, bb_path, daemon_mode);
+
+    // TODO: We need this delay to wait till detector open FIFO
+    if (daemon_mode) sleep(20);
 
     for (int i=0; i<0xFFFF; ++i) {
         char filename[50];
-        sprintf(filename, "bb/%d.h265", i);
+        sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
         FILE* file = fopen(filename, "r");
         if (!file) {
-            sprintf(filename, "bb/%d.txt", i);
+            sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
             file = fopen(filename, "r");
             if (!file) {
-                sprintf(filename, "bb/%d.h265", i);
+                sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
                 printf("output_file_video %s\n", filename);
                 output_file_video = fopen(filename, "wb");
 
-                sprintf(filename, "bb/%d.txt", i);
+                sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
                 printf("output_file_detections %s\n", filename);
                 output_file_detections = fopen(filename, "w");
 
@@ -329,13 +348,16 @@ int main(int argc, char *argv[]) {
     // 启动 数据发送 线程
     std::thread readThread(read_send, server);
 
-    printf("Input q to exit: \n");
-    while (getchar() != 'q')
-    {
-        usleep(10000);
+    if (!daemon_mode) {
+        printf("Input q to exit: \n");
+        while (getchar() != 'q')
+        {
+            usleep(10000);
+        }
+
+        send_stop = true;
     }
 
-    send_stop = true;
     readThread.join();
 
     // 关闭rtsp服务

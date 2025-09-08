@@ -28,11 +28,13 @@ bootddev=$(cat /proc/cmdline  | sed  -n  "s#root=\(\/dev\/mmcblk[0-9]\).*#\1#p" 
 #printf "fix\n" | parted ---pretend-input-tty ${bootddev} print  >/dev/null 2>&1
 
 cat /etc/version/release_version
-# if ! `grep mmc /proc/cmdline >/dev/null` ; then
-# 	if `grep mtd5 /proc/mtd >/dev/null`; then
-# 		mount -t jffs2 /dev/mtdblock5 /mnt || (flash_erase /dev/mtd5 0 0; mount -t jffs2 /dev/mtdblock5 /mnt)
-# 	fi;
-# fi
+
+# Mount additional storage partition
+if [ -b /dev/mmcblk0p5 ]; then
+	# Create mount point and mount
+	mkdir -p /mnt/bb
+	mount /dev/mmcblk0p5 /mnt/bb 2>/dev/null || echo "Failed to mount /dev/mmcblk0p5"
+fi
 
 cd /mnt
 insmod k_ipcm.ko
@@ -48,3 +50,11 @@ fi
 
 ./sharefs &
 cd -
+
+
+if [ -d /sharefs/driver_assistant_detector ]; then
+	echo "Starting driver assistant front..."
+	cd /sharefs/driver_assistant_detector
+	./driver_assistant_front -p 1628c000 -t h265 -d -b /mnt/bb > /var/log/driver_assistant.log 2>&1 &
+	echo "Driver assistant started"
+fi
