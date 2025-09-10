@@ -210,17 +210,6 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     config.comm_pool[2].blk_size =OSD_BUF_SIZE;
     config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
 
-
-    #if defined(CONFIG_BOARD_K230D_CANMV) 
-    //VB for YUV420SP output
-    config.comm_pool[0].blk_cnt = 4;
-    config.comm_pool[0].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[0].blk_size = VICAP_ALIGN_UP((ISP_CHN0_WIDTH * ISP_CHN0_HEIGHT * 3 / 2), VICAP_ALIGN_1K);
-    //VB for RGB888 output
-    config.comm_pool[1].blk_cnt = 5;
-    config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[1].blk_size = VICAP_ALIGN_UP((SENSOR_HEIGHT * SENSOR_WIDTH * 3 ), VICAP_ALIGN_1K);
-    #else
     //VB for YUV420SP output
     config.comm_pool[3].blk_cnt = 5;
     config.comm_pool[3].mode = VB_REMAP_MODE_NOCACHE;
@@ -230,7 +219,6 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     config.comm_pool[4].blk_cnt = 5;
     config.comm_pool[4].mode = VB_REMAP_MODE_NOCACHE;
     config.comm_pool[4].blk_size = VICAP_ALIGN_UP((ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * SENSOR_CHANNEL ), VICAP_ALIGN_1K);
-    #endif
 
     //VB for VICAP_INPUT_BUF_NUM output for dev0
     config.comm_pool[5].blk_cnt = 4;
@@ -593,18 +581,20 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width, bool osd_mode)
 {
     //vivcap_start();
+    int ret;
 
-    // alloc memory,get isp memory
-    size_t paddr = 0;
-    void *vaddr = nullptr;
     size_t size = SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH;
+    // alloc memory,get isp memory
+    /*size_t paddr = 0;
+    void *vaddr = nullptr;
+
 
     int ret = kd_mpi_sys_mmz_alloc_cached(&paddr, &vaddr, "allocate", "anonymous", size);
     if (ret)
     {
         std::cerr << "physical_memory_block::allocate failed: ret = " << ret << ", errno = " << strerror(errno) << std::endl;
         std::abort();
-    }
+    }*/
 
     /*int debug_mode=atoi(argv[4]);
     char *fd_kmodel_path=argv[1];
@@ -646,6 +636,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     std::vector<cv::Mat> channels_argb;
     cv::Mat osd_frame;
     cv::Mat detector_frame;
+    sleep(3);
     while (!isp_stop)
     {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
@@ -669,7 +660,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
             // Save raw data to file for debugging
-            FILE* dump_file = fopen("dump.yuv", "wb");
+            FILE* dump_file = fopen("dump.ch1", "wb");
             if (dump_file) {
                 fwrite(vbvaddr, 1, (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2, dump_file);
                 fclose(dump_file);
@@ -678,10 +669,9 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                 printf("Failed to open /tmp/dump.yuv for writing\n");
             }
 
-            memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
-            kd_mpi_sys_munmap(vbvaddr, size);
+            //memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
+            //kd_mpi_sys_munmap(vbvaddr, size);
         }
-
 
 
         channels_argb.clear();
@@ -689,7 +679,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
         /*pd.pre_process();
         pd.inference();
         bool find_ = pd.post_process(results,params);*/
-
+/*
         {
             ScopedTiming st("cv::merge", debug_mode);
             memcpy(osd_frame1.data, (void *)vaddr, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
@@ -710,8 +700,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
         cv::imwrite("osd_frame.jpg", osd_frame);
         cv::imwrite("detector_frame.jpg", detector_frame);
-        break;
-/*
+
         {
             ScopedTiming st("Image resize", 1);
 
@@ -793,13 +782,14 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
             CHECK_RET(ret, __func__, __LINE__);
-
-            ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
-            if (ret)
+        }
+*/
+        ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
+        if (ret)
             {
                 printf("sample_vicap...kd_mpi_vicap_dump_release failed.\n");
             }
-        }*/
+        //break;
     }
 
     vivcap_stop();
@@ -809,12 +799,12 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     CHECK_RET(ret, __func__, __LINE__);*/
 
     // free memory
-    ret = kd_mpi_sys_mmz_free(paddr, vaddr);
+    /*ret = kd_mpi_sys_mmz_free(paddr, vaddr);
     if (ret)
     {
         std::cerr << "free failed: ret = " << ret << ", errno = " << strerror(errno) << std::endl;
         std::abort();
-    }
+    }*/
 }
 
 void print_usage(const char *name)
@@ -850,6 +840,9 @@ int main(int argc, char *argv[])
         bool osd_mode=atoi(argv[7]);
 
         k_s32 ret;
+
+
+
         //**********************encoder****************************************
         // Encoder configuration, encoding channel number is 0
         int chnum = 1;
@@ -866,6 +859,7 @@ int main(int argc, char *argv[])
         // VB initialization, (venc and vicap)
         ret = sample_vb_init(chnum, K_FALSE);
         CHECK_RET(ret, __func__, __LINE__);
+        /*
         // Configure encoding channel attributes
         {
             k_venc_chn_attr ve_attr;
@@ -898,7 +892,7 @@ int main(int argc, char *argv[])
         memset(&info, 0, sizeof(info));
         info.ch_id = venc_ch;
         info.output_frames = output_frames;
-
+*/
         ret = vivcap_start();
         CHECK_RET(ret, __func__, __LINE__);
         venc_debug("vivcap init done\n");

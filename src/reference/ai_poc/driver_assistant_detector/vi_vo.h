@@ -384,7 +384,7 @@ int vivcap_start()
 
     printf("sample_vicap ...\n");
 
-    k_vicap_sensor_type sensor_type = OV_OV5647_MIPI_CSI0_1920X1080_30FPS_10BIT_LINEAR;
+    k_vicap_sensor_type sensor_type = OV_OV5647_MIPI_CSI1_1920X1080_30FPS_10BIT_LINEAR;
     //kd_mpi_vicap_set_mclk(VICAP_MCLK0, VICAP_PLL0_CLK_DIV4, 16, 1);
 
     vicap_dev = VICAP_DEV_ID_0;
@@ -419,8 +419,8 @@ int vivcap_start()
     dev_attr.acq_win.v_start = 0; /* No vertical offset for ISP input frame */
     dev_attr.acq_win.width = ISP_INPUT_WIDTH; /* ISP input image width */
     dev_attr.acq_win.height = ISP_INPUT_HEIGHT; /* ISP input image height */
-    //dev_attr.mode = VICAP_WORK_ONLINE_MODE; /* Online mode, raw data from sensor does not need memory buffering */
-    dev_attr.mode = VICAP_WORK_OFFLINE_MODE;
+    dev_attr.mode = VICAP_WORK_ONLINE_MODE; /* Online mode, raw data from sensor does not need memory buffering */
+    //dev_attr.mode = VICAP_WORK_OFFLINE_MODE;
 
 #define VICAP_INPUT_BUF_NUM    4
     if(dev_attr.mode == VICAP_WORK_OFFLINE_MODE)
@@ -508,11 +508,11 @@ int vivcap_start()
         return ret;
     }
     // set to header file database parse mode
-    ret = kd_mpi_vicap_set_database_parse_mode(vicap_dev, VICAP_DATABASE_PARSE_XML_JSON);
+    /*ret = kd_mpi_vicap_set_database_parse_mode(vicap_dev, VICAP_DATABASE_PARSE_XML_JSON);
     if (ret) {
         printf("sample_vicap, kd_mpi_vicap_set_database_parse_mode failed.\n");
         return ret;
-    }
+    }*/
 
     printf("sample_vicap ...kd_mpi_vicap_init\n");
     ret = kd_mpi_vicap_init(vicap_dev);
