@@ -570,6 +570,13 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
     return K_SUCCESS;
 }
 
+cv::Mat nv12ToRGBHWC(const uint8_t* nv12Data, int width, int height, uint8_t* rgbChwData) {
+    cv::Mat nv12Mat(height + height / 2, width, CV_8UC1, const_cast<uint8_t*>(nv12Data));
+    cv::Mat rgbMat(height, width, CV_8UC3, rgbChwData);
+    cv::cvtColor(nv12Mat, rgbMat, cv::COLOR_YUV2BGR_NV12);
+    return rgbMat;
+}
+
 /**
 * Decoder output thread logic
 */
@@ -606,7 +613,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     }
     printf("vivcap done\n");
 
-    size_t size = SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH;
+    size_t size = (SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH) / 2;
     // alloc memory,get isp memory
     /*size_t paddr = 0;
     void *vaddr = nullptr;
@@ -619,34 +626,23 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
         std::abort();
     }*/
 
-    /*int debug_mode=atoi(argv[4]);
-    char *fd_kmodel_path=argv[1];
-    float facedet_obj_thresh=atof(argv[2]);
-    float facedet_nms_thresh=atof(argv[3]);
-    float overlap_ratio=atof(argv[5]);*/
-    /*poseDetect pd(fd_kmodel_path.c_str(), facedet_obj_thresh,facedet_nms_thresh, {SENSOR_CHANNEL, SENSOR_HEIGHT, SENSOR_WIDTH}, reinterpret_cast<uintptr_t>(vaddr), reinterpret_cast<uintptr_t>(paddr), debug_mode);
 
-    cv::Vec4d params = pd.params;
-
-    std::vector<OutputPose> results;*/
-
-    /*OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
+    OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
-    SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);*/
+    SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
     // Some initialization settings here, choose to use 1080P, ARGB8888 format data
     // Use buffer pool 2 as AI result sending buffer here
     k_u32 g_pool_id=2;
     k_video_frame_info vf_info;
-    /*void *pic_vaddr = NULL;
+    void *pic_vaddr = NULL;
     memset(&vf_info, 0, sizeof(vf_info));
     vf_info.v_frame.width = ISP_CHN1_WIDTH;
     vf_info.v_frame.height = ISP_CHN1_HEIGHT;
     vf_info.v_frame.stride[0] = ISP_CHN1_WIDTH;
-    vf_info.v_frame.pixel_format = PIXEL_FORMAT_BGR_888_PLANAR;
-    vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);*/
+    vf_info.v_frame.pixel_format = PIXEL_FORMAT_YUV_SEMIPLANAR_420;
+    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);
     k_u64  time_pts = 0;
     //**********************************************************************************************
 
@@ -659,7 +655,8 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     std::vector<cv::Mat> channels_argb;
     cv::Mat osd_frame;
     cv::Mat detector_frame;
-    //sleep(5);
+
+    uint8_t *rgb_buffer = (uint8_t *)malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
 
     while (!isp_stop)
     {
@@ -677,13 +674,11 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             }
             printf("Pixel format: %d, size: %d %d\n", dump_info.v_frame.pixel_format, dump_info.v_frame.width, dump_info.v_frame.height);
         }
+        auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
+        //time_pts++;
         {
-            ScopedTiming st("isp copy", debug_mode);
-            //auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
-            auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
-
-            if (time_pts++ == 20) {
+            if (time_pts == 5) {
                 // Save raw data to file for debugging
                 FILE* dump_file = fopen("dump.ch2", "wb");
                 if (dump_file) {
@@ -699,12 +694,12 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             //kd_mpi_sys_munmap(vbvaddr, size);
         }
 
-
         channels_argb.clear();
         std::vector<DetectionNormalized> results;
-        /*pd.pre_process();
-        pd.inference();
-        bool find_ = pd.post_process(results,params);*/
+
+        cv::Mat detector_frame = nv12ToRGBHWC((uint8_t *)vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
+
+        cv::imwrite("detector_frame.jpg", detector_frame);
 /*
         {
             ScopedTiming st("cv::merge", debug_mode);
@@ -722,9 +717,9 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             sensor_rgb.push_back(osd_frame2);
             sensor_rgb.push_back(osd_frame3);
             cv::merge(sensor_rgb, detector_frame);
-        }
+        }*/
 
-        cv::imwrite("osd_frame.jpg", osd_frame);
+        //cv::imwrite("osd_frame.jpg", osd_frame);
         cv::imwrite("detector_frame.jpg", detector_frame);
 
         {
@@ -759,7 +754,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto& det = results[i];
-                auto d = Detection::from_normalized(det, osd_frame.cols, osd_frame.rows);
+                auto d = Detection::from_normalized(det, dump_info.v_frame.width, dump_info.v_frame.height);
                 std::cout << "Object " << (i+1) << ": "
                           << detect_classes[d.class_id] << " (ID:" << d.class_id << ") "
                           << "confidence=" << d.confidence << " "
@@ -773,7 +768,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             //Utils::draw_detections(osd_frame, results);
             //cv::imwrite("object_det.jpg", osd_frame);
         }
-
+/*
         {
             ScopedTiming st("venc_send_frame", debug_mode);
             // Convert RGB image to ARGB image, send to encoder
@@ -810,6 +805,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             CHECK_RET(ret, __func__, __LINE__);
         }
 */
+        kd_mpi_sys_munmap(vbvaddr, size);
         ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
         if (ret)
             {
@@ -885,7 +881,7 @@ int main(int argc, char *argv[])
         // VB initialization, (venc and vicap)
         ret = sample_vb_init(chnum, K_FALSE);
         CHECK_RET(ret, __func__, __LINE__);
-        /*
+
         // Configure encoding channel attributes
         {
             k_venc_chn_attr ve_attr;
@@ -918,13 +914,11 @@ int main(int argc, char *argv[])
         memset(&info, 0, sizeof(info));
         info.ch_id = venc_ch;
         info.output_frames = output_frames;
-*/
-        output_thread(1, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
 
         // Start thread to write output stream to h265 file
         /*pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
-
+*/
 
         // Start video stream AI thread
         std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
@@ -937,7 +931,7 @@ int main(int argc, char *argv[])
         face_det_enc.join();
         usleep(10000);
         sample_exit(&g_venc_conf);
-*/
+
         // datafifo exit
         datafifo_deinit();
         // VB exit
