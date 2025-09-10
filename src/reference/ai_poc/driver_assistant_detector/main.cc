@@ -220,11 +220,6 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     config.comm_pool[4].mode = VB_REMAP_MODE_NOCACHE;
     config.comm_pool[4].blk_size = VICAP_ALIGN_UP((ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * SENSOR_CHANNEL ), VICAP_ALIGN_1K);
 
-    //VB for VICAP_INPUT_BUF_NUM output for dev0
-    config.comm_pool[5].blk_cnt = 4;
-    config.comm_pool[5].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[5].blk_size = VICAP_ALIGN_UP((ISP_INPUT_WIDTH * ISP_INPUT_HEIGHT * 3 ), VICAP_ALIGN_1K);
-
     ret = kd_mpi_vb_set_config(&config);
 
     k_vb_supplement_config supplement_config;
@@ -580,8 +575,36 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 */
 void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width, bool osd_mode)
 {
-    //vivcap_start();
     int ret;
+
+    while (1) {
+        ret = vivcap_start();
+        if (ret) {
+            printf("ERROR vivcap_start %lu\n", ret);
+            vivcap_stop();
+        }
+        else {
+            sleep(2);
+            memset(&dump_info, 0, sizeof(k_video_frame_info));
+            ret = kd_mpi_vicap_dump_frame(vicap_dev, VICAP_CHN_ID_1, VICAP_DUMP_YUV, &dump_info, 1000);
+            if (ret) {
+                printf("ERROR kd_mpi_vicap_dump_frame %lu\n", ret);
+
+                ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
+                if (ret)
+                {
+                    printf("ERROR kd_mpi_vicap_dump_release %lu\n", ret);
+                }
+
+                vivcap_stop();
+            }
+            else {
+                kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
+                break;
+            }
+        }
+    }
+    printf("vivcap done\n");
 
     size_t size = SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH;
     // alloc memory,get isp memory
@@ -624,7 +647,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_BGR_888_PLANAR;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
     k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);*/
-    k_u64  time_pts = 100;
+    k_u64  time_pts = 0;
     //**********************************************************************************************
 
     printf("start loop\n");
@@ -636,7 +659,8 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     std::vector<cv::Mat> channels_argb;
     cv::Mat osd_frame;
     cv::Mat detector_frame;
-    sleep(3);
+    //sleep(5);
+
     while (!isp_stop)
     {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
@@ -659,14 +683,16 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             //auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
             auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
-            // Save raw data to file for debugging
-            FILE* dump_file = fopen("dump.ch1", "wb");
-            if (dump_file) {
-                fwrite(vbvaddr, 1, (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2, dump_file);
-                fclose(dump_file);
-                printf("Saved raw YUV data to dump\n");
-            } else {
-                printf("Failed to open /tmp/dump.yuv for writing\n");
+            if (time_pts++ == 20) {
+                // Save raw data to file for debugging
+                FILE* dump_file = fopen("dump.ch2", "wb");
+                if (dump_file) {
+                    fwrite(vbvaddr, 1, (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2, dump_file);
+                    fclose(dump_file);
+                    printf("Saved raw YUV data to dump\n");
+                } else {
+                    printf("Failed to open /tmp/dump.yuv for writing\n");
+                }
             }
 
             //memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
@@ -893,9 +919,6 @@ int main(int argc, char *argv[])
         info.ch_id = venc_ch;
         info.output_frames = output_frames;
 */
-        ret = vivcap_start();
-        CHECK_RET(ret, __func__, __LINE__);
-        venc_debug("vivcap init done\n");
         output_thread(1, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
 
         // Start thread to write output stream to h265 file

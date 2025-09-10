@@ -74,10 +74,10 @@
 //#define ISP_CHN1_HEIGHT (720)
 #define ISP_CHN1_WIDTH  ISP_INPUT_WIDTH
 #define ISP_CHN1_HEIGHT ISP_INPUT_HEIGHT
-//#define ISP_CHN0_WIDTH  (1920)
-//#define ISP_CHN0_HEIGHT (1080)
-#define ISP_CHN0_WIDTH  (640)
-#define ISP_CHN0_HEIGHT (480)
+#define ISP_CHN0_WIDTH  (1920)
+#define ISP_CHN0_HEIGHT (1080)
+//#define ISP_CHN0_WIDTH  (640)
+//#define ISP_CHN0_HEIGHT (480)
 
 
 /*#define vicap_install_osd                   (0)
@@ -384,8 +384,12 @@ int vivcap_start()
 
     printf("sample_vicap ...\n");
 
-    k_vicap_sensor_type sensor_type = OV_OV5647_MIPI_CSI1_1920X1080_30FPS_10BIT_LINEAR;
-    //kd_mpi_vicap_set_mclk(VICAP_MCLK0, VICAP_PLL0_CLK_DIV4, 16, 1);
+    k_vicap_sensor_type sensor_type = OV_OV5647_MIPI_CSI0_1920X1080_30FPS_10BIT_LINEAR;
+    /*ret = kd_mpi_vicap_set_mclk(VICAP_MCLK0, VICAP_PLL0_CLK_DIV4, 16*2, 1);
+    if (ret) {
+        printf("sample_vicap, kd_mpi_vicap_set_mclk failed.\n");
+        return ret;
+    }*/
 
     vicap_dev = VICAP_DEV_ID_0;
 
