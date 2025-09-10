@@ -122,7 +122,7 @@ typedef enum
     VENC_SAMPLE_STATUS_STOPED,
     VENC_SAMPLE_STATUS_BUTT
 } VENC_SAMPLE_STATUS;
-
+/*
 typedef struct
 {
     k_u32 osd_width_;
@@ -142,7 +142,7 @@ typedef struct
     k_u8 osd_region_num;
     k_bool osd_matrix_en;
 } osd_conf_t;
-
+*/
 typedef struct
 {
     k_u16 width;
@@ -162,9 +162,9 @@ typedef struct
 {
     k_u32 chnum;
     pthread_t output_tid;
-    k_bool osd_enable;
+    /*k_bool osd_enable;
     osd_conf_t *osd_conf;
-    k_vb_blk_handle osd_blk_handle;
+    k_vb_blk_handle osd_blk_handle;*/
     k_bool ch_done;
 } venc_conf_t;
 
@@ -224,14 +224,18 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     //VB for YUV420SP output
     config.comm_pool[3].blk_cnt = 5;
     config.comm_pool[3].mode = VB_REMAP_MODE_NOCACHE;
-    // ！！！！！！！！=============== This is set to 4K alignment for encoding, 12; 0x1000);=============== ！！！！！！！！！
-    config.comm_pool[3].blk_size = VICAP_ALIGN_UP((ISP_CHN0_WIDTH * ISP_CHN0_HEIGHT * 3 / 2), 0x1000);
-   
+    config.comm_pool[3].blk_size = VICAP_ALIGN_UP((ISP_CHN0_WIDTH * ISP_CHN0_HEIGHT * SENSOR_CHANNEL) / 2, VICAP_ALIGN_1K);
+
     //VB for RGB888 output
     config.comm_pool[4].blk_cnt = 5;
     config.comm_pool[4].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[4].blk_size = VICAP_ALIGN_UP((SENSOR_HEIGHT * SENSOR_WIDTH * 3 ), VICAP_ALIGN_1K);
+    config.comm_pool[4].blk_size = VICAP_ALIGN_UP((ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * SENSOR_CHANNEL ), VICAP_ALIGN_1K);
     #endif
+
+    //VB for VICAP_INPUT_BUF_NUM output for dev0
+    config.comm_pool[5].blk_cnt = 4;
+    config.comm_pool[5].mode = VB_REMAP_MODE_NOCACHE;
+    config.comm_pool[5].blk_size = VICAP_ALIGN_UP((ISP_INPUT_WIDTH * ISP_INPUT_HEIGHT * 3 ), VICAP_ALIGN_1K);
 
     ret = kd_mpi_vb_set_config(&config);
 
@@ -588,12 +592,12 @@ k_s32 sample_exit(venc_conf_t *venc_conf)
 */
 void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width, bool osd_mode)
 {
-    vivcap_start();
+    //vivcap_start();
 
     // alloc memory,get isp memory
     size_t paddr = 0;
     void *vaddr = nullptr;
-    size_t size = SENSOR_CHANNEL * SENSOR_HEIGHT * SENSOR_WIDTH;
+    size_t size = SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH;
 
     int ret = kd_mpi_sys_mmz_alloc_cached(&paddr, &vaddr, "allocate", "anonymous", size);
     if (ret)
@@ -613,31 +617,32 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
     std::vector<OutputPose> results;*/
 
-    OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
+    /*OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
-    SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
+    SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);*/
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
     // Some initialization settings here, choose to use 1080P, ARGB8888 format data
     // Use buffer pool 2 as AI result sending buffer here
     k_u32 g_pool_id=2;
     k_video_frame_info vf_info;
-    void *pic_vaddr = NULL;
+    /*void *pic_vaddr = NULL;
     memset(&vf_info, 0, sizeof(vf_info));
-    vf_info.v_frame.width = osd_width;
-    vf_info.v_frame.height = osd_height;
-    vf_info.v_frame.stride[0] = osd_width;
+    vf_info.v_frame.width = ISP_CHN1_WIDTH;
+    vf_info.v_frame.height = ISP_CHN1_HEIGHT;
+    vf_info.v_frame.stride[0] = ISP_CHN1_WIDTH;
+    vf_info.v_frame.pixel_format = PIXEL_FORMAT_BGR_888_PLANAR;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);
+    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);*/
     k_u64  time_pts = 100;
     //**********************************************************************************************
 
     printf("start loop\n");
 
-    cv::Mat osd_frame0(osd_height, osd_width, CV_8UC1, cv::Scalar(255));
-    cv::Mat osd_frame1(osd_height, osd_width, CV_8UC1, cv::Scalar(0));
-    cv::Mat osd_frame2(osd_height, osd_width, CV_8UC1, cv::Scalar(0));
-    cv::Mat osd_frame3(osd_height, osd_width, CV_8UC1, cv::Scalar(0));
+    cv::Mat osd_frame0(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(255));
+    cv::Mat osd_frame1(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
+    cv::Mat osd_frame2(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
+    cv::Mat osd_frame3(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
     std::vector<cv::Mat> channels_argb;
     cv::Mat osd_frame;
     cv::Mat detector_frame;
@@ -652,17 +657,32 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             ret = kd_mpi_vicap_dump_frame(vicap_dev, VICAP_CHN_ID_1, VICAP_DUMP_YUV, &dump_info, 1000);
             if (ret)
             {
-                printf("sample_vicap...kd_mpi_vicap_dump_frame failed.\n");
+                printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
                 continue;
             }
+            printf("Pixel format: %d, size: %d %d\n", dump_info.v_frame.pixel_format, dump_info.v_frame.width, dump_info.v_frame.height);
         }
 
         {
             ScopedTiming st("isp copy", debug_mode);
-            auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
-            memcpy(vaddr, (void *)vbvaddr, SENSOR_HEIGHT * SENSOR_WIDTH * 3);  // This copy can be removed in the future
+            //auto vbvaddr = kd_mpi_sys_mmap_cached(dump_info.v_frame.phys_addr[0], size);
+            auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
+
+            // Save raw data to file for debugging
+            FILE* dump_file = fopen("dump.yuv", "wb");
+            if (dump_file) {
+                fwrite(vbvaddr, 1, (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2, dump_file);
+                fclose(dump_file);
+                printf("Saved raw YUV data to dump\n");
+            } else {
+                printf("Failed to open /tmp/dump.yuv for writing\n");
+            }
+
+            memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
             kd_mpi_sys_munmap(vbvaddr, size);
         }
+
+
 
         channels_argb.clear();
         std::vector<DetectionNormalized> results;
@@ -672,9 +692,9 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
         {
             ScopedTiming st("cv::merge", debug_mode);
-            memcpy(osd_frame1.data, (void *)vaddr, SENSOR_HEIGHT * SENSOR_WIDTH);
-            memcpy(osd_frame2.data, (void *)vaddr + SENSOR_HEIGHT * SENSOR_WIDTH, SENSOR_HEIGHT * SENSOR_WIDTH);
-            memcpy(osd_frame3.data, (void *)vaddr + SENSOR_HEIGHT * SENSOR_WIDTH * 2, SENSOR_HEIGHT * SENSOR_WIDTH);
+            memcpy(osd_frame1.data, (void *)vaddr, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
+            memcpy(osd_frame2.data, (void *)vaddr + ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
+            memcpy(osd_frame3.data, (void *)vaddr + ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 2, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
             channels_argb.push_back(osd_frame0);
             channels_argb.push_back(osd_frame1);
             channels_argb.push_back(osd_frame2);
@@ -688,9 +708,10 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             cv::merge(sensor_rgb, detector_frame);
         }
 
-        //cv::imwrite("osd_frame.jpg", osd_frame);
-        //cv::imwrite("detector_frame.jpg", detector_frame);
-
+        cv::imwrite("osd_frame.jpg", osd_frame);
+        cv::imwrite("detector_frame.jpg", detector_frame);
+        break;
+/*
         {
             ScopedTiming st("Image resize", 1);
 
@@ -710,10 +731,10 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             auto r = sahi.detect(detector_frame);
             for (auto it = r.cbegin(); it != r.cend(); ++it) {
                 results.push_back(it->normalize(detector_frame.cols, detector_frame.rows));
-                /*
-                auto v = it->normalize(detector_frame.cols, detector_frame.rows);
-                printf("nnnnnnnnnn %dx%d; %d %d %d %d; %.2f %.2f %.2f %.2f \n", detector_frame.cols, detector_frame.rows,
-                    it->box.x, it->box.y, it->box.width, it->box.height, v.box.x, v.box.y, v.box.width, v.box.height);*/
+
+                //auto v = it->normalize(detector_frame.cols, detector_frame.rows);
+                //printf("nnnnnnnnnn %dx%d; %d %d %d %d; %.2f %.2f %.2f %.2f \n", detector_frame.cols, detector_frame.rows,
+                //    it->box.x, it->box.y, it->box.width, it->box.height, v.box.x, v.box.y, v.box.width, v.box.height);
             }
         }
 
@@ -778,14 +799,14 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             {
                 printf("sample_vicap...kd_mpi_vicap_dump_release failed.\n");
             }
-        }
+        }*/
     }
 
     vivcap_stop();
 
     // After decoding ends, encoding ends accordingly, must release corresponding k_vb_blk_handle
-    ret = kd_mpi_vb_release_block(block_enc);
-    CHECK_RET(ret, __func__, __LINE__);
+    /*ret = kd_mpi_vb_release_block(block_enc);
+    CHECK_RET(ret, __func__, __LINE__);*/
 
     // free memory
     ret = kd_mpi_sys_mmz_free(paddr, vaddr);
@@ -832,52 +853,61 @@ int main(int argc, char *argv[])
         //**********************encoder****************************************
         // Encoder configuration, encoding channel number is 0
         int chnum = 1;
-        int ve_ch = 0;
+        int venc_ch = 0;
         k_u32 output_frames = 10;
         k_u32 bitrate   = 2000;   //kbps
-        int width       = SENSOR_WIDTH;
-        int height      = SENSOR_HEIGHT;
+        int width       = ISP_CHN1_WIDTH;
+        int height      = ISP_CHN1_HEIGHT;
         k_venc_rc_mode rc_mode  = K_VENC_RC_MODE_VBR;
         k_payload_type ve_type     = K_PT_H265;
         k_venc_profile profile  = VENC_PROFILE_H265_MAIN;
         memset(&g_venc_conf, 0, sizeof(venc_conf_t));
 
         // VB initialization, (venc and vicap)
-        sample_vb_init(chnum, K_FALSE);
-        // Configure encoding channel attributes
-        k_venc_chn_attr ve_attr;
-        memset(&ve_attr, 0, sizeof(ve_attr));
-        ve_attr.venc_attr.pic_width = width;
-        ve_attr.venc_attr.pic_height = height;
-        ve_attr.venc_attr.stream_buf_size = VE_STREAM_BUF_SIZE;
-        ve_attr.venc_attr.stream_buf_cnt = VE_OUTPUT_BUF_CNT;
-        ve_attr.rc_attr.rc_mode = rc_mode;
-        ve_attr.rc_attr.vbr.src_frame_rate = 10;
-        ve_attr.rc_attr.vbr.dst_frame_rate = 10;
-        ve_attr.rc_attr.vbr.bit_rate = bitrate;
-        ve_attr.rc_attr.vbr.max_bit_rate = bitrate * 2;
-        ve_attr.venc_attr.type = ve_type;
-        ve_attr.venc_attr.profile = profile;
-        venc_debug("payload type is H265\n");
-        // Create encoding channel
-        ret = kd_mpi_venc_create_chn(ve_ch, &ve_attr);
+        ret = sample_vb_init(chnum, K_FALSE);
         CHECK_RET(ret, __func__, __LINE__);
+        // Configure encoding channel attributes
+        {
+            k_venc_chn_attr ve_attr;
+            memset(&ve_attr, 0, sizeof(ve_attr));
+            ve_attr.venc_attr.pic_width = width;
+            ve_attr.venc_attr.pic_height = height;
+            ve_attr.venc_attr.stream_buf_size = VE_STREAM_BUF_SIZE;
+            ve_attr.venc_attr.stream_buf_cnt = VE_OUTPUT_BUF_CNT;
+            ve_attr.rc_attr.rc_mode = rc_mode;
+            ve_attr.rc_attr.vbr.src_frame_rate = 10;
+            ve_attr.rc_attr.vbr.dst_frame_rate = 10;
+            ve_attr.rc_attr.vbr.bit_rate = bitrate;
+            ve_attr.rc_attr.vbr.max_bit_rate = bitrate * 2;
+            ve_attr.venc_attr.type = ve_type;
+            ve_attr.venc_attr.profile = profile;
+            venc_debug("payload type is H265\n");
+            // Create encoding channel
+            ret = kd_mpi_venc_create_chn(venc_ch, &ve_attr);
+            CHECK_RET(ret, __func__, __LINE__);
+        }
         g_venc_sample_status = VENC_SAMPLE_STATUS_INIT;
         // Keyframe
-        kd_mpi_venc_enable_idr(ve_ch, K_TRUE);
+        kd_mpi_venc_enable_idr(venc_ch, K_TRUE);
         // Start encoding channel
-        ret = kd_mpi_venc_start_chn(ve_ch);
+        ret = kd_mpi_venc_start_chn(venc_ch);
         CHECK_RET(ret, __func__, __LINE__);
         g_venc_sample_status = VENC_SAMPLE_STATUS_START;
         // Encoding output stream settings
         output_info info;
         memset(&info, 0, sizeof(info));
-        info.ch_id = ve_ch;
+        info.ch_id = venc_ch;
         info.output_frames = output_frames;
 
+        ret = vivcap_start();
+        CHECK_RET(ret, __func__, __LINE__);
+        venc_debug("vivcap init done\n");
+        output_thread(1, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
+
         // Start thread to write output stream to h265 file
-        pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
+        /*pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
+
 
         // Start video stream AI thread
         std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
@@ -890,7 +920,7 @@ int main(int argc, char *argv[])
         face_det_enc.join();
         usleep(10000);
         sample_exit(&g_venc_conf);
-
+*/
         // datafifo exit
         datafifo_deinit();
         // VB exit
