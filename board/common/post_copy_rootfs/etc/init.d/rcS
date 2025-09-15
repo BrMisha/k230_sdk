@@ -55,6 +55,6 @@ cd -
 if [ -d /sharefs/driver_assistant_detector ]; then
 	echo "Starting driver assistant front..."
 	cd /sharefs/driver_assistant_detector
-	./driver_assistant_front -p 1628c000 -t h265 -d -b /mnt/bb > /var/log/driver_assistant.log 2>&1 &
+	./driver_assistant_front -p 17305000 -t h265 -b /mnt/bb -d > /var/log/driver_assistant.log 2>&1 &
 	echo "Driver assistant started"
 fi

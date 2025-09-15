@@ -206,6 +206,7 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     config.comm_pool[1].blk_cnt = VE_OUTPUT_BUF_CNT * ch_cnt;
     config.comm_pool[1].blk_size =VE_STREAM_BUF_SIZE;
     config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
+
     config.comm_pool[2].blk_cnt = 4;
     config.comm_pool[2].blk_size =OSD_BUF_SIZE;
     config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
@@ -342,6 +343,8 @@ static void *venc_output_thread(void *arg)
     output_info *info = (output_info *)arg;
     out_cnt = 0;
     out_frames = 0;
+
+    printf("venc_output_thread... started\n");
     
     // int index = 0;
     while (1)
@@ -352,12 +355,12 @@ static void *venc_output_thread(void *arg)
         s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
         if (K_SUCCESS != s32Ret)
         {
-            printf("write error:%x\n", s32Ret);
+            printf("venc_output_thread...write error:%x\n", s32Ret);
         }
         s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
         if (K_SUCCESS != s32Ret)
         {
-            printf("get available write len error:%x\n", s32Ret);
+            printf("venc_output_thread...get available write len error:%x\n", s32Ret);
             break;
         }
         
@@ -386,7 +389,7 @@ static void *venc_output_thread(void *arg)
         // Write stream to h265 file
         out_cnt += output.pack_cnt;
         for (i = 0; i < output.pack_cnt; i++)
-        {
+        {printf("venc_output_thread... process %d\n", i);
             if (output.pack[i].type != K_VENC_HEADER)
             {
                 out_frames++;
@@ -446,20 +449,20 @@ static void *venc_output_thread(void *arg)
                 total_size += output.pack[i].len;
                 
                 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+                printf("venc_output_thread... kd_datafifo_write %lu\n", s32Ret);
                 if (K_SUCCESS != s32Ret)
                 {
-                    printf("write error:%x\n", s32Ret);
+                    printf("venc_output_thread...write error:%x\n", s32Ret);
                     break;
                 }
                 s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
                 if (K_SUCCESS != s32Ret)
                 {
-                    printf("write done error:%x\n", s32Ret);
+                    printf("venc_output_thread...write done error:%x\n", s32Ret);
                     break;
                 }
 
                 g_s32Index++;
-                
             }
 
             kd_mpi_sys_munmap(pData, output.pack[i].len);
@@ -641,22 +644,22 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     vf_info.v_frame.width = ISP_CHN1_WIDTH;
     vf_info.v_frame.height = ISP_CHN1_HEIGHT;
     vf_info.v_frame.stride[0] = ISP_CHN1_WIDTH;
-    vf_info.v_frame.pixel_format = PIXEL_FORMAT_YUV_SEMIPLANAR_420;
+    vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
     k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr,g_pool_id);
     k_u64  time_pts = 0;
     //**********************************************************************************************
 
     printf("start loop\n");
 
+    cv::Mat detector_frame;
+    uint8_t *rgb_buffer = (uint8_t *)malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
+
     cv::Mat osd_frame0(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(255));
     cv::Mat osd_frame1(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
     cv::Mat osd_frame2(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
     cv::Mat osd_frame3(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
-    std::vector<cv::Mat> channels_argb;
-    cv::Mat osd_frame;
-    cv::Mat detector_frame;
 
-    uint8_t *rgb_buffer = (uint8_t *)malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
+    cv::Mat osd_frame;
 
     while (!isp_stop)
     {
@@ -694,57 +697,36 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
             //kd_mpi_sys_munmap(vbvaddr, size);
         }
 
-        channels_argb.clear();
+        //channels_argb.clear();
         std::vector<DetectionNormalized> results;
 
-        cv::Mat detector_frame = nv12ToRGBHWC((uint8_t *)vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
-
-        cv::imwrite("detector_frame.jpg", detector_frame);
-/*
-        {
-            ScopedTiming st("cv::merge", debug_mode);
-            memcpy(osd_frame1.data, (void *)vaddr, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
-            memcpy(osd_frame2.data, (void *)vaddr + ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
-            memcpy(osd_frame3.data, (void *)vaddr + ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 2, ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH);
-            channels_argb.push_back(osd_frame0);
-            channels_argb.push_back(osd_frame1);
-            channels_argb.push_back(osd_frame2);
-            channels_argb.push_back(osd_frame3);
-            cv::merge(channels_argb, osd_frame);
-
-            std::vector<cv::Mat> sensor_rgb;
-            sensor_rgb.push_back(osd_frame1);
-            sensor_rgb.push_back(osd_frame2);
-            sensor_rgb.push_back(osd_frame3);
-            cv::merge(sensor_rgb, detector_frame);
-        }*/
-
-        //cv::imwrite("osd_frame.jpg", osd_frame);
-        cv::imwrite("detector_frame.jpg", detector_frame);
-
-        {
-            ScopedTiming st("Image resize", 1);
-
-            if (detector_frame.cols > detection_max_width) {
-                float scale = static_cast<float>(detection_max_width) / detector_frame.cols;
-                int new_width = detection_max_width;
-                int new_height = static_cast<int>(detector_frame.rows * scale);
-                cv::resize(detector_frame, detector_frame, cv::Size(new_width, new_height));
-                detector_frame.cols = new_width;
-                detector_frame.rows = new_height;
-                std::cout << "Resized image to: " << detector_frame.cols << "x" << detector_frame.rows << std::endl;
-            }
-        }
+        cv::Mat rgb_frame = nv12ToRGBHWC((uint8_t *)vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
+        cv::imwrite("rgb_frame.jpg", rgb_frame);
+        //cv::cvtColor(argb, rgb_frame, cv::COLOR_RGB2RGBA);
 
         {
             ScopedTiming st("SAHI detection", 1);
-            auto r = sahi.detect(detector_frame);
-            for (auto it = r.cbegin(); it != r.cend(); ++it) {
-                results.push_back(it->normalize(detector_frame.cols, detector_frame.rows));
 
-                //auto v = it->normalize(detector_frame.cols, detector_frame.rows);
-                //printf("nnnnnnnnnn %dx%d; %d %d %d %d; %.2f %.2f %.2f %.2f \n", detector_frame.cols, detector_frame.rows,
-                //    it->box.x, it->box.y, it->box.width, it->box.height, v.box.x, v.box.y, v.box.width, v.box.height);
+            if (rgb_frame.cols > detection_max_width) {
+                ScopedTiming st("Image resize", 1);
+                float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
+                int new_width = detection_max_width;
+                int new_height = static_cast<int>(rgb_frame.rows * scale);
+                cv::resize(rgb_frame, detector_frame, cv::Size(new_width, new_height));
+                detector_frame.cols = new_width;
+                detector_frame.rows = new_height;
+                std::cout << "Resized image to: " << detector_frame.cols << "x" << detector_frame.rows << std::endl;
+
+                auto r = sahi.detect(detector_frame);
+                for (auto it = r.cbegin(); it != r.cend(); ++it) {
+                    results.push_back(it->normalize(detector_frame.cols, detector_frame.rows));
+                }
+            }
+            else {
+                auto r = sahi.detect(rgb_frame);
+                for (auto it = r.cbegin(); it != r.cend(); ++it) {
+                    results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
+                }
             }
         }
 
@@ -762,7 +744,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                           << d.box.width << "x" << d.box.height << "]"
                           << std::endl;
 
-                if (osd_mode) Utils::draw_detection(osd_frame, d);
+                if (osd_mode) Utils::draw_detection(rgb_frame, d);
             }
 
             //Utils::draw_detections(osd_frame, results);
@@ -770,10 +752,39 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
         }
 /*
         {
+            ScopedTiming st("memcpy", debug_mode);
+
+            cv::split(rgb_frame, channels);
+            std::vector<cv::Mat> channels_argb;
+
+            channels_argb.push_back(osd_frame0);
+            channels_argb.push_back(rgb_frame.channels[0]);
+            channels_argb.push_back(rgb_frame.channels[0]);
+            channels_argb.push_back(rgb_frame.channels[0]);
+            cv::merge(channels_argb, osd_frame);
+        }
+*/
+        {
             ScopedTiming st("venc_send_frame", debug_mode);
             // Convert RGB image to ARGB image, send to encoder
+            uint8_t *src = rgb_frame.data;
+            uint8_t *dst = (uint8_t *)pic_vaddr;
+            
+            for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
+                for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
+                    int src_idx = (y * ISP_CHN1_WIDTH + x) * 3;
+                    int dst_idx = (y * ISP_CHN1_WIDTH + x) * 4;
+                    
+                    // Copy RGB values and add alpha channel (255 = fully opaque)
+                    dst[dst_idx + 0] = 255;           // Alpha
+                    dst[dst_idx + 1] = src[src_idx + 2]; // B
+                    dst[dst_idx + 2] = src[src_idx + 1]; // G
+                    dst[dst_idx + 3] = src[src_idx + 0]; // R
+                }
+            }
+            cv::Mat argbMat(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC4, dst);
+            cv::imwrite("argbMat.jpg", argbMat);
 
-            memcpy(pic_vaddr, osd_frame.data, osd_frame.cols * osd_frame.rows * osd_frame.channels());
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             vf_info.v_frame.pts = time_pts++;
 
@@ -782,7 +793,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                 ld.pts = vf_info.v_frame.pts;
 
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, osd_frame.cols, osd_frame.rows);
+                    auto d = Detection::from_normalized(*it, rgb_frame.cols, rgb_frame.rows);
 
                     DetectionCommon dc;
                     memset(&dc, 0, sizeof(DetectionCommon));
@@ -801,10 +812,11 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                 last_detections.push(ld);
             }
 
+            printf("send kd_mpi_venc_send_frame\n");
             ret=kd_mpi_venc_send_frame(0, &vf_info, -1);
             CHECK_RET(ret, __func__, __LINE__);
         }
-*/
+
         kd_mpi_sys_munmap(vbvaddr, size);
         ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
         if (ret)
@@ -817,8 +829,8 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
     vivcap_stop();
 
     // After decoding ends, encoding ends accordingly, must release corresponding k_vb_blk_handle
-    /*ret = kd_mpi_vb_release_block(block_enc);
-    CHECK_RET(ret, __func__, __LINE__);*/
+    ret = kd_mpi_vb_release_block(block_enc);
+    CHECK_RET(ret, __func__, __LINE__);
 
     // free memory
     /*ret = kd_mpi_sys_mmz_free(paddr, vaddr);
@@ -916,9 +928,8 @@ int main(int argc, char *argv[])
         info.output_frames = output_frames;
 
         // Start thread to write output stream to h265 file
-        /*pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
+        pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
-*/
 
         // Start video stream AI thread
         std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
