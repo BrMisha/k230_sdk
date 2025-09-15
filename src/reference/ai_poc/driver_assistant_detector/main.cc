@@ -583,7 +583,7 @@ cv::Mat nv12ToRGBHWC(const uint8_t* nv12Data, int width, int height, uint8_t* rg
 /**
 * Decoder output thread logic
 */
-void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width, bool osd_mode)
+void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width)
 {
     int ret;
 
@@ -631,7 +631,6 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
 
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
-    //SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
@@ -651,7 +650,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
     printf("start loop\n");
 
-    cv::Mat detector_frame;
+    //cv::Mat detector_frame;
     uint8_t *rgb_buffer = (uint8_t *)malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
 
     cv::Mat osd_frame0(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(255));
@@ -679,8 +678,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
         }
         auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
-        //time_pts++;
-        {
+        /*{
             if (time_pts == 5) {
                 // Save raw data to file for debugging
                 FILE* dump_file = fopen("dump.ch2", "wb");
@@ -695,14 +693,34 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
             //memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
             //kd_mpi_sys_munmap(vbvaddr, size);
-        }
+        }*/
 
-        //channels_argb.clear();
         std::vector<DetectionNormalized> results;
 
         cv::Mat rgb_frame = nv12ToRGBHWC((uint8_t *)vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
-        cv::imwrite("rgb_frame.jpg", rgb_frame);
-        //cv::cvtColor(argb, rgb_frame, cv::COLOR_RGB2RGBA);
+        //cv::imwrite("rgb_frame.jpg", rgb_frame);
+
+        // Copy to encoder because the rgb_frame may resized on next step
+        {
+            ScopedTiming st("RGB to ARGB", debug_mode);
+
+            // Convert RGB image to ARGB image, send to encoder
+            uint8_t *src = rgb_frame.data;
+            uint8_t *dst = (uint8_t *)pic_vaddr;
+
+            for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
+                for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
+                    int src_idx = (y * ISP_CHN1_WIDTH + x) * 3;
+                    int dst_idx = (y * ISP_CHN1_WIDTH + x) * 4;
+
+                    // Copy RGB values and add alpha channel (255 = fully opaque)
+                    dst[dst_idx + 0] = 255;           // Alpha
+                    dst[dst_idx + 1] = src[src_idx + 2]; // B
+                    dst[dst_idx + 2] = src[src_idx + 1]; // G
+                    dst[dst_idx + 3] = src[src_idx + 0]; // R
+                }
+            }
+        }
 
         {
             ScopedTiming st("SAHI detection", 1);
@@ -712,21 +730,14 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                 float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
                 int new_width = detection_max_width;
                 int new_height = static_cast<int>(rgb_frame.rows * scale);
-                cv::resize(rgb_frame, detector_frame, cv::Size(new_width, new_height));
-                detector_frame.cols = new_width;
-                detector_frame.rows = new_height;
-                std::cout << "Resized image to: " << detector_frame.cols << "x" << detector_frame.rows << std::endl;
-
-                auto r = sahi.detect(detector_frame);
-                for (auto it = r.cbegin(); it != r.cend(); ++it) {
-                    results.push_back(it->normalize(detector_frame.cols, detector_frame.rows));
-                }
+                cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
+                rgb_frame.cols = new_width;
+                rgb_frame.rows = new_height;
+                std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
             }
-            else {
-                auto r = sahi.detect(rgb_frame);
-                for (auto it = r.cbegin(); it != r.cend(); ++it) {
-                    results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
-                }
+            auto r = sahi.detect(rgb_frame);
+            for (auto it = r.cbegin(); it != r.cend(); ++it) {
+                results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
             }
         }
 
@@ -743,47 +754,12 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                           << "box=[" << d.box.x << "," << d.box.y << ","
                           << d.box.width << "x" << d.box.height << "]"
                           << std::endl;
-
-                if (osd_mode) Utils::draw_detection(rgb_frame, d);
             }
-
-            //Utils::draw_detections(osd_frame, results);
-            //cv::imwrite("object_det.jpg", osd_frame);
         }
-/*
-        {
-            ScopedTiming st("memcpy", debug_mode);
 
-            cv::split(rgb_frame, channels);
-            std::vector<cv::Mat> channels_argb;
-
-            channels_argb.push_back(osd_frame0);
-            channels_argb.push_back(rgb_frame.channels[0]);
-            channels_argb.push_back(rgb_frame.channels[0]);
-            channels_argb.push_back(rgb_frame.channels[0]);
-            cv::merge(channels_argb, osd_frame);
-        }
-*/
         {
             ScopedTiming st("venc_send_frame", debug_mode);
-            // Convert RGB image to ARGB image, send to encoder
-            uint8_t *src = rgb_frame.data;
-            uint8_t *dst = (uint8_t *)pic_vaddr;
-            
-            for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
-                for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
-                    int src_idx = (y * ISP_CHN1_WIDTH + x) * 3;
-                    int dst_idx = (y * ISP_CHN1_WIDTH + x) * 4;
-                    
-                    // Copy RGB values and add alpha channel (255 = fully opaque)
-                    dst[dst_idx + 0] = 255;           // Alpha
-                    dst[dst_idx + 1] = src[src_idx + 2]; // B
-                    dst[dst_idx + 2] = src[src_idx + 1]; // G
-                    dst[dst_idx + 3] = src[src_idx + 0]; // R
-                }
-            }
-            cv::Mat argbMat(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC4, dst);
-            cv::imwrite("argbMat.jpg", argbMat);
+
 
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             vf_info.v_frame.pts = time_pts++;
@@ -793,7 +769,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
                 ld.pts = vf_info.v_frame.pts;
 
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, rgb_frame.cols, rgb_frame.rows);
+                    auto d = Detection::from_normalized(*it, dump_info.v_frame.width, dump_info.v_frame.height);
 
                     DetectionCommon dc;
                     memset(&dc, 0, sizeof(DetectionCommon));
@@ -858,7 +834,7 @@ void print_usage(const char *name)
 int main(int argc, char *argv[])
 {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 8)
+    if (argc != 7)
     {
         print_usage(argv[0]);
         return -1;
@@ -871,7 +847,6 @@ int main(int argc, char *argv[])
         float facedet_nms_thresh=atof(argv[4]);
         float overlap_ratio=atof(argv[5]);
         int detection_max_width=atoi(argv[6]);
-        bool osd_mode=atoi(argv[7]);
 
         k_s32 ret;
 
@@ -932,7 +907,7 @@ int main(int argc, char *argv[])
         g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
 
         // Start video stream AI thread
-        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width, osd_mode);
+        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width);
         while (getchar() != 'q')
         {
             usleep(10000);
