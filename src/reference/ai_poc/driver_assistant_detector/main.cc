@@ -68,16 +68,6 @@
     #define vdec_debug(ARGS...)
 #endif
 
-#define MAX_WIDTH 1088
-#define MAX_HEIGHT 1920
-#define STREAM_BUF_SIZE MAX_WIDTH*MAX_HEIGHT
-#define FRAME_BUF_SIZE MAX_WIDTH*MAX_HEIGHT*2
-#define INPUT_BUF_CNT   4
-#define OUTPUT_BUF_CNT  6
-
-#define VENC_MAX_IN_FRAMES   30
-#define ENABLE_VENC_DEBUG    1
-
 #ifdef ENABLE_VDSS
     #include "k_vdss_comm.h"
     #include "mpi_vdss_api.h"
@@ -91,16 +81,12 @@
     #define venc_debug(ARGS...)
 #endif
 
-#define VE_MAX_WIDTH 1920
-#define VE_MAX_HEIGHT 1080
+#define VE_MAX_WIDTH ISP_CHN1_WIDTH
+#define VE_MAX_HEIGHT ISP_CHN1_HEIGHT
 #define VE_STREAM_BUF_SIZE ((VE_MAX_WIDTH*VE_MAX_HEIGHT/2 + 0xfff) & ~0xfff)
 #define VE_FRAME_BUF_SIZE ((VE_MAX_WIDTH*VE_MAX_HEIGHT*2 + 0xfff) & ~0xfff)
-#define OSD_MAX_WIDTH 1920
-#define OSD_MAX_HEIGHT 1088
-#define OSD_BUF_SIZE OSD_MAX_WIDTH*OSD_MAX_HEIGHT*4
 #define VE_INPUT_BUF_CNT   6
 #define VE_OUTPUT_BUF_CNT  15
-#define OSD_BUF_CNT     20
 
 // datafifo
 #define READER_INDEX    0
@@ -122,27 +108,7 @@ typedef enum
     VENC_SAMPLE_STATUS_STOPED,
     VENC_SAMPLE_STATUS_BUTT
 } VENC_SAMPLE_STATUS;
-/*
-typedef struct
-{
-    k_u32 osd_width_;
-    k_u32 osd_height_;
-    k_u32 osd_phys_addr[VENC_MAX_IN_FRAMES][3];
-    void *osd_virt_addr[VENC_MAX_IN_FRAMES][3];
-    k_u32 osd_startx;
-    k_u32 osd_starty;
-    k_venc_2d_src_dst_fmt video_fmt;
-    k_venc_2d_osd_fmt osd_fmt;
-    k_u16 bg_alpha;
-    k_u16 osd_alpha;
-    k_u16 video_alpha;
-    k_venc_2d_add_order add_order;
-    k_u32 bg_color;
-    k_u16 osd_coef[K_VENC_2D_COEF_NUM];
-    k_u8 osd_region_num;
-    k_bool osd_matrix_en;
-} osd_conf_t;
-*/
+
 typedef struct
 {
     k_u16 width;
@@ -162,9 +128,6 @@ typedef struct
 {
     k_u32 chnum;
     pthread_t output_tid;
-    /*k_bool osd_enable;
-    osd_conf_t *osd_conf;
-    k_vb_blk_handle osd_blk_handle;*/
     k_bool ch_done;
 } venc_conf_t;
 
@@ -192,7 +155,7 @@ static inline void CHECK_RET(k_s32 ret, const char *func, const int line)
 /**
 * VB initialization
 */
-static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
+static k_s32 sample_vb_init(k_u32 ch_cnt)
 {
     k_s32 ret;
     k_vb_config config;
@@ -206,9 +169,8 @@ static k_s32 sample_vb_init(k_u32 ch_cnt, k_bool osd_enable)
     config.comm_pool[1].blk_cnt = VE_OUTPUT_BUF_CNT * ch_cnt;
     config.comm_pool[1].blk_size =VE_STREAM_BUF_SIZE;
     config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-
     config.comm_pool[2].blk_cnt = 4;
-    config.comm_pool[2].blk_size =OSD_BUF_SIZE;
+    config.comm_pool[2].blk_size =(VE_MAX_WIDTH * VE_MAX_HEIGHT * 4);
     config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
 
     //VB for YUV420SP output
@@ -650,15 +612,7 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
     printf("start loop\n");
 
-    //cv::Mat detector_frame;
     uint8_t *rgb_buffer = (uint8_t *)malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
-
-    cv::Mat osd_frame0(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(255));
-    cv::Mat osd_frame1(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
-    cv::Mat osd_frame2(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
-    cv::Mat osd_frame3(ISP_CHN1_HEIGHT, ISP_CHN1_WIDTH, CV_8UC1, cv::Scalar(0));
-
-    cv::Mat osd_frame;
 
     while (!isp_stop)
     {
@@ -743,7 +697,6 @@ void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thres
 
         {
             ScopedTiming st("osd draw", debug_mode);
-            //Utils::DrawPred_video(osd_frame,{SENSOR_WIDTH,SENSOR_HEIGHT}, results, SKELETON, KPS_COLORS, LIMB_COLORS);
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto& det = results[i];
@@ -850,8 +803,6 @@ int main(int argc, char *argv[])
 
         k_s32 ret;
 
-
-
         //**********************encoder****************************************
         // Encoder configuration, encoding channel number is 0
         int chnum = 1;
@@ -866,7 +817,7 @@ int main(int argc, char *argv[])
         memset(&g_venc_conf, 0, sizeof(venc_conf_t));
 
         // VB initialization, (venc and vicap)
-        ret = sample_vb_init(chnum, K_FALSE);
+        ret = sample_vb_init(chnum);
         CHECK_RET(ret, __func__, __LINE__);
 
         // Configure encoding channel attributes
