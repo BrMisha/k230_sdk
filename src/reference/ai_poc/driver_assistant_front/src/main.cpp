@@ -88,6 +88,8 @@ int parse_config(int argc, char *argv[], KdMediaInputConfig &config, std::string
             else if (s == "h265") config.video_type = KdMediaVideoType::kVideoTypeH265;
             else Usage();
             config.video_valid = true;
+            config.venc_width = 1920;
+            config.venc_height = 1080;
             break;
         }
         case 'p': {
@@ -291,7 +293,7 @@ void* read_send(void* arg)
 
 int main(int argc, char *argv[]) {
     std::cout << "./rtspServer -H to show usage" << std::endl;
-    std::cout << "./rtspServer -p 1628c000 -t h265 -b /mnt/bb" << std::endl;
+    std::cout << "./rtspServer -p 17305000 -t h265 -b /mnt/bb" << std::endl;
     // ffplay -rtsp_transport tcp -fflags nobuffer+ignidx+igndts -flags low_delay -framedrop -sync ext -i rtsp://10.42.0.156:8554/BackChannelTest
 
 
