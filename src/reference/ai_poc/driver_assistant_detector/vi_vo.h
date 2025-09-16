@@ -79,14 +79,6 @@
 //#define ISP_CHN0_WIDTH  (640)
 //#define ISP_CHN0_HEIGHT (480)
 
-
-/*#define vicap_install_osd                   (0)
-#define osd_id                              K_VO_OSD3
-//#define osd_width                           (480)
-//#define osd_height                          (800)
-#define osd_width                           SENSOR_WIDTH
-#define osd_height                          SENSOR_HEIGHT
-*/
 k_vb_config config;
 k_vicap_dev vicap_dev;
 k_vicap_chn vicap_chn;
@@ -213,79 +205,6 @@ k_vb_blk_handle vo_insert_frame(k_video_frame_info *vf_info, void **pic_vaddr)
     return handle;
 }
 
-/*k_u32 vo_creat_osd_test(k_vo_osd osd, osd_info *info)
-{
-    k_vo_video_osd_attr attr;
-
-    // set attr
-    attr.global_alptha = info->global_alptha;
-
-    if (info->format == PIXEL_FORMAT_ABGR_8888 || info->format == PIXEL_FORMAT_ARGB_8888)
-    {
-        info->size = info->act_size.width  * info->act_size.height * 4;
-        info->stride  = info->act_size.width * 4 / 8;
-    }
-    else if (info->format == PIXEL_FORMAT_RGB_565 || info->format == PIXEL_FORMAT_BGR_565)
-    {
-        info->size = info->act_size.width  * info->act_size.height * 2;
-        info->stride  = info->act_size.width * 2 / 8;
-    }
-    else if (info->format == PIXEL_FORMAT_RGB_888 || info->format == PIXEL_FORMAT_BGR_888)
-    {
-        info->size = info->act_size.width  * info->act_size.height * 3;
-        info->stride  = info->act_size.width * 3 / 8;
-    }
-    else if(info->format == PIXEL_FORMAT_ARGB_4444 || info->format == PIXEL_FORMAT_ABGR_4444)
-    {
-        info->size = info->act_size.width  * info->act_size.height * 2;
-        info->stride  = info->act_size.width * 2 / 8;
-    }
-    else if(info->format == PIXEL_FORMAT_ARGB_1555 || info->format == PIXEL_FORMAT_ABGR_1555)
-    {
-        info->size = info->act_size.width  * info->act_size.height * 2;
-        info->stride  = info->act_size.width * 2 / 8;
-    }
-    else
-    {
-        printf("set osd pixel format failed  \n");
-    }
-
-    attr.stride = info->stride;
-    attr.pixel_format = info->format;
-    attr.display_rect = info->offset;
-    attr.img_size = info->act_size;
-    kd_mpi_vo_set_video_osd_attr(osd, &attr);
-
-    kd_mpi_vo_osd_enable(osd);
-
-    return 0;
-}
-
-void sample_vicap_install_osd(void)
-{
-    osd_info osd;
-
-    osd.act_size.width = osd_width ;
-    osd.act_size.height = osd_height;
-    osd.offset.x = 0;
-    osd.offset.y = 0;
-    osd.global_alptha = 0xff;
-    // osd.global_alptha = 0x32;
-    osd.format = PIXEL_FORMAT_ARGB_8888;//PIXEL_FORMAT_ARGB_4444; //PIXEL_FORMAT_ARGB_1555;//PIXEL_FORMAT_ARGB_8888;
-
-    vo_creat_osd_test(osd_id, &osd);
-}
-
-void vo_osd_release_block(void)
-{
-    if(vicap_install_osd == 1)
-    {
-        kd_mpi_vo_osd_disable(osd_id);
-        kd_mpi_vb_release_block(block);
-    }
-
-}*/
-
 static k_s32 sample_connector_init(void)
 {
     k_u32 ret = 0;
@@ -344,9 +263,6 @@ static k_s32 vo_layer_vdss_bind_vo_config(void)
     info.offset.y = 0;//(1920-h)/2;
     vo_creat_layer_test(chn_id, &info);
 
-    /*if(vicap_install_osd == 1)
-        sample_vicap_install_osd();*/
-
     //exit ;
     return 0;
 }
@@ -396,18 +312,6 @@ int vivcap_start()
     // vb 初始化放到了rtsp_enc.cc文件中 这里不需要进行vb初始化和 反初始化
 
     //vo_layer_vdss_bind_vo_config();
-
-    /*if(vicap_install_osd == 1)
-    {
-        memset(&pool_config, 0, sizeof(pool_config));
-        pool_config.blk_size = VICAP_ALIGN_UP((osd_width * osd_height * 4 * 2), VICAP_ALIGN_1K);
-        pool_config.blk_cnt = 4;
-        pool_config.mode = VB_REMAP_MODE_NOCACHE;
-        pool_id = kd_mpi_vb_create_pool(&pool_config);      // osd0 - 3 argb 320 x 240
-        g_pool_id = pool_id;
-
-        printf("--------aa--------------g_pool_id is %d pool_id is %d \n",g_pool_id, pool_id);
-    }*/
 
     k_vicap_sensor_info sensor_info;
     memset(&sensor_info, 0, sizeof(k_vicap_sensor_info));
