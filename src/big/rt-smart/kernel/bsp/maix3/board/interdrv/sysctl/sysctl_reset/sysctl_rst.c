@@ -28,265 +28,192 @@
 #include "sysctl_rst.h"
 #include "ioremap.h"
 #include "board.h"
+#include <rthw.h>
 
 /* created by yangfan */
+typedef enum
+{
+    W1C = 1<<0,
+    W1T = 1<<1,
+    WE = 1<<2, //write enable
+    RWSC = 1<<3,
+    RW_0 = 1<<4,
+    RW_1 = 1<<5,
+} reset_type_t;
+
+typedef struct {
+    sysctl_reset_e reset;
+    uint32_t type;
+    uint8_t reg_offset;
+    uint8_t reset_bit;
+    uint8_t done_bit;
+    uint32_t mask_rw;
+} reset_t;
 
 volatile sysctl_rst_t* sysctl_rst = (volatile sysctl_rst_t*)SYSCTL_RST_BASE_ADDR;
 
-static bool sysctl_reset_cpu(volatile uint32_t *reset_reg, uint8_t reset_bit, uint8_t done_bit)
-{
-    /* clear done bit */
-    *reset_reg |= (1 << done_bit);
-    *reset_reg |= (1 << (done_bit + 0x10));  /* write enable */
-    // usleep(100);
-    rt_thread_delay(1);
-
-    /* set reset bit */
-    *reset_reg |= (1 << reset_bit);
-    *reset_reg |= (1 << (reset_bit + 0x10));  /* write enable */
-    // usleep(100);
-    rt_thread_delay(1);
-
-    /* clear reset bit */
-    if(&sysctl_rst->cpu1_rst_ctl == (uint64_t)reset_reg)
-    {
-        *reset_reg &= ~(1 << reset_bit);
-        *reset_reg |= (1 << (reset_bit + 0x10));   /* write enable */
-    }
-    // usleep(100);
-    rt_thread_delay(1);
-
-    /* check done bit */
-    if(*reset_reg & (1 << done_bit))
-        return true;
-    else
-        return false;
-}
-
-static bool sysctl_reset_hw_done(volatile uint32_t *reset_reg, uint8_t reset_bit, uint8_t done_bit)
-{
-    *reset_reg |= (1 << done_bit);      /* clear done bit */
-    // usleep(100);
-    rt_thread_delay(1);
-
-    *reset_reg |= (1 << reset_bit);     /* set reset bit */
-    // usleep(100);
-    rt_thread_delay(1);
-    /* check done bit */
-    if(*reset_reg & (1 << done_bit))
-        return true;
-    else
-        return false;
-}
-
-static bool sysctl_reset_sw_done(volatile uint32_t *reset_reg, uint8_t reset_bit, uint32_t reset_en)
-{
-    if(0 == reset_en)
-    {
-        if((&sysctl_rst->soc_ctl_rst_ctl == (uint64_t)reset_reg) || (&sysctl_rst->losys_rst_ctl == (uint64_t)reset_reg) || (&sysctl_rst->isp_rst_ctl == (uint64_t)reset_reg) || (&sysctl_rst->sram_rst_ctl == (uint64_t)reset_reg))
-        {
-            *reset_reg &= ~(1 << reset_bit);     /* set reset bit, 0 is assert */
-        }
-        else
-        {
-            *reset_reg |= (1 << reset_bit);     /* set reset bit, 1 is assert */
-        }
-    }
-    else
-    {
-        *reset_reg |= (1 << reset_bit) | (1 << reset_en);     /* set reset bit */
-    }
-    // usleep(100);
-    rt_thread_delay(1);
-
-    if((&sysctl_rst->cpu0_rst_ctl != (uint64_t)reset_reg) && (&sysctl_rst->cpu1_rst_ctl != (uint64_t)reset_reg))
-    {
-        if(&sysctl_rst->spi2axi_rst_ctl == (uint64_t)reset_reg)
-        {
-            *reset_reg &= ~(1 << reset_bit);    /* clear reset bit, 0 is clear */
-        }
-        else
-        {
-            *reset_reg |= (1 << reset_bit);    /* clear reset bit, 1 is clear */
-        }
-    }
-    // usleep(100);
-    rt_thread_delay(1);
-
-    return true;
-}
+reset_t k230_reset[] = {
+    {SYSCTL_RESET_CPU0_CORE, WE|W1T|W1C, 0x4, 0, 12, 0x0},
+    {SYSCTL_RESET_CPU0_FLUSH, WE|RWSC, 0x4, 4, 4, 0x0},
+    {SYSCTL_RESET_CPU1_CORE, WE|RW_1|W1C, 0xc, 0, 12, 0x1},
+    {SYSCTL_RESET_CPU1_FLUSH, WE|RWSC, 0xc, 4, 4, 0x1},
+    {SYSCTL_RESET_AI, W1T|W1C, 0x14, 0, 31, 0x0},
+    {SYSCTL_RESET_VPU, W1T|W1C, 0x1c, 0, 31, 0x0},
+    {SYSCTL_RESET_HS, W1T|W1C, 0x2c, 0, 4, 0x0},
+    {SYSCTL_RESET_HS_AHB, W1T|W1C, 0x2c, 1, 5, 0x0},
+    {SYSCTL_RESET_SDIO0, W1T|W1C, 0x34, 0, 28, 0x0},
+    {SYSCTL_RESET_SDIO1, W1T|W1C, 0x34, 1, 29, 0x0},
+    {SYSCTL_RESET_SDIO_AXI, W1T|W1C, 0x34, 2, 30, 0x0},
+    {SYSCTL_RESET_USB0, W1T|W1C, 0x3c, 0, 28, 0x0},
+    {SYSCTL_RESET_USB1, W1T|W1C, 0x3c, 1, 29, 0x0},
+    {SYSCTL_RESET_USB0_AHB, W1T|W1C, 0x3c, 0, 30, 0x0},
+    {SYSCTL_RESET_USB1_AHB, W1T|W1C, 0x3c, 1, 31, 0x0},
+    {SYSCTL_RESET_SPI0, W1T|W1C, 0x44, 0, 28, 0x0},
+    {SYSCTL_RESET_SPI1, W1T|W1C, 0x44, 1, 29, 0x0},
+    {SYSCTL_RESET_SPI2, W1T|W1C, 0x44, 2, 30, 0x0},
+    {SYSCTL_RESET_SEC, W1T|W1C, 0x4c, 0, 31, 0x0},
+    {SYSCTL_RESET_PDMA, W1T|W1C, 0x54, 0, 28, 0x0},
+    {SYSCTL_RESET_SDMA, W1T|W1C, 0x54, 1, 29, 0x0},
+    {SYSCTL_RESET_DECOMPRESS, W1T|W1C, 0x5c, 0, 31, 0x0},
+    {SYSCTL_RESET_SRAM, W1T|W1C, 0x64, 0, 28, 0x2},
+    {SYSCTL_RESET_SHRM_AXIM, W1T|W1C, 0x64, 2, 30, 0x2},
+    {SYSCTL_RESET_SHRM_AXIS, W1T|W1C, 0x64, 3, 31, 0x2},
+    {SYSCTL_RESET_SHRM_APB, RW_0, 0x64, 1, 0, 0x2},
+    {SYSCTL_RESET_NONAI2D, W1T|W1C, 0x6c, 0, 31, 0x0},
+    {SYSCTL_RESET_MCTL, W1T|W1C, 0x74, 0, 31, 0x0},
+    {SYSCTL_RESET_ISP, W1T|W1C, 0x80, 6, 29, 0x39f},
+    {SYSCTL_RESET_ISP_DW, W1T|W1C, 0x80, 5, 28, 0x39f},
+    {SYSCTL_RESET_CSI0_APB, RW_0, 0x80, 0, 0, 0x39f},
+    {SYSCTL_RESET_CSI1_APB, RW_0, 0x80, 1, 0, 0x39f},
+    {SYSCTL_RESET_CSI2_APB, RW_0, 0x80, 2, 0, 0x39f},
+    {SYSCTL_RESET_CSI_DPHY_APB, RW_0, 0x80, 3, 0, 0x39f},
+    {SYSCTL_RESET_ISP_AHB, RW_0, 0x80, 4, 0, 0x39f},
+    {SYSCTL_RESET_M0, RW_0, 0x80, 7, 0, 0x39f},
+    {SYSCTL_RESET_M1, RW_0, 0x80, 8, 0, 0x39f},
+    {SYSCTL_RESET_M2, RW_0, 0x80, 9, 0, 0x39f},
+    {SYSCTL_RESET_DPU, W1T|W1C, 0x88, 0, 31, 0x0},
+    {SYSCTL_RESET_DISP, W1T|W1C, 0x90, 0, 31, 0x0},
+    {SYSCTL_RESET_GPU, W1T|W1C, 0x98, 0, 31, 0x0},
+    {SYSCTL_RESET_AUDIO, W1T|W1C, 0xa4, 0, 31, 0x0},
+    {SYSCTL_RESET_TIMER0, RW_0, 0x20, 0, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER1, RW_0, 0x20, 1, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER2, RW_0, 0x20, 2, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER3, RW_0, 0x20, 3, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER4, RW_0, 0x20, 4, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER5, RW_0, 0x20, 5, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER_APB, RW_0, 0x20, 6, 0, 0xff0ff},
+    {SYSCTL_RESET_HDI, RW_0, 0x20, 7, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT0, RW_0, 0x20, 12, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT1, RW_0, 0x20, 13, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT0_APB, RW_0, 0x20, 14, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT1_APB, RW_0, 0x20, 15, 0, 0xff0ff},
+    {SYSCTL_RESET_TS_APB, RW_0, 0x20, 16, 0, 0xff0ff},
+    {SYSCTL_RESET_MAILBOX, RW_0, 0x20, 17, 0, 0xff0ff},
+    {SYSCTL_RESET_STC, RW_0, 0x20, 18, 0, 0xff0ff},
+    {SYSCTL_RESET_PMU, RW_0, 0x20, 19, 0, 0xff0ff},
+    {SYSCTL_RESET_LS_APB, RW_0, 0x24, 0, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART0, RW_0, 0x24, 1, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART1, RW_0, 0x24, 2, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART2, RW_0, 0x24, 3, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART3, RW_0, 0x24, 4, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART4, RW_0, 0x24, 5, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C0, RW_0, 0x24, 6, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C1, RW_0, 0x24, 7, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C2, RW_0, 0x24, 8, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C3, RW_0, 0x24, 9, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C4, RW_0, 0x24, 10, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK0_APB, RW_0, 0x24, 11, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK1_APB, RW_0, 0x24, 12, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK2_APB, RW_0, 0x24, 13, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK3_APB, RW_0, 0x24, 14, 0, 0x7e7fff},
+    {SYSCTL_RESET_CODEC_APB, RW_0, 0x24, 17, 0, 0x7e7fff},
+    {SYSCTL_RESET_GPIO_DB, RW_0, 0x24, 18, 0, 0x7e7fff},
+    {SYSCTL_RESET_GPIO_APB, RW_0, 0x24, 19, 0, 0x7e7fff},
+    {SYSCTL_RESET_ADC, RW_0, 0x24, 20, 0, 0x7e7fff},
+    {SYSCTL_RESET_ADC_APB, RW_0, 0x24, 21, 0, 0x7e7fff},
+    {SYSCTL_RESET_PWM_APB, RW_0, 0x24, 22, 0, 0x7e7fff},
+    {SYSCTL_RESET_SPI2AXI, RW_0, 0xa8, 0, 0, 0x1},
+};
 
 bool sysctl_reset(sysctl_reset_e reset)
 {
-    switch(reset)
+    uint32_t type = k230_reset[reset].type;
+    uint8_t reg_offset = k230_reset[reset].reg_offset;
+    uint8_t reset_bit = k230_reset[reset].reset_bit;
+    uint8_t done_bit = k230_reset[reset].done_bit;
+    uint32_t mask_rw = k230_reset[reset].mask_rw;
+    uint32_t data = 0;
+
+    rt_base_t level;
+
+    volatile uint32_t *reset_reg = (volatile uint32_t *)sysctl_rst + reg_offset/4;
+
+    level = rt_hw_interrupt_disable();
+    /* clear done bit */
+    if(type & W1C)
     {
-        case SYSCTL_RESET_CPU0_CORE:
-            return sysctl_reset_cpu((volatile uint32_t *)&sysctl_rst->cpu0_rst_ctl, 0, 12);
-        case SYSCTL_RESET_CPU1_CORE:
-            return sysctl_reset_cpu((volatile uint32_t *)&sysctl_rst->cpu1_rst_ctl, 0, 12);
+        data = *reset_reg & mask_rw;
 
-        case SYSCTL_RESET_AI:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->ai_rst_ctl, 0, 31);
-        case SYSCTL_RESET_VPU:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->vpu_rst_ctl, 0, 31);
-        case SYSCTL_RESET_HS:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->hisys_rst_ctl, 0, 4);
-        case SYSCTL_RESET_HS_AHB:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->hisys_rst_ctl, 1, 5);
-        case SYSCTL_RESET_SDIO0:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sdc_rst_ctl, 0, 28);
-        case SYSCTL_RESET_SDIO1:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sdc_rst_ctl, 1, 29);
-        case SYSCTL_RESET_SDIO_AXI:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sdc_rst_ctl, 2, 30);
-        case SYSCTL_RESET_USB0:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->usb_rst_ctl, 0, 28);
-        case SYSCTL_RESET_USB1:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->usb_rst_ctl, 1, 29);
-        case SYSCTL_RESET_USB0_AHB:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->usb_rst_ctl, 0, 30);
-        case SYSCTL_RESET_USB1_AHB:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->usb_rst_ctl, 1, 31);
-        case SYSCTL_RESET_SPI0:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->spi_rst_ctl, 0, 28);
-        case SYSCTL_RESET_SPI1:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->spi_rst_ctl, 1, 29);
-        case SYSCTL_RESET_SPI2:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->spi_rst_ctl, 2, 30);
-        case SYSCTL_RESET_SEC:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sec_rst_ctl, 0, 31);
-        case SYSCTL_RESET_PDMA:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->dma_rst_ctl, 0, 28);
-        case SYSCTL_RESET_SDMA:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->dma_rst_ctl, 1, 29);
-        case SYSCTL_RESET_DECOMPRESS:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->decompress_rst_ctl, 0, 31);
-        case SYSCTL_RESET_SRAM:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sram_rst_ctl, 0, 28);
-        case SYSCTL_RESET_SHRM_AXIM:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sram_rst_ctl, 2, 30);
-        case SYSCTL_RESET_SHRM_AXIS:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->sram_rst_ctl, 3, 31);
-        case SYSCTL_RESET_NONAI2D:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->nonai2d_rst_ctl, 0, 31);
-        case SYSCTL_RESET_MCTL:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->mctl_rst_ctl, 0, 31);
-        case SYSCTL_RESET_ISP:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 6, 29);
-        case SYSCTL_RESET_ISP_DW:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 5, 28);
-        case SYSCTL_RESET_DPU:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->dpu_rst_ctl, 0, 31);
-        case SYSCTL_RESET_DISP:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->disp_rst_ctl, 0, 31);
-        case SYSCTL_RESET_GPU:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->v2p5d_rst_ctl, 0, 31);
-        case SYSCTL_RESET_AUDIO:
-            return sysctl_reset_hw_done((volatile uint32_t *)&sysctl_rst->audio_rst_ctl, 0, 31);
-
-        case SYSCTL_RESET_TIMER0:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 0, 0);
-        case SYSCTL_RESET_TIMER1:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 1, 0);
-        case SYSCTL_RESET_TIMER2:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 2, 0);
-        case SYSCTL_RESET_TIMER3:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 3, 0);
-        case SYSCTL_RESET_TIMER4:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 4, 0);
-        case SYSCTL_RESET_TIMER5:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 5, 0);
-        case SYSCTL_RESET_TIMER_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 6, 0);
-        case SYSCTL_RESET_HDI:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 7, 0);
-        case SYSCTL_RESET_WDT0:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 12, 0);
-        case SYSCTL_RESET_WDT1:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 13, 0);
-        case SYSCTL_RESET_WDT0_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 14, 0);
-        case SYSCTL_RESET_WDT1_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 15, 0);
-        case SYSCTL_RESET_TS_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 16, 0);
-        case SYSCTL_RESET_MAILBOX:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 17, 0);
-        case SYSCTL_RESET_STC:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 18, 0);
-        case SYSCTL_RESET_PMU:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->soc_ctl_rst_ctl, 19, 0);
-        case SYSCTL_RESET_LS_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 0, 0);
-        case SYSCTL_RESET_UART0:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 1, 0);
-        case SYSCTL_RESET_UART1:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 2, 0);
-        case SYSCTL_RESET_UART2:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 3, 0);
-        case SYSCTL_RESET_UART3:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 4, 0);
-        case SYSCTL_RESET_UART4:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 5, 0);
-        case SYSCTL_RESET_I2C0:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 6, 0);
-        case SYSCTL_RESET_I2C1:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 7, 0);
-        case SYSCTL_RESET_I2C2:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 8, 0);
-        case SYSCTL_RESET_I2C3:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 9, 0);
-        case SYSCTL_RESET_I2C4:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 10, 0);
-        case SYSCTL_RESET_JAMLINK0_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 11, 0);
-        case SYSCTL_RESET_JAMLINK1_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 12, 0);
-        case SYSCTL_RESET_JAMLINK2_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 13, 0);
-        case SYSCTL_RESET_JAMLINK3_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 14, 0);
-        case SYSCTL_RESET_CODEC_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 17, 0);
-        case SYSCTL_RESET_GPIO_DB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 18, 0);
-        case SYSCTL_RESET_GPIO_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 19, 0);
-        case SYSCTL_RESET_ADC:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 20, 0);
-        case SYSCTL_RESET_ADC_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 21, 0);
-        case SYSCTL_RESET_PWM_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->losys_rst_ctl, 22, 0);
-
-        case SYSCTL_RESET_CPU0_FLUSH:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->cpu0_rst_ctl, 4, 20);
-        case SYSCTL_RESET_CPU1_FLUSH:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->cpu1_rst_ctl, 4, 20);
-        case SYSCTL_RESET_SHRM_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->sram_rst_ctl, 1, 0);
-        case SYSCTL_RESET_CSI0_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 0, 0);
-        case SYSCTL_RESET_CSI1_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 1, 0);
-        case SYSCTL_RESET_CSI2_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 2, 0);
-        case SYSCTL_RESET_CSI_DPHY_APB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 3, 0);
-        case SYSCTL_RESET_ISP_AHB:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 4, 0);
-        case SYSCTL_RESET_M0:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 7, 0);
-        case SYSCTL_RESET_M1:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 8, 0);
-        case SYSCTL_RESET_M2:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->isp_rst_ctl, 9, 0);
-        case SYSCTL_RESET_SPI2AXI:
-            return sysctl_reset_sw_done((volatile uint32_t *)&sysctl_rst->spi2axi_rst_ctl, 0, 0);
-
-        default:
-            return false;
+        data |= (1 << done_bit);
+        if(type & WE)
+        {
+            data |= (1 << (done_bit + 16));  /* write enable */
+        }
+        *reset_reg = data;
     }
+    /* set reset bit */
+    data = *reset_reg & mask_rw;
+
+    if((type & W1T) || (type & RWSC) || (type & RW_1))
+    {
+        data |= (1 << reset_bit);
+    }
+    else if(type & RW_0)
+    {
+        data &= ~(1 << reset_bit);
+    }
+    if(type & WE)
+    {
+        data |= (1 << (reset_bit + 16));  /* write enable */
+    }
+    *reset_reg = data;
+    rt_hw_interrupt_enable(level);
+
+    rt_thread_delay(1);
+    
+    /* clear reset bit */
+    if((type & RW_0) || (type & RW_1))
+    {
+        level = rt_hw_interrupt_disable();
+        data = *reset_reg & mask_rw;
+
+        if(type & RW_0) data |= (1 << reset_bit);
+        else if(type & RW_1) data &= ~(1 << reset_bit);
+
+        if(type & WE)
+        {
+            data |= (1 << (reset_bit + 16));  /* write enable */
+        }
+        *reset_reg = data;
+        rt_hw_interrupt_enable(level);
+    }
+    
+    /* check done bit */
+    if(type & W1C)
+    {
+        if(*reset_reg & (1 << done_bit))
+            return true;
+
+        return false;
+    }
+    if(type & RWSC)
+    {
+        if((*reset_reg & (1 << done_bit)) == 0)
+            return true;
+
+        return false;
+    }
+    return true;
 }
 
 /* time = timx(x=0,1,2) * 0.25us, please see sys_ctl_reg.xlsx

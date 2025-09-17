@@ -636,8 +636,8 @@ static k_s32 lt9611_get_chip_id(void* ctx, k_u32* chip_id)
     ret |= lt9611_read_reg(&lt9611_dev->i2c_info, 0x00, &id_high);
     ret |= lt9611_read_reg(&lt9611_dev->i2c_info, 0x01, &id_mid);
 
-    chip_id = (id_high << 8) | id_mid;
-    LOG_D("lt9611 chip_id %02x\n", chip_id);
+    *chip_id = (id_high << 8) | id_mid;
+    LOG_D("lt9611 chip_id %02x\n", *chip_id);
 
     return ret;
 }

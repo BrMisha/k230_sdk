@@ -118,6 +118,7 @@ typedef struct {
     k_u16 rotation[MAX_VO_LAYER_NUM];
     k_vo_layer layer[MAX_VO_LAYER_NUM];
     k_bool enable[MAX_VO_LAYER_NUM];
+    k_s32 dma_ch[MAX_VO_LAYER_NUM];
 } k_vicap_vo_layer_conf;
 
 static k_s32 sample_vicap_vo_init(k_connector_type connector_type)
@@ -1188,17 +1189,14 @@ chn_parse:
                 if (vo_count == 0) {
                     vo_chn = K_VO_DISPLAY_CHN_ID1;
                     layer = K_VO_LAYER1;
-                    gdma_chn = 0;
                 } else if (vo_count == 1) {
                     vo_chn = K_VO_DISPLAY_CHN_ID2;
                     layer = K_VO_LAYER2;
                     rotation = 4;//layer2 unsupport roation
-                    gdma_chn = 1;
                 } else if (vo_count == 2) {
                     vo_chn = K_VO_DISPLAY_CHN_ID3;
                     layer = K_VO_OSD0;
                     rotation = 4;//layer2 unsupport roation
-                    gdma_chn = 2;
                 } else if (vo_count >= MAX_VO_LAYER_NUM){
                     printf("only support bind two vo channel.\n");
                     continue;
@@ -1238,6 +1236,14 @@ chn_parse:
                         gdma_attr.gdma_attr.src_stride[1] = gdma_attr.gdma_attr.src_stride[0];
                         gdma_attr.gdma_attr.dst_stride[1] = gdma_attr.gdma_attr.dst_stride[0];
                     }
+
+                    gdma_chn = kd_mpi_dma_request_chn(GDMA_TYPE);
+                    if (gdma_chn < 0) {
+                        printf("request gdma ch error\r\n");
+                        goto vb_exit;
+                    }
+                    layer_conf.dma_ch[vo_count] = gdma_chn;
+
                     src_chn.mod_id = K_ID_VI;
                     src_chn.dev_id = dev_num;
                     src_chn.chn_id = chn_num;
@@ -1613,21 +1619,18 @@ app_exit:
                 k_s32 vo_chn;
                 k_vo_layer layer;
                 k_u16 gdma_rotation = 0;
-                k_s32 gdma_chn;
+                k_s32 gdma_chn = layer_conf.dma_ch[vo_count];
                 gdma_rotation = device_obj[dev_num].rotation[chn_num] > 16 ? 1 : 0;
                 if (vo_count == 0) {
                     vo_chn = K_VO_DISPLAY_CHN_ID1;
                     layer = K_VO_LAYER1;
-                    gdma_chn = 0;
                 } else if (vo_count == 1) {
                     vo_chn = K_VO_DISPLAY_CHN_ID2;
                     layer = K_VO_LAYER2;
-                    gdma_chn = 1;
                 } 
                 else if (vo_count == 2) {
                     vo_chn = K_VO_DISPLAY_CHN_ID3;
                     layer = K_VO_OSD0;
-                    gdma_chn = 2;
                 }else {
                     printf("only support unbind two vo chn.\n");
                     continue;
@@ -1669,6 +1672,7 @@ app_exit:
                     if (ret) {
                         printf("kd_mpi_sys_unbind failed:0x%x\n", ret);
                     }
+                    kd_mpi_dma_release_chn(gdma_chn);
                 } else {
                     sample_vicap_unbind_vo(dev_num, chn_num, vo_chn);
                 }

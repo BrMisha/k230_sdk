@@ -459,6 +459,11 @@ k_s32 kd_mpi_sensor_adapt_get(k_vicap_probe_config *config, k_vicap_sensor_info 
 
 k_s32 kd_mpi_adapt_sensor_get(k_vicap_adapt_id *csi0_adapt_id, k_vicap_adapt_id *csi1_adapt_id, k_vicap_adapt_id *csi2_adapt_id);
 
+
+k_s32 kd_mpi_sensor_focus_pos_get(k_s32 fd, k_sensor_focus_pos *focus_pos);
+k_s32 kd_mpi_sensor_focus_pos_set(k_s32 fd, k_sensor_focus_pos *focus_pos);
+
+
 /** @} */ /** <!-- ==== SENSOR End ==== */
 
 #ifdef __cplusplus

@@ -1,0 +1,44 @@
+from building import *
+
+cwd = GetCurrentDir()
+path = []
+src = []
+
+path += [cwd]
+src += Glob('*.c')
+path += [cwd + '/pufs_common']
+src += Glob('pufs_common/*.c')
+path += [cwd + '/pufs_dma']
+src += Glob('pufs_dma/*.c')
+path += [cwd + '/pufs_ka']
+src += Glob('pufs_ka/*.c')
+path += [cwd + '/pufs_rt']
+src += Glob('pufs_rt/*.c')
+path += [cwd + '/pufs_crypto']
+src += Glob('pufs_crypto/*.c')
+path += [cwd + '/pufs_hmac']
+src += Glob('pufs_hmac/*.c')
+path += [cwd + '/pufs_cmac']
+src += Glob('pufs_cmac/*.c')
+path += [cwd + '/pufs_ecc']
+src += Glob('pufs_ecc/*.c')
+path += [cwd + '/pufs_ecp']
+src += Glob('pufs_ecp/*.c')
+path += [cwd + '/pufs_kdf']
+src += Glob('pufs_kdf/*.c')
+path += [cwd + '/pufs_sm2']
+src += Glob('pufs_sm2/*.c')
+path += [cwd + '/pufs_sp38a']
+src += Glob('pufs_sp38a/*.c')
+path += [cwd + '/pufs_sp38c']
+src += Glob('pufs_sp38c/*.c')
+path += [cwd + '/pufs_sp38d']
+src += Glob('pufs_sp38d/*.c')
+path += [cwd + '/pufs_sp38e']
+src += Glob('pufs_sp38e/*.c')
+path += [cwd + '/pufs_sp90a']
+src += Glob('pufs_sp90a/*.c')
+
+group = DefineGroup('PUFS', src, depend = ['RT_USING_PUFS'], CPPPATH = path)
+
+Return('group')

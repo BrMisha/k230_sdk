@@ -41,7 +41,6 @@
 struct kd_timer_Type {
     kendryte_timer_t* base_addr;
     uint32_t id;
-    struct rt_work send_sig_work;
     int pid;
     int signo;
     void* sigval;
@@ -116,24 +115,16 @@ static rt_uint32_t kd_timer_get(rt_hwtimer_t* timer)
     return reg->channel[id].current_value;
 }
 
-static void send_sig_work(struct rt_work* work, void* param)
+static rt_err_t timer_timeout_ind(rt_device_t dev, rt_size_t size)
 {
+    rt_hwtimer_t* timer = (rt_hwtimer_t*)dev;
+    struct kd_timer_Type* kd_timer = (struct kd_timer_Type*)timer->parent.user_data;
     siginfo_t info;
-    struct kd_timer_Type* kd_timer = param;
 
     rt_memset(&info, 0, sizeof(info));
     info.si_code = SI_TIMER;
     info.si_ptr = kd_timer->sigval;
     lwp_kill_ext(kd_timer->pid, kd_timer->signo, &info);
-}
-
-static rt_err_t timer_timeout_ind(rt_device_t dev, rt_size_t size)
-{
-    rt_hwtimer_t* timer = (rt_hwtimer_t*)dev;
-    struct kd_timer_Type* kd_timer = (struct kd_timer_Type*)timer->parent.user_data;
-
-    rt_work_init(&kd_timer->send_sig_work, send_sig_work, kd_timer);
-    rt_work_submit(&kd_timer->send_sig_work, 0);
 }
 
 static rt_err_t kd_timer_ctrl(rt_hwtimer_t* timer, rt_uint32_t cmd, void* arg)

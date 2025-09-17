@@ -302,8 +302,8 @@ int nanosleep(const struct timespec *rqtp, struct timespec *rmtp)
         if (rmtp)
         {
             uint64_t rmtp_cpu_tick = cpu_tick_old + cpu_tick - clock_cpu_gettime();
-            rmtp->tv_sec = ((int)(rmtp_cpu_tick * unit)) / NANOSECOND_PER_SECOND;
-            rmtp->tv_nsec = ((int)(rmtp_cpu_tick * unit)) % NANOSECOND_PER_SECOND;
+            rmtp->tv_sec = ((uint64_t)(rmtp_cpu_tick * unit)) / NANOSECOND_PER_SECOND;
+            rmtp->tv_nsec = ((uint64_t)(rmtp_cpu_tick * unit)) % NANOSECOND_PER_SECOND;
         }
         rt_set_errno(EINTR);
         return -RT_ERROR;

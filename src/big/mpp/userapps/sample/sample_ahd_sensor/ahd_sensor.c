@@ -70,6 +70,7 @@
 
 static k_u32 g_vo_pool_id;
 static k_u8 exit_flag = 0;
+static k_s32 dma_ch[3] = {-1, -1, -1};
 
 // static k_vo_layer g_vo_layer = K_VO_LAYER1;
 
@@ -993,9 +994,14 @@ int main(int argc, char *argv[])
     sample_bind();
 
     dma_dev_attr_init();
-    gdma_init(0, DEGREE_90, PIXEL_FORMAT_YVU_SEMIPLANAR_420, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
-    gdma_init(1, DEGREE_90, PIXEL_FORMAT_YVU_SEMIPLANAR_420, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
-     gdma_init(2, DEGREE_90, PIXEL_FORMAT_RGB_888, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
+    for (int i = 0; i < 3; i++) {
+        dma_ch[i] = kd_mpi_dma_request_chn(GDMA_TYPE);
+        if (dma_ch[i] < 0)
+            goto vb_init_error;
+    }
+    gdma_init(dma_ch[0], DEGREE_90, PIXEL_FORMAT_YVU_SEMIPLANAR_420, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
+    gdma_init(dma_ch[1], DEGREE_90, PIXEL_FORMAT_YVU_SEMIPLANAR_420, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
+    gdma_init(dma_ch[2], DEGREE_90, PIXEL_FORMAT_RGB_888, DW200_CHN0_OUTPUT_WIDTH, DW200_CHN0_OUTPUT_HEIGHT);
 
     // three mcm init
     ret = sample_vicap_init(VICAP_DEV_ID_0, XS9950_MIPI_CSI0_1280X720_30FPS_YUV422);
@@ -1089,8 +1095,9 @@ int main(int argc, char *argv[])
 
     dw_exit();
 
-    gdma_exit(0);
-    gdma_exit(1);
+    gdma_exit(dma_ch[0]);
+    gdma_exit(dma_ch[1]);
+    gdma_exit(dma_ch[2]);
 
     kd_mpi_vo_disable_video_layer(K_VO_LAYER1);
     kd_mpi_vo_disable_video_layer(K_VO_LAYER2);
@@ -1112,5 +1119,9 @@ vicap_init_error:
     }
 
 vb_init_error:
+    for (int i = 0; i < 3; i++) {
+        if (dma_ch[i] >= 0)
+            kd_mpi_dma_release_chn(dma_ch[i]);
+    }
     return 0;
 }

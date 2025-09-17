@@ -28,6 +28,7 @@
 /* dma global variable */
 k_dma_dev_attr_t dma_dev_attr;
 k_dma_chn_attr_u chn_attr[DMA_MAX_CHN_NUMS];
+static k_s32 dma_ch = -1;
 
 static k_s32 dma_dev_attr_init(k_dma_dev_attr_t *dev_attr)
 {
@@ -83,12 +84,17 @@ int sample_dv_dma_init()
         goto err_return;
     }
 
-    ret = kd_mpi_dma_set_chn_attr(DMA_CHN0, &chn_attr[DMA_CHN0]);
+    dma_ch = kd_mpi_dma_request_chn(GDMA_TYPE);
+    if (dma_ch < 0)
+        goto err_dma_dev;
+
+    ret = kd_mpi_dma_set_chn_attr(dma_ch, &chn_attr[DMA_CHN0]);
     if (ret != K_SUCCESS) {
         printf("set chn attr error\r\n");
         goto err_dma_dev;
     }
-    ret = kd_mpi_dma_start_chn(DMA_CHN0);
+
+    ret = kd_mpi_dma_start_chn(dma_ch);
     if (ret != K_SUCCESS) {
         printf("start chn error\r\n");
         goto err_dma_dev;
@@ -99,10 +105,13 @@ int sample_dv_dma_init()
     /************************************************************
      * This part is used to stop the DMA 
      ***********************************************************/
-    ret = kd_mpi_dma_stop_chn(DMA_CHN0);
+    ret = kd_mpi_dma_stop_chn(dma_ch);
     if (ret != K_SUCCESS) {
         printf("stop chn error\r\n");
     }
+
+    if (dma_ch >= 0)
+        kd_mpi_dma_release_chn(dma_ch);
 
 err_dma_dev:
     ret = kd_mpi_dma_stop_dev();
@@ -125,6 +134,9 @@ int sample_dv_dma_delete()
     if (ret != K_SUCCESS) {
         printf("stop chn error\r\n");
     }
+
+    if (dma_ch >= 0)
+        kd_mpi_dma_release_chn(dma_ch);
 
     ret = kd_mpi_dma_stop_dev();
     if (ret != K_SUCCESS) {

@@ -149,6 +149,7 @@ static k_dpu_image_mode image_mode;
 static k_u32 delay_us = 3000;
 static pthread_mutex_t dump_mutex = PTHREAD_MUTEX_INITIALIZER;
 static k_gdma_rotation_e dma_ro;
+static int dma_ch[2] = {-1, -1};
 
 static k_u64 get_ticks()
 {
@@ -518,26 +519,42 @@ int sample_dv_dma_init()
         goto err_return;
     }
 
-    ret = kd_mpi_dma_set_chn_attr(0, &chn_attr[0]);
+    ret = kd_mpi_dma_request_chn(GDMA_TYPE);
+    if (ret < K_SUCCESS)
+    {
+        printf("request dma chn error\r\n");
+        goto err_return;
+    }
+    dma_ch[0] = ret;
+
+    ret = kd_mpi_dma_request_chn(GDMA_TYPE);
+    if (ret < K_SUCCESS)
+    {
+        printf("request dma chn error\r\n");
+        goto err_return;
+    }
+    dma_ch[1] = ret;
+
+    ret = kd_mpi_dma_set_chn_attr(dma_ch[0], &chn_attr[0]);
     if (ret != K_SUCCESS)
     {
         printf("set chn attr error\r\n");
         goto err_dma_dev;
     }
-    ret = kd_mpi_dma_start_chn(0);
+    ret = kd_mpi_dma_start_chn(dma_ch[0]);
     if (ret != K_SUCCESS)
     {
         printf("start chn error\r\n");
         goto err_dma_dev;
     }
 
-    ret = kd_mpi_dma_set_chn_attr(1, &chn_attr[1]);
+    ret = kd_mpi_dma_set_chn_attr(dma_ch[1], &chn_attr[1]);
     if (ret != K_SUCCESS)
     {
         printf("set chn attr error\r\n");
         goto err_dma_dev;
     }
-    ret = kd_mpi_dma_start_chn(1);
+    ret = kd_mpi_dma_start_chn(dma_ch[1]);
     if (ret != K_SUCCESS)
     {
         printf("start chn error\r\n");
@@ -549,13 +566,13 @@ int sample_dv_dma_init()
     /************************************************************
      * This part is used to stop the DMA
      ***********************************************************/
-    ret = kd_mpi_dma_stop_chn(0);
+    ret = kd_mpi_dma_stop_chn(dma_ch[0]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
     }
 
-    ret = kd_mpi_dma_stop_chn(1);
+    ret = kd_mpi_dma_stop_chn(dma_ch[1]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
@@ -579,16 +596,28 @@ int sample_dv_dma_delete()
     /************************************************************
      * This part is used to stop the DMA
      ***********************************************************/
-    ret = kd_mpi_dma_stop_chn(0);
+    ret = kd_mpi_dma_stop_chn(dma_ch[0]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
     }
 
-    ret = kd_mpi_dma_stop_chn(1);
+    ret = kd_mpi_dma_stop_chn(dma_ch[1]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
+    }
+
+    ret = kd_mpi_dma_release_chn(dma_ch[0]);
+    if (ret != K_SUCCESS)
+    {
+        printf("release chn error\r\n");
+    }
+
+    ret = kd_mpi_dma_release_chn(dma_ch[1]);
+    if (ret != K_SUCCESS)
+    {
+        printf("release chn error\r\n");
     }
 
     ret = kd_mpi_dma_stop_dev();
@@ -996,13 +1025,13 @@ static void send_image(k_u64 depth_pts)
 
         data_size = rgb_buf[rgb_rp].v_frame.width * rgb_buf[rgb_rp].v_frame.height * 3 / 2;
 
-        ret = kd_mpi_dma_send_frame(1, &rgb_buf[rgb_rp], 30);
+        ret = kd_mpi_dma_send_frame(dma_ch[1], &rgb_buf[rgb_rp], 30);
         if (ret != K_SUCCESS)
         {
             printf("dma send frame error\r\n");
         }
 
-        ret = kd_mpi_dma_get_frame(1, &dma_get_info, 30);
+        ret = kd_mpi_dma_get_frame(dma_ch[1], &dma_get_info, 30);
         if (ret != K_SUCCESS)
         {
             printf("dma get frame error\r\n");
@@ -1035,7 +1064,7 @@ static void send_image(k_u64 depth_pts)
             usleep(1000);
         }
         // printf("send %d rgb pts %ld, take time %6ld ms\n", dump_count, rgb_buf[rgb_rp].v_frame.pts, (get_ticks()/27000-start_time));
-        kd_mpi_dma_release_frame(1, &dma_get_info);
+        kd_mpi_dma_release_frame(dma_ch[1], &dma_get_info);
     }
 
     release_image();
@@ -1081,13 +1110,13 @@ static void dpu_unbind_dump()
             }
         }
 
-        ret = kd_mpi_dma_send_frame(0, &speckle_buf[speckle_rp], 30);
+        ret = kd_mpi_dma_send_frame(dma_ch[0], &speckle_buf[speckle_rp], 30);
         if (ret != K_SUCCESS)
         {
             printf("dma send frame error\r\n");
         }
 
-        ret = kd_mpi_dma_get_frame(0, &dma_get_info, 30);
+        ret = kd_mpi_dma_get_frame(dma_ch[0], &dma_get_info, 30);
         if (ret != K_SUCCESS)
         {
             printf("dma get frame error\r\n");
@@ -1128,7 +1157,7 @@ static void dpu_unbind_dump()
                 usleep(1000);
             }
 
-            kd_mpi_dma_release_frame(0, &dma_get_info);
+            kd_mpi_dma_release_frame(dma_ch[0], &dma_get_info);
             // printf("send %d IR pts %ld take time %6ld ms\n", dump_count, depth_pts, (get_ticks()/27000-start_time));
 
             if(image_mode == IMAGE_MODE_RGB_IR || image_mode == IMAGE_MODE_RGB_SPECKLE)
@@ -1181,7 +1210,7 @@ static void dpu_unbind_dump()
             pmsg->temperature = g_cur_temperature;
             dataret = send_dpu_data_to_little(speckle_dev, depth_send_buf);
 
-            kd_mpi_dma_release_frame(0, &dma_get_info);
+            kd_mpi_dma_release_frame(dma_ch[0], &dma_get_info);
 
             if (dataret)
             {
@@ -1361,7 +1390,7 @@ static k_s32 sample_dv_bind()
     vi_mpp_chn.chn_id = speckle_chn;
     dma_mpp_chn.mod_id = K_ID_DMA;
     dma_mpp_chn.dev_id = 0;
-    dma_mpp_chn.chn_id = 0;
+    dma_mpp_chn.chn_id = dma_ch[0];
     dpu_mpp_chn.mod_id = K_ID_DPU;
     dpu_mpp_chn.dev_id = 0;
     dpu_mpp_chn.chn_id = 0;
@@ -1392,7 +1421,7 @@ static k_s32 sample_dv_unbind()
     vi_mpp_chn.chn_id = speckle_chn;
     dma_mpp_chn.mod_id = K_ID_DMA;
     dma_mpp_chn.dev_id = 0;
-    dma_mpp_chn.chn_id = 0;
+    dma_mpp_chn.chn_id = dma_ch[0];
     dpu_mpp_chn.mod_id = K_ID_DPU;
     dpu_mpp_chn.dev_id = 0;
     dpu_mpp_chn.chn_id = 0;

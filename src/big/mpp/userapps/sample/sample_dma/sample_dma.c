@@ -100,6 +100,7 @@ k_video_frame_info df_info[DMA_MAX_CHN_NUMS];
 k_video_frame_info df_info_dst[DMA_MAX_CHN_NUMS];
 k_u32 gdma_size[4] = {0, 0, 0, 0};
 k_bool g_end = K_FALSE;
+static k_s32 dma_ch[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 
 static pthread_t tid1;
 
@@ -855,6 +856,17 @@ int main(void)
         goto exit_label;
     }
 
+    for (int i = 0; i < 4; i++) {
+        dma_ch[i] = kd_mpi_dma_request_chn(GDMA_TYPE);
+        if (dma_ch[i] < 0)
+            goto exit_label;
+    }
+    for (int i = 4; i < 8; i++) {
+        dma_ch[i] = kd_mpi_dma_request_chn(SDMA_TYPE);
+        if (dma_ch[i] < 0)
+            goto exit_label;
+    }
+
     /* DMA_CHN0 prepare */
     ret = kd_mpi_dma_set_chn_attr(DMA_CHN0, &chn_attr[DMA_CHN0]);
     if (ret != K_SUCCESS)
@@ -1100,5 +1112,9 @@ exit_label:
     sample_dma_release_data(chn_attr, planar, df_info);
 
     dma_vb_exit();
+    for (int i = 0; i < 8; i++) {
+        if (dma_ch[i] >= 0)
+            kd_mpi_dma_release_chn(dma_ch[i]);
+    }
     return 0;
 }

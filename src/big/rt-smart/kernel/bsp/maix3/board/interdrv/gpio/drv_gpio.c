@@ -59,8 +59,7 @@ static struct
     void* args;
     gpio_pin_edge_t edge;
     int debounce;
-    struct rt_work debounce_work;
-    struct rt_work send_sig_work;
+    struct rt_timer debounce_timer;
     int pid;
     int lwp_ref_cnt;
     int signo;
@@ -246,12 +245,13 @@ static int kd_set_pin_edge(rt_int32_t pin, gpio_pin_edge_t edge)
         break;
     }
 
+    kd_gpio_reg_writel(reg + INT_DEBOUNCE, pin, 0x1);
     kd_gpio_reg_writel(reg + INT_ENABLE, pin, 0x1);
 
     return RT_EOK;
 }
 
-static void debounce_work(struct rt_work* work, void* param)
+static void debounce_timer(void* param)
 {
     void* reg;
     int pin = (int)(long)param;
@@ -281,8 +281,7 @@ static void pin_irq(int vector, void* param)
     case GPIO_PE_LOW:
     case GPIO_PE_HIGH:
         kd_gpio_reg_writel(reg + INT_MASK, pin_offset, 0x1);
-        rt_work_init(&irq_table[pin].debounce_work, debounce_work, (void*)(long)pin);
-        rt_work_submit(&irq_table[pin].debounce_work, irq_table[pin].debounce);
+        rt_timer_start(&irq_table[pin].debounce_timer);
         break;
     default:
         break;
@@ -292,23 +291,15 @@ static void pin_irq(int vector, void* param)
         irq_table[pin].hdr(irq_table[pin].args);
 }
 
-static void send_sig_work(struct rt_work* work, void* param)
+static void gpio_irq_to_user(void* args)
 {
+    int pin = (int)(long)args;
     siginfo_t info;
-    int pin = (int)(long)param;
 
     rt_memset(&info, 0, sizeof(info));
     info.si_code = SI_SIGIO;
     info.si_ptr = irq_table[pin].sigval;
     lwp_kill_ext(irq_table[pin].pid, irq_table[pin].signo, &info);
-}
-
-static void gpio_irq_to_user(void* args)
-{
-    int pin = (int)(long)args;
-
-    rt_work_init(&irq_table[pin].send_sig_work, send_sig_work, args);
-    rt_work_submit(&irq_table[pin].send_sig_work, 0);
 }
 
 rt_err_t kd_pin_attach_irq(rt_int32_t pin, rt_uint32_t mode, void (*hdr)(void* args), void* args)
@@ -443,7 +434,10 @@ static int gpio_fops_ioctl(struct dfs_fd* fd, int cmd, void* args)
                 irq_table[pin].pid = pid;
                 irq_table[pin].signo = cfg.signo;
                 irq_table[pin].sigval = cfg.sigval;
+                cfg.debounce = cfg.debounce ? cfg.debounce : 1;
                 irq_table[pin].debounce = rt_tick_from_millisecond(cfg.debounce);
+                rt_timer_control(&irq_table[pin].debounce_timer, RT_TIMER_CTRL_SET_TIME,
+                    &irq_table[pin].debounce);
                 kd_pin_irq_enable(pin, 1);
             } else {
                 kd_pin_detach_irq(pin);
@@ -531,6 +525,12 @@ int rt_hw_gpio_init(void)
     ret = rt_device_register(&gpio_dev.dev, "gpio", RT_DEVICE_FLAG_RDWR);
 
     gpio_dev.dev.fops = &gpio_fops;
+
+    for (int i = 0; i < GPIO_IRQ_MAX_NUM; i++) {
+        rt_timer_init(&irq_table[i].debounce_timer, "gpio_deb_timer",
+            debounce_timer, (void*)(long)i, 0,
+            RT_TIMER_FLAG_ONE_SHOT | RT_TIMER_FLAG_SOFT_TIMER);
+    }
 
     return ret;
 }

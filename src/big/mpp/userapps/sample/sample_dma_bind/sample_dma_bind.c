@@ -82,6 +82,7 @@ k_dma_chn_attr_u chn_attr[DMA_MAX_CHN_NUMS];
 k_video_frame_info df_info[DMA_MAX_CHN_NUMS];
 k_u32 gdma_size[4] = {0, 0, 0, 0};
 k_bool g_end = K_FALSE;
+static k_s32 dma_ch[2] = { -1, -1 };
 
 k_video_frame_info insert_pic_info[2];
 
@@ -415,9 +416,10 @@ static void sample_vvi_stop(sample_vvi_pipe_conf_t* pipe_conf)
 {
     k_s32 i;
 
-    for(i = 0; i < SAMPE_VVI_PIPE_NUMS; i++)
+    for(i = 0; i < SAMPE_VVI_PIPE_NUMS; i++) {
+        kd_mpi_vvi_chn_remove_pic(pipe_conf[i].chn_num);
         kd_mpi_vvi_stop_pipe(pipe_conf[i].dev_num, pipe_conf[i].chn_num);
-    return;
+    }
 }
 #endif
 
@@ -556,15 +558,20 @@ int main(void)
         goto exit_label;
     }
 
+    for (int i = 0; i < 2; i++) {
+        dma_ch[i] = kd_mpi_dma_request_chn(GDMA_TYPE);
+        if (dma_ch[i] < 0)
+            goto exit_label;
+    }
 #if 1
     /* DMA_CHN0 prepare */
-    ret = kd_mpi_dma_set_chn_attr(DMA_CHN0, &chn_attr[DMA_CHN0]);
+    ret = kd_mpi_dma_set_chn_attr(dma_ch[DMA_CHN0], &chn_attr[DMA_CHN0]);
     if (ret != K_SUCCESS)
     {
         printf("set chn attr error\r\n");
         goto exit_label;
     }
-    ret = kd_mpi_dma_start_chn(DMA_CHN0);
+    ret = kd_mpi_dma_start_chn(dma_ch[DMA_CHN0]);
     if (ret != K_SUCCESS)
     {
         printf("start chn error\r\n");
@@ -575,13 +582,13 @@ int main(void)
 
 #if 1
     /* DMA_CHN1 prepare */
-    ret = kd_mpi_dma_set_chn_attr(DMA_CHN1, &chn_attr[DMA_CHN1]);
+    ret = kd_mpi_dma_set_chn_attr(dma_ch[DMA_CHN1], &chn_attr[DMA_CHN1]);
     if (ret != K_SUCCESS)
     {
         printf("set chn attr error\r\n");
         goto exit_label;
     }
-    ret = kd_mpi_dma_start_chn(DMA_CHN1);
+    ret = kd_mpi_dma_start_chn(dma_ch[DMA_CHN1]);
     if (ret != K_SUCCESS)
     {
         printf("start chn error\r\n");
@@ -595,7 +602,7 @@ int main(void)
 
 #if 1
     /* stop */
-    ret = kd_mpi_dma_stop_chn(DMA_CHN0);
+    ret = kd_mpi_dma_stop_chn(dma_ch[DMA_CHN0]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
@@ -604,7 +611,7 @@ int main(void)
 #endif
 
 #if 1
-    ret = kd_mpi_dma_stop_chn(DMA_CHN1);
+    ret = kd_mpi_dma_stop_chn(dma_ch[DMA_CHN1]);
     if (ret != K_SUCCESS)
     {
         printf("stop chn error\r\n");
@@ -627,5 +634,9 @@ exit_label:
     sample_dma_release_data(chn_attr, planar, df_info);
 
     dma_vb_exit();
+    for (int i = 0; i < 2; i++) {
+        if (dma_ch[i] >= 0)
+            kd_mpi_dma_release_chn(dma_ch[i]);
+    }
     return 0;
 }

@@ -296,11 +296,11 @@ static int _mmu_map_one_page(rt_mmu_info *mmu_info, size_t va, size_t pa, size_t
             return -1;
         }
     }
-
-    if (PTE_USED(*(mmu_l2 + l2_off)))
+    mmu_l2 += l2_off;
+    if (PTE_USED(*mmu_l2))
     {
-        RT_ASSERT(!PAGE_IS_LEAF(*(mmu_l2 + l2_off)));
-        mmu_l3 = (rt_size_t *)PPN_TO_VPN(GET_PADDR(*(mmu_l2 + l2_off)), mmu_info->pv_off);
+        RT_ASSERT(!PAGE_IS_LEAF(*mmu_l2));
+        mmu_l3 = (rt_size_t *)PPN_TO_VPN(GET_PADDR(*mmu_l2), mmu_info->pv_off);
     }
     else
     {
@@ -310,22 +310,22 @@ static int _mmu_map_one_page(rt_mmu_info *mmu_info, size_t va, size_t pa, size_t
         {
             rt_memset(mmu_l3, 0, PAGE_SIZE);
             rt_hw_cpu_dcache_clean(mmu_l3, PAGE_SIZE);
-            *(mmu_l2 + l2_off) = COMBINEPTE((rt_size_t)VPN_TO_PPN(mmu_l3, mmu_info->pv_off), PAGE_DEFAULT_ATTR_NEXT);
+            *mmu_l2 = COMBINEPTE((rt_size_t)VPN_TO_PPN(mmu_l3, mmu_info->pv_off), PAGE_DEFAULT_ATTR_NEXT);
             rt_hw_cpu_dcache_clean(mmu_l2, sizeof(*mmu_l2));
             // declares a reference to parent page table
-            rt_page_ref_inc((void *)mmu_l2, 0);
+            rt_page_ref_inc((void *)(mmu_l2 - l2_off), 0);
         }
         else
         {
             return -1;
         }
     }
-
-    RT_ASSERT(!PTE_USED(*(mmu_l3 + l3_off)));
-    // declares a reference to parent page table
     rt_page_ref_inc((void *)mmu_l3, 0);
-    *(mmu_l3 + l3_off) = COMBINEPTE((rt_size_t)pa, attr);
-    rt_hw_cpu_dcache_clean(mmu_l3 + l3_off, sizeof(*(mmu_l3 + l3_off)));
+    mmu_l3 += l3_off;
+    RT_ASSERT(!PTE_USED(*mmu_l3));
+    // declares a reference to parent page table
+    *mmu_l3 = COMBINEPTE((rt_size_t)pa, attr);
+    rt_hw_cpu_dcache_clean(mmu_l3, sizeof(*mmu_l3));
     return 0;
 }
 

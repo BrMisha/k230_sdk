@@ -28,6 +28,7 @@
 /* dma global variable */
 k_dma_dev_attr_t dma_dev_attr;
 k_dma_chn_attr_u chn_attr[DMA_MAX_CHN_NUMS];
+static k_s32 dma_ch[2] = { -1, -1 };
 
 static k_s32 dma_dev_attr_init(k_dma_dev_attr_t *dev_attr)
 {
@@ -131,7 +132,12 @@ int sample_dv_dma_init(k_gdma_rotation_e *dma_rotation, k_bool gen_calibration)
         printf("set chn attr error\r\n");
         goto err_dma_dev;
     }
-    ret = kd_mpi_dma_start_chn(DMA_CHN0);
+    for (int i = 0; i < 2; i++) {
+        dma_ch[i] = kd_mpi_dma_request_chn(GDMA_TYPE);
+        if (dma_ch[i] < 0)
+            goto err_dma_dev;
+    }
+    ret = kd_mpi_dma_start_chn(dma_ch[DMA_CHN0]);
     if (ret != K_SUCCESS) {
         printf("start chn error\r\n");
         goto err_dma_dev;
@@ -142,7 +148,7 @@ int sample_dv_dma_init(k_gdma_rotation_e *dma_rotation, k_bool gen_calibration)
         printf("set chn attr error\r\n");
         goto err_dma_dev;
     }
-    ret = kd_mpi_dma_start_chn(DMA_CHN1);
+    ret = kd_mpi_dma_start_chn(dma_ch[DMA_CHN1]);
     if (ret != K_SUCCESS) {
         printf("start chn error\r\n");
         goto err_dma_dev;
@@ -153,16 +159,20 @@ int sample_dv_dma_init(k_gdma_rotation_e *dma_rotation, k_bool gen_calibration)
     /************************************************************
      * This part is used to stop the DMA
      ***********************************************************/
-    ret = kd_mpi_dma_stop_chn(DMA_CHN0);
+    ret = kd_mpi_dma_stop_chn(dma_ch[DMA_CHN0]);
     if (ret != K_SUCCESS) {
         printf("stop chn error\r\n");
     }
 
-    ret = kd_mpi_dma_stop_chn(DMA_CHN1);
+    ret = kd_mpi_dma_stop_chn(dma_ch[DMA_CHN1]);
     if (ret != K_SUCCESS) {
         printf("stop chn error\r\n");
     }
 
+    for (int i = 0; i < 2; i++) {
+        if (dma_ch[i] >= 0)
+            kd_mpi_dma_release_chn(dma_ch[i]);
+    }
 err_dma_dev:
     ret = kd_mpi_dma_stop_dev();
     if (ret != K_SUCCESS) {
@@ -188,6 +198,11 @@ int sample_dv_dma_delete()
     ret = kd_mpi_dma_stop_chn(DMA_CHN1);
     if (ret != K_SUCCESS) {
         printf("stop chn error\r\n");
+    }
+
+    for (int i = 0; i < 2; i++) {
+        if (dma_ch[i] >= 0)
+            kd_mpi_dma_release_chn(dma_ch[i]);
     }
 
     ret = kd_mpi_dma_stop_dev();

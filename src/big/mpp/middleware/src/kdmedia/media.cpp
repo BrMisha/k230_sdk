@@ -1207,6 +1207,11 @@ k_s32 KdMedia::Impl::kd_sample_get_venc_stream(k_u32 venc_chn)
         output.pack = (k_venc_pack *)malloc(sizeof(k_venc_pack) * output.pack_cnt);
 
         ret = kd_mpi_venc_get_stream(venc_chn, &output, -1);
+        if(ret)
+        {
+            free(output.pack);
+            continue;
+        }
 
         for (int i = 0; i < output.pack_cnt; i++)
         {

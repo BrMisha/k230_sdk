@@ -495,9 +495,10 @@ static void sample_vvi_stop(sample_vvi_pipe_conf_t* pipe_conf)
 {
     k_s32 i;
 
-    for(i = 0; i < SAMPE_VVI_PIPE_NUMS; i++)
+    for(i = 0; i < SAMPE_VVI_PIPE_NUMS; i++) {
+        kd_mpi_vvi_chn_remove_pic(pipe_conf[i].chn_num);
         kd_mpi_vvi_stop_pipe(pipe_conf[i].dev_num, pipe_conf[i].chn_num);
-    return;
+    }
 }
 
 static k_s32 result_check(k_u8 *data, k_u8 *golden, k_u32 length)

@@ -28,27 +28,6 @@
 
 #include <rtdef.h>
 
-#define PDMA_BASE_ADDR          0x80804000
-#define PDMA_IO_SIZE            0x200
-#define PDMA_MAX_LINE_SIZE      0x3FFFFFFF
-
-/* interrupt mask */
-#define PDONE_INT               0x00000001
-#define PITEM_INT               0x00000100
-#define PPAUSE_INT              0x00010000
-#define PTOUT_INT               0x01000000
-
-/**
- * @param TX: means transmitting data from system memory 
- *            to external peripheral devices
- * @param RX: means receiving data from peripheral devices 
- *            to system memory
- */
-typedef enum pdma_rxtx {
-    TX = 0,
-    RX = 1,
-} pdma_rxtx_e;
-
 typedef enum pdma_ch {
     PDMA_CH_0 = 0,
     PDMA_CH_1 = 1,
@@ -117,7 +96,6 @@ typedef enum device_sel {
     PDM_IN = 33,
 } device_sel_e;
 
-
 typedef enum pendian {
     PDEFAULT,
     PBYTE2,
@@ -132,11 +110,10 @@ typedef enum hsize {
 } hsize_e;
 
 typedef enum src_type {
-    CONTINUE,
-    FIXED,
+    TX = 0,
+    RX = 1,
 } src_type_e;
 
-/* register structure */
 typedef struct pdma_ch_cfg {
     rt_uint32_t ch_src_type : 1;
     rt_uint32_t ch_dev_hsize : 2;
@@ -149,53 +126,20 @@ typedef struct pdma_ch_cfg {
     rt_uint32_t reserved2 : 4;
 } pdma_ch_cfg_t;
 
-typedef struct pdma_ch_reg {
-    rt_uint32_t ch_ctl;
-    rt_uint32_t ch_status;
-    pdma_ch_cfg_t ch_cfg;
-    rt_uint32_t ch_llt_saddr;
-    rt_uint32_t reserved[4];
-} pdma_ch_reg_t;
-
-typedef struct pdma_reg {
-    rt_uint32_t pdma_ch_en;
-    rt_uint32_t dma_int_mask;
-    rt_uint32_t dma_int_stat;
-    rt_uint32_t reserved[5];
-    pdma_ch_reg_t pdma_ch_reg[8];
-    rt_uint32_t ch_peri_dev_sel[8];
-} pdma_reg_t;
-
-/* llt structure */
-typedef struct pdma_llt {
-    rt_uint32_t line_size : 30;
-    rt_uint32_t pause : 1;
-    rt_uint32_t node_intr : 1;
-    rt_uint32_t src_addr;
-    rt_uint32_t dst_addr;
-    rt_uint32_t next_llt_addr;
-} pdma_llt_t;
-
-/* usr pdma structure */
-typedef struct usr_pdma_cfg {
-    pdma_ch_e ch;
+typedef struct {
     device_sel_e device;
-    rt_uint8_t *src_addr;
-    rt_uint8_t *dst_addr;
-    rt_uint32_t line_size;
-    pdma_ch_cfg_t pdma_ch_cfg;
-} usr_pdma_cfg_t;
+    void *src_addr;
+    void *dst_addr;
+    rt_uint32_t length;
+    pdma_ch_cfg_t ch_cfg;
+} pdma_transfer_cfg_t;
 
-
-rt_uint32_t k_pdma_interrupt_stat();
-void k_pdma_int_clear_all(rt_uint32_t clear);
-int k_pdma_int_clear(rt_uint8_t ch, rt_uint32_t clear);
-
-int k_pdma_config(usr_pdma_cfg_t pdma_cfg);
-void k_pdma_start(rt_uint8_t ch);
-void k_pdma_stop(rt_uint8_t ch);
-void k_pdma_resume(rt_uint8_t ch);
-void k_pdma_llt_free(rt_uint8_t ch);
-
+int rt_dma_chan_request(char* name);
+int rt_dma_chan_release(int chan);
+int rt_dma_chan_start(int chan);
+int rt_dma_chan_stop(int chan);
+int rt_dma_chan_config(int chan, pdma_transfer_cfg_t* cfg);
+int rt_dma_chan_done(int chan, int timeout);
+int rt_dma_chan_callback(int chan, void (*callback)(void* param), void* param);
 
 #endif

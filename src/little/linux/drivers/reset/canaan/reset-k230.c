@@ -1,20 +1,3 @@
-/****************************************************
- * 1. 写provider.dtsi，组织reset模块的形式（标准格式：phandle+specifier），使得扫描device tree后生成的id格式统一
- * 2. 在dt-bindings目录下写头文件，将所有的模块按照一定的格式描述出来
- * 3. 编写驱动文件，按照不同的类型reset对应的模块。
- * 
- * id的格式：根据reset_consumer.dtsi中定义的格式类型，即
- *      ___________________________________________
- *      | phandle | offset | type | done | assert |
- *      ———————————————————————————————————————————
- * 经过xlate函数翻译之后，将reset属性翻译成id，其中id的形式如下：
- *      31     16|15  14|13   7|6      0
- *      ————————————————————————————————
- *      | offset | type | done | reset |
- *      ————————————————————————————————
- * id最终将提供给reset_control_ops使用
- */ 
-
 /*
  * Copyright (c) 2016-2017 Linaro Ltd.
  * Copyright (c) 2022, Canaan Bright Sight Co., Ltd
@@ -43,139 +26,198 @@ struct k230_reset_controller {
     struct reset_controller_dev rst;
 };
 
+typedef enum
+{
+    W1C = 1<<0,
+    W1T = 1<<1,
+    WE = 1<<2, //write enable
+    RWSC = 1<<3,
+    RW_0 = 1<<4,
+    RW_1 = 1<<5,
+} reset_type_t;
+
+typedef struct {
+    uint32_t reset;
+    uint32_t type;
+    uint8_t reg_offset;
+    uint8_t reset_bit;
+    uint8_t done_bit;
+    uint32_t mask_rw;
+} reset_t;
+
 #define to_k230_reset_controller(_rst) \
     container_of(_rst, struct k230_reset_controller, rst)
 
+reset_t k_reset[] = {
+    {SYSCTL_RESET_CPU0_CORE, WE|W1T|W1C, 0x4, 0, 12, 0x0},
+    {SYSCTL_RESET_CPU0_FLUSH, WE|RWSC, 0x4, 4, 4, 0x0},
+    {SYSCTL_RESET_CPU1_CORE, WE|RW_1|W1C, 0xc, 0, 12, 0x1},
+    {SYSCTL_RESET_CPU1_FLUSH, WE|RWSC, 0xc, 4, 4, 0x1},
+    {SYSCTL_RESET_AI, W1T|W1C, 0x14, 0, 31, 0x0},
+    {SYSCTL_RESET_VPU, W1T|W1C, 0x1c, 0, 31, 0x0},
+    {SYSCTL_RESET_HS, W1T|W1C, 0x2c, 0, 4, 0x0},
+    {SYSCTL_RESET_HS_AHB, W1T|W1C, 0x2c, 1, 5, 0x0},
+    {SYSCTL_RESET_SDIO0, W1T|W1C, 0x34, 0, 28, 0x0},
+    {SYSCTL_RESET_SDIO1, W1T|W1C, 0x34, 1, 29, 0x0},
+    {SYSCTL_RESET_SDIO_AXI, W1T|W1C, 0x34, 2, 30, 0x0},
+    {SYSCTL_RESET_USB0, W1T|W1C, 0x3c, 0, 28, 0x0},
+    {SYSCTL_RESET_USB1, W1T|W1C, 0x3c, 1, 29, 0x0},
+    {SYSCTL_RESET_USB0_AHB, W1T|W1C, 0x3c, 0, 30, 0x0},
+    {SYSCTL_RESET_USB1_AHB, W1T|W1C, 0x3c, 1, 31, 0x0},
+    {SYSCTL_RESET_SPI0, W1T|W1C, 0x44, 0, 28, 0x0},
+    {SYSCTL_RESET_SPI1, W1T|W1C, 0x44, 1, 29, 0x0},
+    {SYSCTL_RESET_SPI2, W1T|W1C, 0x44, 2, 30, 0x0},
+    {SYSCTL_RESET_SEC, W1T|W1C, 0x4c, 0, 31, 0x0},
+    {SYSCTL_RESET_PDMA, W1T|W1C, 0x54, 0, 28, 0x0},
+    {SYSCTL_RESET_SDMA, W1T|W1C, 0x54, 1, 29, 0x0},
+    {SYSCTL_RESET_DECOMPRESS, W1T|W1C, 0x5c, 0, 31, 0x0},
+    {SYSCTL_RESET_SRAM, W1T|W1C, 0x64, 0, 28, 0x2},
+    {SYSCTL_RESET_SHRM_AXIM, W1T|W1C, 0x64, 2, 30, 0x2},
+    {SYSCTL_RESET_SHRM_AXIS, W1T|W1C, 0x64, 3, 31, 0x2},
+    {SYSCTL_RESET_SHRM_APB, RW_0, 0x64, 1, 0, 0x2},
+    {SYSCTL_RESET_NONAI2D, W1T|W1C, 0x6c, 0, 31, 0x0},
+    {SYSCTL_RESET_MCTL, W1T|W1C, 0x74, 0, 31, 0x0},
+    {SYSCTL_RESET_ISP, W1T|W1C, 0x80, 6, 29, 0x39f},
+    {SYSCTL_RESET_ISP_DW, W1T|W1C, 0x80, 5, 28, 0x39f},
+    {SYSCTL_RESET_CSI0_APB, RW_0, 0x80, 0, 0, 0x39f},
+    {SYSCTL_RESET_CSI1_APB, RW_0, 0x80, 1, 0, 0x39f},
+    {SYSCTL_RESET_CSI2_APB, RW_0, 0x80, 2, 0, 0x39f},
+    {SYSCTL_RESET_CSI_DPHY_APB, RW_0, 0x80, 3, 0, 0x39f},
+    {SYSCTL_RESET_ISP_AHB, RW_0, 0x80, 4, 0, 0x39f},
+    {SYSCTL_RESET_M0, RW_0, 0x80, 7, 0, 0x39f},
+    {SYSCTL_RESET_M1, RW_0, 0x80, 8, 0, 0x39f},
+    {SYSCTL_RESET_M2, RW_0, 0x80, 9, 0, 0x39f},
+    {SYSCTL_RESET_DPU, W1T|W1C, 0x88, 0, 31, 0x0},
+    {SYSCTL_RESET_DISP, W1T|W1C, 0x90, 0, 31, 0x0},
+    {SYSCTL_RESET_GPU, W1T|W1C, 0x98, 0, 31, 0x0},
+    {SYSCTL_RESET_AUDIO, W1T|W1C, 0xa4, 0, 31, 0x0},
+    {SYSCTL_RESET_TIMER0, RW_0, 0x20, 0, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER1, RW_0, 0x20, 1, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER2, RW_0, 0x20, 2, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER3, RW_0, 0x20, 3, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER4, RW_0, 0x20, 4, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER5, RW_0, 0x20, 5, 0, 0xff0ff},
+    {SYSCTL_RESET_TIMER_APB, RW_0, 0x20, 6, 0, 0xff0ff},
+    {SYSCTL_RESET_HDI, RW_0, 0x20, 7, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT0, RW_0, 0x20, 12, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT1, RW_0, 0x20, 13, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT0_APB, RW_0, 0x20, 14, 0, 0xff0ff},
+    {SYSCTL_RESET_WDT1_APB, RW_0, 0x20, 15, 0, 0xff0ff},
+    {SYSCTL_RESET_TS_APB, RW_0, 0x20, 16, 0, 0xff0ff},
+    {SYSCTL_RESET_MAILBOX, RW_0, 0x20, 17, 0, 0xff0ff},
+    {SYSCTL_RESET_STC, RW_0, 0x20, 18, 0, 0xff0ff},
+    {SYSCTL_RESET_PMU, RW_0, 0x20, 19, 0, 0xff0ff},
+    {SYSCTL_RESET_LS_APB, RW_0, 0x24, 0, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART0, RW_0, 0x24, 1, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART1, RW_0, 0x24, 2, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART2, RW_0, 0x24, 3, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART3, RW_0, 0x24, 4, 0, 0x7e7fff},
+    {SYSCTL_RESET_UART4, RW_0, 0x24, 5, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C0, RW_0, 0x24, 6, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C1, RW_0, 0x24, 7, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C2, RW_0, 0x24, 8, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C3, RW_0, 0x24, 9, 0, 0x7e7fff},
+    {SYSCTL_RESET_I2C4, RW_0, 0x24, 10, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK0_APB, RW_0, 0x24, 11, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK1_APB, RW_0, 0x24, 12, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK2_APB, RW_0, 0x24, 13, 0, 0x7e7fff},
+    {SYSCTL_RESET_JAMLINK3_APB, RW_0, 0x24, 14, 0, 0x7e7fff},
+    {SYSCTL_RESET_CODEC_APB, RW_0, 0x24, 17, 0, 0x7e7fff},
+    {SYSCTL_RESET_GPIO_DB, RW_0, 0x24, 18, 0, 0x7e7fff},
+    {SYSCTL_RESET_GPIO_APB, RW_0, 0x24, 19, 0, 0x7e7fff},
+    {SYSCTL_RESET_ADC, RW_0, 0x24, 20, 0, 0x7e7fff},
+    {SYSCTL_RESET_ADC_APB, RW_0, 0x24, 21, 0, 0x7e7fff},
+    {SYSCTL_RESET_PWM_APB, RW_0, 0x24, 22, 0, 0x7e7fff},
+    {SYSCTL_RESET_SPI2AXI, RW_0, 0xa8, 0, 0, 0x1},
+};
+
 static int k230_reset_of_xlate(struct reset_controller_dev *rcdev, const struct of_phandle_args *reset_spec)
 {
-    u32 offset;
-    u32 type;
-    u32 done;
-    u32 reset;
+    uint32_t reset;
 
-    offset  = (reset_spec->args[0] << K230_RESET_REG_OFFSET_SHIFT) & K230_RESET_REG_OFFSET_MASK;
-    type    = (reset_spec->args[1] << K230_RESET_TYPE_SHIFT)       & K230_RESET_TYPE_MASK;
-    done    = (reset_spec->args[2] << K230_RESET_DONE_BIT_SHIFT)   & K230_RESET_DONE_BIT_MASK;
-    reset   = (reset_spec->args[3] << K230_RESET_ASSERT_BIT_SHIFT) & K230_RESET_ASSERT_BIT_MASK;
+    reset  = reset_spec->args[0];
 
-    return (offset | type | done | reset);
+    return reset;
 }
 
 static int k230_reset(struct reset_controller_dev *rcdev, unsigned long id) 
 {
     struct k230_reset_controller *rstc = to_k230_reset_controller(rcdev);
     unsigned long flags;
-    u32 offset  = (id & K230_RESET_REG_OFFSET_MASK) >> K230_RESET_REG_OFFSET_SHIFT;
-    u32 type    = (id & K230_RESET_TYPE_MASK)       >> K230_RESET_TYPE_SHIFT;
-    u32 done    = (id & K230_RESET_DONE_BIT_MASK)   >> K230_RESET_DONE_BIT_SHIFT;
-    u32 reset   = (id & K230_RESET_ASSERT_BIT_MASK) >> K230_RESET_ASSERT_BIT_SHIFT;
-    u32 reg;
+    uint32_t reset = id;
 
-#ifdef K230_RESET_DEBUG
-    pr_info("[K230_RESET]:k230_reset id = 0x%08x, offset = 0x%08x type = %d done = %d reset =%d",(int)id,offset,type,done,reset);
-#endif
+    uint32_t type = k_reset[reset].type;
+    uint8_t offset = k_reset[reset].reg_offset;
+    uint8_t reset_bit = k_reset[reset].reset_bit;
+    uint8_t done_bit = k_reset[reset].done_bit;
+    uint32_t mask_rw = k_reset[reset].mask_rw;
+    uint32_t data = 0;
 
     spin_lock_irqsave(&rstc->lock, flags);
-    switch(type) {
-        case K230_RESET_TYPE_CPU: {
-            /* clear done bit */
-            reg = readl(rstc->membase+offset);
-            reg |= (1 << done);
-            reg |= (1 << (done + 0x10));   // note: write enable
-            writel(reg, rstc->membase+offset);
+    /* clear done bit */
+    if(type & W1C)
+    {
+        data = readl(rstc->membase+offset) & mask_rw;
 
-            /* set reset bit */
-            reg |= (1 << reset);
-            reg |= (1 << (reset + 0x10));   // note: write enable
-            writel(reg, rstc->membase+offset);
-
-            udelay(10);
-
-            /* clear reset bit */
-            if(0xc == offset)
-            {
-                reg &= ~(1 << reset);
-                reg &= (1 << (reset + 0x10));   // note: write enable
-                writel(reg, rstc->membase+offset);
-            }
-            
-            /* wait done bit set */
-            while(1) {
-                reg = readl(rstc->membase+offset);
-                if(reg & (1 << done)) {
-                    /* clear done and break */
-                    writel(reg, rstc->membase+offset);
-                    break;
-                }
-            }
-            break;
+        data |= (1 << done_bit);
+        if(type & WE)
+        {
+            data |= (1 << (done_bit + 16));  /* write enable */
         }
-        case K230_RESET_TYPE_HW_AUTO_DONE: {
-            /* clear done bit */
-            reg = readl(rstc->membase+offset);
-            reg |= (1 << done);
-            writel(reg, rstc->membase+offset);
-
-            /* set reset bit */
-            reg = readl(rstc->membase+offset);
-
-            reg |= (1 << reset);
-            writel(reg, rstc->membase+offset);
-
-            /* wait done bit set */
-            while(1) {
-                reg = readl(rstc->membase+offset);
-                if(reg & (1 << done)) {
-                    /* clear done and break */
-                    writel(reg, rstc->membase+offset);
-                    break;
-                }
-            }
-            break;
-        }
-        case K230_RESET_TYPE_SW_SET_DONE: {
-            /* set reset bit */
-            reg = readl(rstc->membase+offset);
-            if((0x20 == offset) || (0x24 == offset) || (0x80 == offset) || (0x64 == offset))
-            {
-                reg &= ~(1 << reset);            //special，复位：reset=0
-            }
-            else if((0x4 == offset) || (0xc == offset))
-            {
-                reg |= (1 << reset);
-                reg |= (1 << (reset + 0x10));   //note: write enable
-            }
-            else
-            {
-                reg |= (1 << reset);
-            }
-            writel(reg, rstc->membase+offset);
-
-            udelay(10);
-
-            /* clear reset bit */
-            if((0x4 != offset) && (0xc != offset))      //special，0x4, 0xc寄存器是自动清零
-            {
-                if(0xa8 == offset)
-                {
-                    reg &= ~(1 << reset);                   
-                    writel(reg, rstc->membase+offset); 
-                }
-                else
-                {
-                    reg |= (1 << reset);                   
-                    writel(reg, rstc->membase+offset);
-                }
-            }
-
-            break;
-        }
-        default:{
-            break;
-        }
+        writel(data, rstc->membase+offset);
     }
+    /* set reset bit */
+    data = readl(rstc->membase+offset) & mask_rw;
 
+    if((type & W1T) || (type & RWSC) || (type & RW_1))
+    {
+        data |= (1 << reset_bit);
+    }
+    else if(type & RW_0)
+    {
+        data &= ~(1 << reset_bit);
+    }
+    if(type & WE)
+    {
+        data |= (1 << (reset_bit + 16));  /* write enable */
+    }
+    writel(data, rstc->membase+offset);
     spin_unlock_irqrestore(&rstc->lock, flags);
+
+    msleep(1);
+    
+    /* clear reset bit */
+    if((type & RW_0) || (type & RW_1))
+    {
+        spin_lock_irqsave(&rstc->lock, flags);
+        data = readl(rstc->membase+offset) & mask_rw;
+
+        if(type & RW_0) data |= (1 << reset_bit);
+        else if(type & RW_1) data &= ~(1 << reset_bit);
+
+        if(type & WE)
+        {
+            data |= (1 << (reset_bit + 16));  /* write enable */
+        }
+        writel(data, rstc->membase+offset);
+        spin_unlock_irqrestore(&rstc->lock, flags);
+    }
+    
+    /* check done bit */
+    if(type & W1C)
+    {
+        if(readl(rstc->membase+offset) & (1 << done_bit))
+            return 0;
+
+        return -1;
+    }
+    if(type & RWSC)
+    {
+        if((readl(rstc->membase+offset) & (1 << done_bit)) == 0)
+            return 0;
+
+        return -1;
+    }
     return 0;
 }
 
@@ -183,61 +225,46 @@ static int k230_reset_assert(struct reset_controller_dev *rcdev, unsigned long i
 {
     struct k230_reset_controller *rstc = to_k230_reset_controller(rcdev);
     unsigned long flags;
-    u32 offset  = (id & K230_RESET_REG_OFFSET_MASK) >> K230_RESET_REG_OFFSET_SHIFT;
-    u32 type    = (id & K230_RESET_TYPE_MASK)       >> K230_RESET_TYPE_SHIFT;
-    /*u32 done    = (id & K230_RESET_DONE_BIT_MASK) >> K230_RESET_DONE_BIT_SHIFT;*/
-    u32 reset   = (id & K230_RESET_ASSERT_BIT_MASK) >> K230_RESET_ASSERT_BIT_SHIFT;
-    u32 reg;
+    uint32_t reset = id;
 
-#ifdef K230_RESET_DEBUG
-    pr_info("[K230_RESET]:k230_reset_assert id = 0x%08x",(int)id);
-#endif
+    uint32_t type = k_reset[reset].type;
+    uint8_t offset = k_reset[reset].reg_offset;
+    uint8_t reset_bit = k_reset[reset].reset_bit;
+    uint8_t done_bit = k_reset[reset].done_bit;
+    uint32_t mask_rw = k_reset[reset].mask_rw;
+    uint32_t data = 0;
 
-    // if(type == K230_RESET_TYPE_HW_AUTO_DONE) {
-    //     pr_err("hardware auto done reset DOESNOT support reset assert!");
-    // } else {
-    //     spin_lock_irqsave(&rstc->lock, flags);
-    //     reg = readl(rstc->membase+offset);
-    //     /* set reset bit */
-    //     reg |= (1 << reset);
-    //     writel(reg, rstc->membase+offset);
-    //     spin_unlock_irqrestore(&rstc->lock, flags);
-    // }
-    if(type == K230_RESET_TYPE_HW_AUTO_DONE)
+    spin_lock_irqsave(&rstc->lock, flags);
+    /* clear done bit */
+    if(type & W1C)
     {
-        pr_err("hardware auto done reset DOESNOT support reset assert!");
+        data = readl(rstc->membase+offset) & mask_rw;
+
+        data |= (1 << done_bit);
+        if(type & WE)
+        {
+            data |= (1 << (done_bit + 16));  /* write enable */
+        }
+        writel(data, rstc->membase+offset);
     }
-    else if(type == K230_RESET_TYPE_CPU)
+    /* set reset bit */
+    data = readl(rstc->membase+offset) & mask_rw;
+
+    if((type & W1T) || (type & RWSC) || (type & RW_1))
     {
-        spin_lock_irqsave(&rstc->lock, flags);
-        reg = readl(rstc->membase+offset);
-        /* set reset bit */
-        reg |= (1 << reset);
-        reg |= (1 << (reset + 0x10));   // note: write enable
-        writel(reg, rstc->membase+offset);
-        spin_unlock_irqrestore(&rstc->lock, flags);
+        data |= (1 << reset_bit);
     }
-    else
+    else if(type & RW_0)
     {
-        spin_lock_irqsave(&rstc->lock, flags);
-        reg = readl(rstc->membase+offset);
-        /* set reset bit */
-        if((0x20 == offset) || (0x24 == offset) || (0x80 == offset) || (0x64 == offset))
-        {
-            reg &= ~(1 << reset);            //special，复位：reset=0
-        }
-        else if((0x4 == offset) || (0xc == offset))
-        {
-            reg |= (1 << reset);
-            reg |= (1 << (reset + 0x10));   //note: write enable
-        }
-        else
-        {
-            reg |= (1 << reset);
-        }
-        writel(reg, rstc->membase+offset);
-        spin_unlock_irqrestore(&rstc->lock, flags);
+        data &= ~(1 << reset_bit);
     }
+    if(type & WE)
+    {
+        data |= (1 << (reset_bit + 16));  /* write enable */
+    }
+    writel(data, rstc->membase+offset);
+    spin_unlock_irqrestore(&rstc->lock, flags);
+
     return 0;
 }
 
@@ -245,83 +272,48 @@ static int k230_reset_deassert(struct reset_controller_dev *rcdev, unsigned long
 {
     struct k230_reset_controller *rstc = to_k230_reset_controller(rcdev);
     unsigned long flags;
-    u32 offset  = (id & K230_RESET_REG_OFFSET_MASK) >> K230_RESET_REG_OFFSET_SHIFT;
-    u32 type    = (id & K230_RESET_TYPE_MASK)       >> K230_RESET_TYPE_SHIFT;
-    u32 done    = (id & K230_RESET_DONE_BIT_MASK)   >> K230_RESET_DONE_BIT_SHIFT;
-    u32 reset   = (id & K230_RESET_ASSERT_BIT_MASK) >> K230_RESET_ASSERT_BIT_SHIFT;
-    u32 reg;
+    uint32_t reset = id;
 
-#ifdef K230_RESET_DEBUG
-        pr_info("[K230_RESET]:k230_reset_deassert id = 0x%08x",(int)id);
-#endif
+    uint32_t type = k_reset[reset].type;
+    uint8_t offset = k_reset[reset].reg_offset;
+    uint8_t reset_bit = k_reset[reset].reset_bit;
+    uint8_t done_bit = k_reset[reset].done_bit;
+    uint32_t mask_rw = k_reset[reset].mask_rw;
+    uint32_t data = 0;
 
-    // if(type == K230_RESET_TYPE_HW_AUTO_DONE) {
-    //     pr_err("hardware auto done reset DOESNOT support reset assert!");
-    // } else {
-    //     spin_lock_irqsave(&rstc->lock, flags);
-    //     reg = readl(rstc->membase+offset);
-    //     /* clear reset bit */
-    //     reg &= ~(1 << reset);
-    //     writel(reg, rstc->membase+offset);
-    //     if(type == K230_RESET_TYPE_CPU) {
-    //         /* check bit done */
-    //         while(1) {
-    //             reg = readl(rstc->membase+offset);
-    //             if(reg & (1 << done)) {
-    //                 /* clear done and break */
-    //                 writel(reg, rstc->membase+offset);
-    //                 break;
-    //             }
-    //         }
-    //     }
-    //     spin_unlock_irqrestore(&rstc->lock, flags);
-    if(type == K230_RESET_TYPE_HW_AUTO_DONE)
-    {
-        pr_err("hardware auto done reset DOESNOT support reset assert!");
-    }
-    else if(type == K230_RESET_TYPE_CPU)
+        /* clear reset bit */
+    if((type & RW_0) || (type & RW_1))
     {
         spin_lock_irqsave(&rstc->lock, flags);
-        reg = readl(rstc->membase+offset);
-        /* clear reset bit */
-        if(0xc == offset)
+        data = readl(rstc->membase+offset) & mask_rw;
+
+        if(type & RW_0) data |= (1 << reset_bit);
+        else if(type & RW_1) data &= ~(1 << reset_bit);
+
+        if(type & WE)
         {
-            reg &= ~(1 << reset);
-            reg &= (1 << (reset + 0x10));   // note: write enable
-            writel(reg, rstc->membase+offset);
+            data |= (1 << (reset_bit + 16));  /* write enable */
         }
-        
-        /* wait done bit set */
-        while(1) {
-            reg = readl(rstc->membase+offset);
-            if(reg & (1 << done)) {
-                /* clear done and break */
-                writel(reg, rstc->membase+offset);
-                break;
-            }
-        }
+        writel(data, rstc->membase+offset);
         spin_unlock_irqrestore(&rstc->lock, flags);
     }
-    else
+    
+    /* check done bit */
+    if(type & W1C)
     {
-        spin_lock_irqsave(&rstc->lock, flags);
-        reg = readl(rstc->membase+offset);
-        /* clear reset bit */
-        if((0x4 != offset) && (0xc != offset))      //special，0x4, 0xc寄存器是自动清零
-        {
-            if(0xa8 == offset)
-            {
-                reg &= ~(1 << reset);                   
-                writel(reg, rstc->membase+offset); 
-            }
-            else
-            {
-                reg |= (1 << reset);                   
-                writel(reg, rstc->membase+offset);
-            }
-        }
-        spin_unlock_irqrestore(&rstc->lock, flags);
+        if(readl(rstc->membase+offset) & (1 << done_bit))
+            return 0;
+
+        return -1;
     }
+    if(type & RWSC)
+    {
+        if((readl(rstc->membase+offset) & (1 << done_bit)) == 0)
+            return 0;
+
+        return -1;
+    }
+
     return 0;
 }
 
@@ -356,7 +348,7 @@ static int k230_reset_probe(struct platform_device *pdev)
     rstc->rst.owner = THIS_MODULE;
     rstc->rst.ops = &k230_reset_ops;
     rstc->rst.of_node = pdev->dev.of_node;
-    rstc->rst.of_reset_n_cells = 4;
+    rstc->rst.of_reset_n_cells = 1;
     rstc->rst.of_xlate = k230_reset_of_xlate;
     if(0 == reset_controller_register(&rstc->rst)) {
     #ifdef K230_RESET_DEBUG

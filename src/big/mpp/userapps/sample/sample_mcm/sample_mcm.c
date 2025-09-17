@@ -797,6 +797,11 @@ static void *output_thread(void *arg)
 
         ret = kd_mpi_venc_get_stream(0, &output, -1);
         CHECK_RET(ret, __func__, __LINE__);
+        if(ret)
+        {
+            free(output.pack);
+            continue;
+        }
 
         out_cnt += output.pack_cnt;
         for (i = 0; i < output.pack_cnt; i++)

@@ -84,7 +84,7 @@ k_s32 kd_mpi_isp_set_chn_attr(k_isp_dev dev_num, k_isp_chn chn_num, k_isp_chn_at
  * @note Before call the API, need to set the device & channel attribute.
  *
  */
-k_s32 kd_mpi_isp_init(k_isp_dev dev_num);
+k_s32 kd_mpi_isp_init(k_isp_dev dev_num, int fastboot, void *database);
 
 /**
  * @brief Deinit ISP
@@ -97,7 +97,7 @@ k_s32 kd_mpi_isp_init(k_isp_dev dev_num);
  * @note
  *
  */
-k_s32 kd_mpi_isp_deinit(k_isp_dev dev_num);
+ k_s32 kd_mpi_isp_deinit(k_isp_dev dev_num, int fastboot);
 
 /**
  * @brief Connect of the the ISP
@@ -214,7 +214,7 @@ k_s32 kd_mpi_isp_dump_release(k_isp_dev dev_num, k_isp_chn chn_num, const k_vide
 
 k_s32 kd_mpi_submodule_control(k_isp_dev dev_num);
 
-k_s32 kd_mpi_submodule_control_h(k_isp_dev dev_num, const void *auto_data, const void *manual_data);
+// k_s32 kd_mpi_submodule_control_h(k_isp_dev dev_num, TDatabase_config *cfg);
 
 /**
  * @brief set isp ae roi

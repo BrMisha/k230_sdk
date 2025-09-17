@@ -30,5 +30,6 @@ BSP_CFLGAS = -I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/c908 \
 		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/interdrv/sysctl/sysctl_power \
 		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/interdrv/sysctl/sysctl_reset \
 		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/interdrv/gpio \
+		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/interdrv/pdma \
 		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/extdrv/regulator \
 		-I$(RTSMART_SRC_DIR)/kernel/bsp/maix3/board/extcomponents/usage

@@ -1882,6 +1882,42 @@ k_s32 kd_mpi_sensor_mirror_set(k_s32 fd, k_vicap_mirror_mode mirror)
     return ret;
 }
 
+k_s32 kd_mpi_sensor_focus_pos_get(k_s32 fd, k_sensor_focus_pos *focus_pos)
+{
+    k_s32 ret;
+
+    if(!focus_pos) {
+        pr_err("%s, focus_pos is null\n",__func__);
+        return K_ERR_VICAP_NULL_PTR;
+    }
+
+    ret = ioctl(fd, KD_IOC_SENSOR_G_FOCUS_POINT, focus_pos);
+    if (ret != 0) {
+        pr_err("%s, error(%d)\n", __func__, ret);
+        return K_ERR_VICAP_NOT_SUPPORT;
+    }
+
+    return ret;
+}
+
+k_s32 kd_mpi_sensor_focus_pos_set(k_s32 fd, k_sensor_focus_pos *focus_pos)
+{
+    k_s32 ret;
+
+    if(!focus_pos) {
+        pr_err("%s, focus_pos is null\n",__func__);
+        return K_ERR_VICAP_NULL_PTR;
+    }
+
+    ret = ioctl(fd, KD_IOC_SENSOR_S_FOCUS_POINT, focus_pos);
+    if (ret != 0) {
+        pr_err("%s, error(%d)\n", __func__, ret);
+        return K_ERR_VICAP_NOT_SUPPORT;
+    }
+
+    return ret;
+}
+
 
 k_s32 kd_mpi_adapt_sensor_get(k_vicap_adapt_id *csi0_adapt_id, k_vicap_adapt_id *csi1_adapt_id, k_vicap_adapt_id *csi2_adapt_id)
 {

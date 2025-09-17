@@ -10,5 +10,5 @@
 &sysctl_reset {
     status          = "okay";
     compatible      = "canaan,k230-sysctl-reset";
-    #reset-cells    = <4>;                          /* indicate consumer resets have 5 parameters. phandle+offset+type+done+assert */
+    #reset-cells    = <1>;
 };

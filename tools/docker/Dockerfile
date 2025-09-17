@@ -53,7 +53,7 @@ RUN echo \
 
 # install pip software
 RUN python3 -m pip install -U pyyaml pycryptodome gmssl \
-    numpy==1.19.5  protobuf==3.17.3 Pillow onnx==1.9.0 onnx-simplifier==0.3.6 onnxoptimizer==0.2.6 onnxruntime==1.8.0  cmake
+    numpy==1.19.5  protobuf==3.17.3 Pillow onnx==1.9.0 onnx-simplifier==0.3.6 onnxoptimizer==0.2.6 onnxruntime==1.8.0  cmake==3.30.2
 
 # dotnet runtime for nncase v2
 RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \

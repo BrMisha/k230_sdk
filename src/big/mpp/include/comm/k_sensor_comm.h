@@ -623,6 +623,17 @@ typedef struct {
     k_u8   otp_date[20];
 } k_sensor_otp_date;
 
+typedef enum  {
+    SENSOR_FOCUS_POS_ABSOLUTE = 0,
+    SENSOR_FOCUS_POS_RELATIVE,
+} k_sensor_focus_pos_mode;
+
+typedef struct {
+    k_sensor_focus_pos_mode posType;
+    k_u32 pos;
+} k_sensor_focus_pos;
+
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

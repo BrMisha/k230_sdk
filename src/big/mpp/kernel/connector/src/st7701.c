@@ -182,7 +182,7 @@ static void st7701_480x854_init(k_u8 test_mode_en)
     k_u8 param39[] = {0x29, 0x00};
 
     connecter_dsi_send_pkg(param1, sizeof(param1));
-    usleep(100000);
+    rt_thread_mdelay(100);
     connecter_dsi_send_pkg(param2, sizeof(param2));
     connecter_dsi_send_pkg(param3, sizeof(param3));
     connecter_dsi_send_pkg(param4, sizeof(param4));
@@ -203,7 +203,7 @@ static void st7701_480x854_init(k_u8 test_mode_en)
     connecter_dsi_send_pkg(param23, sizeof(param23));
     connecter_dsi_send_pkg(param24, sizeof(param24));
     connecter_dsi_send_pkg(param25, sizeof(param25));
-    usleep(100000);
+    rt_thread_mdelay(100);
     connecter_dsi_send_pkg(param26, sizeof(param26));
     connecter_dsi_send_pkg(param27, sizeof(param27));
     connecter_dsi_send_pkg(param28, sizeof(param28));

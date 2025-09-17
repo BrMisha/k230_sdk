@@ -33,11 +33,14 @@ int ddr_init_training(void)
                 return 0; //have init ,not need reinit;
         }
 
-	#if defined(CONFIG_CANMV_LPDDR3_2133)
-                ddr_init_board();
+        #if defined(CONFIG_CANMV_LPDDR3_2133)
+                pi_ddr_init_2133();
 	#elif defined(CONFIG_CANMV_DONGSHANPI_LPDDR3_1866)
-		ddr_init_board();
+		canmv_dongshanpi_ddr_init_1866();
+	#elif defined(CONFIG_CANMV_DONGSHANPI_LPDDR4_2667)
+		canmv_dongshanpi_lpddr4_init_2677();
 	#endif
+
 	return 0;
 }
 

@@ -281,7 +281,7 @@ static rt_err_t nand_write_page(struct rt_mtd_nand_device* device, rt_off_t page
     wait_idle(1);
     write_enable();
     if (data)
-        page_write(0, data, data_len, 0);
+        page_write(0, (uint8_t*)data, data_len, 0);
     if (spare) {
         rt_memset(oob, 0xff, sizeof(oob));
         if (device->plane_num == 0) {
@@ -375,7 +375,7 @@ static int winbond_nand_init(void)
         .qspi_dl_width = 4,
     };
 
-    ret = rt_spi_bus_attach_device(&spi_nand_dev, "winbond_nand", RT_USING_WINBOND_NAND_DEV, NULL);
+    ret = rt_spi_bus_attach_device(&spi_nand_dev.parent, "winbond_nand", RT_USING_WINBOND_NAND_DEV, NULL);
     if (ret != RT_EOK) {
         LOG_E("winbond_nand attach %s failed!\n", RT_USING_WINBOND_NAND_DEV);
         return ret;

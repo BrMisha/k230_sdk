@@ -136,7 +136,23 @@ union rt_aes_control_args {
     } final;
 };
 
-typedef enum {
+enum {
+    MODE_ECB = 1,
+    MODE_CFB,
+    MODE_OFB,
+    MODE_CBC,
+    MODE_CBC_CS1,
+    MODE_CBC_CS2,
+    MODE_CBC_CS3,
+    MODE_CTR_32,
+    MODE_CTR_64,
+    MODE_CTR,
+    MODE_GCM = 0x10,
+    MODE_CCM,
+    MODE_XTS,
+};
+
+enum {
     SWKEY = 0,
     OTPKEY = 1,
     PUFKEY = 2,
@@ -144,9 +160,9 @@ typedef enum {
     SHARESEC = 4,
     SSKEY = 5,
     PRKEY,
-} pufs_key_type_t;
+};
 
-int do_aes_gcm(char* crypto_type)
+int do_aes_gcm(void)
 {
     int aes_fd;
     int ntests = sizeof(aes_gcm_tp) / sizeof(struct gcm_test_pattern);
@@ -162,12 +178,13 @@ int do_aes_gcm(char* crypto_type)
         return -1;
     }
 
-    printf("************** GCM ENCRYPT CASE **********************\n\t");
+    printf("************** GCM ENCRYPT CASE **********************\n");
     for (int i = 0; i < ntests; i++) {
         printf("case %d, pclen = %d\n", i, aes_gcm_tp[i].ptlen);
 
+        ctl.init.mode = MODE_GCM;
         ctl.init.encrypt = 1;
-        ctl.init.keytype = SSKEY;
+        ctl.init.keytype = SWKEY;
         ctl.init.keyslot = 0;
         ctl.init.key = (uint8_t*)aes_gcm_tp[i].key;
         ctl.init.keylen = aes_gcm_tp[i].keybits >> 3;
@@ -219,12 +236,13 @@ int do_aes_gcm(char* crypto_type)
     }
 
     // decrypt
-    printf("************** GCM DECRYPT CASE **********************\n\t");
+    printf("************** GCM DECRYPT CASE **********************\n");
     for (int i = 0; i < ntests; i++) {
         printf("case %d, ctlen = %d\n", i, aes_gcm_tp[i].ctlen);
 
+        ctl.init.mode = MODE_GCM;
         ctl.init.encrypt = 0;
-        ctl.init.keytype = SSKEY;
+        ctl.init.keytype = SWKEY;
         ctl.init.keyslot = 0;
         ctl.init.key = (uint8_t*)aes_gcm_tp[i].key;
         ctl.init.keylen = aes_gcm_tp[i].keybits >> 3;
@@ -278,48 +296,9 @@ int do_aes_gcm(char* crypto_type)
     return 0;
 }
 
-static void show_help(void)
-{
-    printf("\
-Usage: ./crypto_demo [-ht] ...\n\
-    -h  display help\n\
-    -t  crypto type: gcm-aes\n");
-}
-
 int main(int argc, char* argv[])
 {
-    int ret = 0;
-    int opt;
-    char* crypto_type;
-
-    if (argc <= 1) {
-        printf("Input param error!\n");
-        show_help();
-        exit(-1);
-    }
-
-    while ((opt = getopt(argc, argv, "ht:")) != -1) {
-        switch (opt) {
-        case 't':
-            crypto_type = optarg;
-            break;
-        case 'h':
-            show_help();
-            exit(0);
-        case '?':
-            break;
-        }
-    }
-
-    if (strcmp(crypto_type, "gcm-aes") == 0)
-        ret = do_aes_gcm(crypto_type);
-    else
-        printf("Crypto type input error!\n");
-
-    if (ret < 0) {
-        printf("Crypto computing error!\n");
-        return ret;
-    }
+    do_aes_gcm();
 
     return 0;
 }

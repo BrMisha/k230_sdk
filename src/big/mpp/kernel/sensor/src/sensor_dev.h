@@ -71,6 +71,9 @@ typedef struct {
     k_s32 (*sensor_get_otp_data)(void *ctx, void *data);
     k_s32 (*sensor_set_otp_data)(void *ctx, void *data);
     k_s32 (*sensor_mirror_set)(void *ctx, k_vicap_mirror_mode mirror);
+    k_s32 (*sensor_get_focus)(void *ctx, k_sensor_focus_pos *data);
+    k_s32 (*sensor_set_focus)(void *ctx, k_sensor_focus_pos *data);
+
 } k_sensor_function;
 
 typedef struct {

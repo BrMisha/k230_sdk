@@ -47,11 +47,11 @@
 #define GC2093_REG_DGAIN_L	0x00b2	//0x00b9
 #define GC2093_MIN_GAIN_STEP    (1.0f/64.0f)
 
-static k_u8 mirror_flag = 0; 
+static k_u8 mirror_flag = 0;
 
 
 static k_sensor_reg gc2093_mirror[] = {
-    {0x0017, 0x03}, 
+    {0x0017, 0x03},
     {REG_NULL, 0x00},
 };
 
@@ -438,12 +438,12 @@ static const k_sensor_reg gc2093_mipi2lane_1080p_30fps_linear[] = {
     {0x0417, 0x78},
     {0x04e0, 0x18},
     /*window*/
-    {0x0192, 0x02},	//out_win_y_off = 2 
-    {0x0194, 0x03},	//out_win_x_off = 3 
+    {0x0192, 0x02},	//out_win_y_off = 2
+    {0x0194, 0x03},	//out_win_x_off = 3
     {0x0195, 0x04},	//out_win_height = 1080
-    {0x0196, 0x38}, 
+    {0x0196, 0x38},
     {0x0197, 0x07},	//out_win_width = 1920
-    {0x0198, 0x80}, 
+    {0x0198, 0x80},
     /****DVP & MIPI****/
     {0x0199, 0x00},	//out window offset
     {0x019a, 0x06},
@@ -1080,12 +1080,12 @@ static const k_sensor_reg gc2093_mipi2lane_1080p_30fps_mclk_24m_linear[] = {
     {0x0417, 0x78},
     {0x04e0, 0x18},
     /*window*/
-    {0x0192, 0x02},	//out_win_y_off = 2 
-    {0x0194, 0x03},	//out_win_x_off = 3 
+    {0x0192, 0x02},	//out_win_y_off = 2
+    {0x0194, 0x03},	//out_win_x_off = 3
     {0x0195, 0x04},	//out_win_height = 1080
-    {0x0196, 0x38}, 
+    {0x0196, 0x38},
     {0x0197, 0x07},	//out_win_width = 1920
-    {0x0198, 0x80}, 
+    {0x0198, 0x80},
     /****DVP & MIPI****/
     {0x0199, 0x00},	//out window offset
     {0x019a, 0x06},
@@ -1590,7 +1590,7 @@ static const k_sensor_reg gc2093_mipi2lane_720p_90fps_mclk_24m_linear[] = {
 // sensor ae info
 static k_sensor_ae_info sensor_ae_info[] = {
      // list  for external  clk 23.76M
-    // 1080P30 
+    // 1080P30
     {
         .frame_length = 1206,
         .cur_frame_length = 1206,
@@ -1622,7 +1622,7 @@ static k_sensor_ae_info sensor_ae_info[] = {
         },
         .cur_fps = 30,
     },
-    // 1080P60 
+    // 1080P60
     {
         .frame_length = 1218,
         .cur_frame_length = 1218,
@@ -1686,7 +1686,7 @@ static k_sensor_ae_info sensor_ae_info[] = {
         },
         .cur_fps = 90,
     },
-    //720P 90fps  
+    //720P 90fps
     {
         .frame_length = 837,
         .cur_frame_length = 837,
@@ -1750,7 +1750,7 @@ static k_sensor_ae_info sensor_ae_info[] = {
         },
         .cur_fps = 30,
     },
-    // 1080P60 
+    // 1080P60
     {
         .frame_length = 1218,
         .cur_frame_length = 1218,
@@ -1814,7 +1814,7 @@ static k_sensor_ae_info sensor_ae_info[] = {
         },
         .cur_fps = 90,
     },
-    //720P 90fps  
+    //720P 90fps
     {
         .frame_length = 837,
         .cur_frame_length = 837,
@@ -1873,14 +1873,18 @@ static k_sensor_mode gc2093_mode_info[] = {
         .mclk_setting = {
             {
                 .mclk_setting_en = K_TRUE,
+#if defined(CONFIG_BOARD_K230_CANMV_RTT_EVB)
+                .setting.id = SENSOR_MCLK0,
+#else
                 .setting.id = SENSOR_MCLK2,
+#endif
                 .setting.mclk_sel = SENSOR_PLL1_CLK_DIV4,
                 .setting.mclk_div = 25,
             },
             {K_FALSE},
             {K_FALSE},
         },
-        .sensor_ae_info = &sensor_ae_info[0],    
+        .sensor_ae_info = &sensor_ae_info[0],
 #else
         .reg_list = gc2093_mipi2lane_1080p_60fps_mclk_24m_linear,
         .mclk_setting = {
@@ -1959,7 +1963,11 @@ static k_sensor_mode gc2093_mode_info[] = {
         .mclk_setting = {
             {
                 .mclk_setting_en = K_TRUE,
+#if defined(CONFIG_BOARD_K230_CANMV_RTT_EVB)
+                .setting.id = SENSOR_MCLK0,
+#else
                 .setting.id = SENSOR_MCLK2,
+#endif
                 .setting.mclk_sel = SENSOR_PLL1_CLK_DIV4,
                 .setting.mclk_div = 25,
             },
@@ -2027,7 +2035,7 @@ static k_sensor_mode *current_mode = NULL;
 
 static int gc2093_power_rest(k_s32 on)
 {
-    // #define GC2093_CSI2_RST_GPIO     (0)  //24// 
+    // #define GC2093_CSI2_RST_GPIO     (0)  //24//
 
     kd_pin_mode(GC2093_CSI2_RST_GPIO, GPIO_DM_OUTPUT);
 
@@ -2109,7 +2117,7 @@ static k_s32 gc2093_sensor_power_on(void *ctx, k_s32 on)
         sensor_reg_write(&dev->i2c_info, 0x03fe, 0xf0);
 
         gc2093_power_rest(on);
-        
+
     }
 
     return ret;
@@ -2138,7 +2146,7 @@ static k_s32 gc2093_sensor_init(void *ctx, k_sensor_mode mode)
         return -1;
     }
 
-    // write sensor reg 
+    // write sensor reg
     ret = sensor_reg_list_write(&dev->i2c_info, current_mode->reg_list);
 
     // set mirror
@@ -2368,7 +2376,7 @@ static k_s32 gc2093_sensor_set_again(void *ctx, k_sensor_gain gain)
 			current_mode->sensor_again = again;
 		}
 		current_mode->ae_info.cur_again = (float)current_mode->sensor_again/64.0f;
-		
+
     } else if (current_mode->hdr_mode == SENSOR_MODE_HDR_STITCH) {
         again = (k_u16)(gain.gain[SENSOR_LINEAR_PARAS] * 64 + 0.5);
 		if(current_mode->sensor_again !=again)
@@ -2641,22 +2649,22 @@ static k_s32 gc2093_sensor_mirror_set(void *ctx, k_vicap_mirror_mode mirror)
                 case VICAP_MIRROR_HOR :
                     // set mirror
                     gc2093_mirror[0].val = 0x01; //0x02;
-                    // set sensor info bayer pattern 
+                    // set sensor info bayer pattern
                     gc2093_mode_info[i].bayer_pattern = BAYER_PAT_GRBG; //BAYER_PAT_GBRG;
                     break;
                 case VICAP_MIRROR_VER :
                     // set mirror
                     gc2093_mirror[0].val = 0x02; //0x01;
-                    // set sensor info bayer pattern 
+                    // set sensor info bayer pattern
                     gc2093_mode_info[i].bayer_pattern = BAYER_PAT_GBRG;// BAYER_PAT_GRBG;
                     break;
                 case VICAP_MIRROR_BOTH :
                     // set mirror
                     gc2093_mirror[0].val = 0x03;
-                    // set sensor info bayer pattern 
+                    // set sensor info bayer pattern
                     gc2093_mode_info[i].bayer_pattern = BAYER_PAT_BGGR;
                     break;
-                default: 
+                default:
                     rt_kprintf("mirror type is not support \n");
                     return -1;
                     break;

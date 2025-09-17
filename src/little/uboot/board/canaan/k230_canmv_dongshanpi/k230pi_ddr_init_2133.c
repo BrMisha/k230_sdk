@@ -40,7 +40,7 @@
        v =readl ((const volatile void __iomem *) addr );  \
     }
 
-void ddr_init_board(void)
+void pi_ddr_init_2133(void)
 {
 int data;
 int train_data=0;

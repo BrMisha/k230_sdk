@@ -51,6 +51,8 @@ extern "C" {
 #define DMA_MAX_CHN_NUMS        (GDMA_MAX_CHN_NUMS + SDMA_MAX_CHN_NUMS) /**< The maximum number of the DMA channel. FIXED! */
 #define DMA_LINKLIST_BYTE       (24)    /**< The number of bytes occupied by a linked list of DMA. */
 
+#define GDMA_TYPE 0
+#define SDMA_TYPE 1
 
 /**
  * @brief Defines the working mode of the dma
@@ -200,6 +202,37 @@ typedef struct
     k_u64 phys_dst_addr[3];                 /**< physical destination address */
     k_video_frame_info vf_info;             /**< video information */
 } k_dma_frame_info;
+
+typedef union
+{
+    struct {
+        k_u32 dat_mode : 1;
+        k_u32 dat_size : 2;
+        k_u32 reserved_0 : 1;
+        k_u32 dat_endian : 2;
+        k_u32 reserved_1 : 2;
+        k_u32 src_fixed : 1;
+        k_u32 dst_fixed : 1;
+        k_u32 dec_en : 1;
+        k_u32 reserved_2 : 5;
+        k_u32 wr_outstanding : 4;
+        k_u32 rd_outstanding : 4;
+        k_u32 reserved_3 : 8;
+    };
+    k_u32 value;
+} k_sdma_ch_cfg_t;
+
+typedef struct
+{
+    void *src_addr;
+    void *dst_addr;
+    k_u8 dimension;
+    k_u16 line_num;
+    k_u16 line_space;
+    k_u32 line_size;
+    k_u32 user_data;
+    k_sdma_ch_cfg_t ch_cfg;
+} k_sdma_transfer_cfg_t;
 
 #define K_ERR_DMA_INVALID_DEVID     K_DEF_ERR(K_ID_DMA, K_ERR_LEVEL_ERROR, K_ERR_INVALID_DEVID)
 #define K_ERR_DMA_INVALID_CHNID     K_DEF_ERR(K_ID_DMA, K_ERR_LEVEL_ERROR, K_ERR_INVALID_CHNID)

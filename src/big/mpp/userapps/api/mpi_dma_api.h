@@ -159,6 +159,26 @@ k_s32 kd_mpi_dma_get_frame(k_u8 chn_num, k_video_frame_info *df_info, k_s32 mill
  */
 k_s32 kd_mpi_dma_release_frame(k_u8 chn_num, k_video_frame_info *df_info);
 
+/**
+ * @brief Request a free DMA channel
+ * @param [in] dma_type dma type
+ * @return k_s32
+ * @retval 0 success
+ * @retval "not 0" see err code
+ * @see K_ERR_CODE_E
+ */
+k_s32 kd_mpi_dma_request_chn(k_u8 dma_type);
+
+/**
+ * @brief Release a DMA channel
+ * @param [in] chn_num channel num
+ * @return k_s32
+ * @retval 0 success
+ * @retval "not 0" see err code
+ * @see K_ERR_CODE_E
+ */
+k_s32 kd_mpi_dma_release_chn(k_u8 chn_num);
+
 /** @} */ /** <!-- ==== DMA End ==== */
 
 #ifdef __cplusplus

@@ -6,6 +6,8 @@ cd src/big/rt-smart
 git checkout .
 cd ../../big/mpp
 git checkout .
+git submodule init
+git submodule update
 cd ../../big/unittest
 git checkout .
 cd ../../common/cdk

@@ -7,23 +7,13 @@
 #include <rthw.h>
 #include "usb_config.h"
 #include "usb_log.h"
+#include "sysctl_rst.h"
 
 #define DEFAULT_USB_HCLK_FREQ_MHZ 200
 
 uint32_t SystemCoreClock = (DEFAULT_USB_HCLK_FREQ_MHZ * 1000 * 1000);
 uintptr_t g_usb_otg0_base = (uintptr_t)0x91500000UL;
 uintptr_t g_usb_otg1_base = (uintptr_t)0x91540000UL;
-
-static void sysctl_reset_hw_done(volatile uint32_t *reset_reg, uint8_t reset_bit, uint8_t done_bit)
-{
-    *reset_reg |= (1 << done_bit);      /* clear done bit */
-    rt_thread_mdelay(1);
-    
-    *reset_reg |= (1 << reset_bit);     /* set reset bit */
-    rt_thread_mdelay(1);
-    /* check done bit */
-    while(*reset_reg & (1 << done_bit) == 0);
-}
 
 #define USB_IDPULLUP0 		(1<<4)
 #define USB_DMPULLDOWN0 	(1<<8)
@@ -40,7 +30,7 @@ static void usb_hc_interrupt_cb(int irq, void *arg_pv)
 #ifdef CHERRYUSB_HOST_USING_USB1
 void usb_hc_low_level_init(void)
 {
-    sysctl_reset_hw_done((volatile uint32_t *)0x9110103c, 1, 29);
+    sysctl_reset(SYSCTL_RESET_USB1);
 
     uint32_t *hs_reg = (uint32_t *)rt_ioremap((void *)(0x91585000 + 0x9C), 0x1000);
     uint32_t usb_ctl3 = *hs_reg | USB_IDPULLUP0;
@@ -60,7 +50,7 @@ void usb_hc_low_level_deinit(void)
 #else
 void usb_hc_low_level_init(void)
 {
-    sysctl_reset_hw_done((volatile uint32_t *)0x9110103c, 0, 28);
+    sysctl_reset(SYSCTL_RESET_USB0);
 
     uint32_t *hs_reg = (uint32_t *)rt_ioremap((void *)(0x91585000 + 0x7C), 0x1000);
     uint32_t usb_ctl3 = *hs_reg | USB_IDPULLUP0;
@@ -94,7 +84,7 @@ static void usb_dc_interrupt_cb(int irq, void *arg_pv)
 #ifdef CHERRYUSB_DEVICE_USING_USB0
 void usb_dc_low_level_init(void)
 {
-    sysctl_reset_hw_done((volatile uint32_t *)0x9110103c, 0, 28);
+    sysctl_reset(SYSCTL_RESET_USB0);
     uint32_t *hs_reg = (uint32_t *)rt_ioremap((void *)(0x91585000 + 0x7C), 0x1000);
     *hs_reg = 0x37;
     rt_iounmap(hs_reg);
@@ -110,7 +100,7 @@ void usb_dc_low_level_deinit(void)
 #else
 void usb_dc_low_level_init(void)
 {
-    sysctl_reset_hw_done((volatile uint32_t *)0x9110103c, 1, 29);
+    sysctl_reset(SYSCTL_RESET_USB1);
     uint32_t *hs_reg = (uint32_t *)rt_ioremap((void *)(0x91585000 + 0x9C), 0x1000);
     *hs_reg = 0x37;
     rt_iounmap(hs_reg);

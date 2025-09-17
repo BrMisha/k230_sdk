@@ -335,32 +335,48 @@ static rt_size_t uart_write(rt_device_t dev, rt_off_t pos, const void *buffer, r
     struct kd_uart_device *kd_uart_device = (struct kd_uart_device *)dev->user_data;
     volatile void *base_addr = kd_uart_device->base;
     int id = kd_uart_device->id;
-    uint32_t len = RT_ALIGN(size, 64);
-    uint8_t *buf = rt_malloc_align(len, 64);
+    uint8_t *buf = rt_malloc(size);
+    if (buf == RT_NULL) {
+        LOG_E("uart write malloc failed");
+        return 0;
+    }
+    int ch = rt_dma_chan_request("uart");
+    if (ch < 0) {
+        LOG_E("uart pdma request failed");
+        rt_free(buf);
+        return 0;
+    }
     rt_memcpy(buf, buffer, size);
-    rt_hw_cpu_dcache_clean((void*)buf, len);
-    usr_pdma_cfg_t pdma_cfg;
-    pdma_cfg.ch = id + 2; //Reserve 2 channels for Linux I2S to use
-    pdma_cfg.device = id * 2;
-    pdma_cfg.src_addr = buf;
-    pdma_cfg.dst_addr = 0x91400000 + id * 0x1000 + 0x30;
-    pdma_cfg.line_size = size;
-    pdma_cfg.pdma_ch_cfg.ch_src_type = TX;
-    pdma_cfg.pdma_ch_cfg.ch_dev_hsize = PSBYTE1;
-    pdma_cfg.pdma_ch_cfg.ch_dat_endian = PDEFAULT;
-    pdma_cfg.pdma_ch_cfg.ch_dev_blen = PBURST_LEN_16;
-    pdma_cfg.pdma_ch_cfg.ch_priority = 7;
-    pdma_cfg.pdma_ch_cfg.ch_dev_tout = 0xFFF;
-    while (k_pdma_config(pdma_cfg) != 0)
-        rt_thread_mdelay(10);
-    k_pdma_start(pdma_cfg.ch);
-    while (!(k_pdma_interrupt_stat() & (PDONE_INT << pdma_cfg.ch)));
-    k_pdma_int_clear(pdma_cfg.ch, PDONE_INT | PITEM_INT | PPAUSE_INT | PTOUT_INT);
-    k_pdma_llt_free(pdma_cfg.ch);
-    rt_free_align(buf);
+    rt_hw_cpu_dcache_clean((void*)buf, size);
+    pdma_transfer_cfg_t cfg;
+    cfg.device = id * 2;
+    cfg.src_addr = buf;
+    cfg.dst_addr = 0x91400000 + id * 0x1000 + 0x30;
+    cfg.length = size;
+    cfg.ch_cfg.ch_src_type = TX;
+    cfg.ch_cfg.ch_dev_hsize = PSBYTE1;
+    cfg.ch_cfg.ch_dat_endian = PDEFAULT;
+    cfg.ch_cfg.ch_dev_blen = PBURST_LEN_16;
+    cfg.ch_cfg.ch_priority = 7;
+    cfg.ch_cfg.ch_dev_tout = 0xFFF;
+    if (rt_dma_chan_config(ch, &cfg)) {
+        LOG_E("uart pdma config failed");
+        goto error;
+    }
+    rt_dma_chan_start(ch);
+    if (rt_dma_chan_done(ch, size)) {
+        LOG_E("uart pdma transfer failed");
+        goto error;
+    }
+    rt_dma_chan_release(ch);
+    rt_free(buf);
     while (!(read32(base_addr + UART_LSR) & UART_LSR_TEMT));
 
     return size;
+error:
+    rt_dma_chan_release(ch);
+    rt_free(buf);
+    return 0;
 }
 
 static rt_err_t uart_control(rt_device_t dev, int cmd, void *args)
