@@ -20,5 +20,12 @@ docker run --rm -u root -it -v $(pwd):$(pwd) -v $(pwd)/toolchain:/opt/toolchain 
 
 ### 4. Build SDK (Inside Docker)
 ```bash
-CMAKE_POLICY_VERSION_MINIMUM=3.5 make CONF=k230_canmv_01studio_defconfig
+make CONF=k230_canmv_01studio_defconfig
+```
+
+### 4. Build apps (Inside Docker)
+```bash
+cd src/reference/ai_poc/
+./build_app.sh driver_assistant_detector
+./build_app.sh driver_assistant_front
 ```
