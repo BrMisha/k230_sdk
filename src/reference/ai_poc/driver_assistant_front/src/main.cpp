@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <vector>
+#include <asio.hpp>
 
 #include "k_datafifo.h"
 #include "rtsp_server.h"
@@ -30,6 +31,10 @@ using namespace std::chrono_literals;
 
 FILE *output_file_video = NULL;
 FILE *output_file_detections = NULL;
+
+std::mutex stream_endpoint_mutex;
+asio::ip::udp::endpoint stream_endpoint_video;
+asio::ip::udp::endpoint stream_endpoint_detections;
 
 static void release(void* pStream)
 {
@@ -203,9 +208,9 @@ class MyRtspServer : public IOnBackChannel, public IOnAEncData, public IOnVEncDa
 
 
 
-void* read_send(void* arg)
+void* read_send(void* arg, asio::ip::udp::socket *udp_socket)
 {
-    MyRtspServer *server = (MyRtspServer *)arg;
+    //MyRtspServer *server = (MyRtspServer *)arg;
     k_u32 readLen = 0;
     k_char* pBuf;
     k_s32 s32Ret = K_SUCCESS;
@@ -236,6 +241,7 @@ void* read_send(void* arg)
             }
 
             auto detections_count = ((uint16_t*)pBuf)[0];
+            k_char* detections_buffer = pBuf;
             pBuf += 2;
             std::vector<DetectionCommon> detections;
             if (detections_count != UINT16_MAX) {
@@ -280,7 +286,14 @@ void* read_send(void* arg)
                 }
             }
 
-            server->OnVEncData(0, (void *)data, (size_t)len, pts);
+            {
+                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                if (stream_endpoint_detections.port() != 0) {
+                    udp_socket->send_to(asio::buffer(detections_buffer, 2 + (detections.size() * sizeof(DetectionCommon))), stream_endpoint_detections);
+                }
+            }
+
+            //server->OnVEncData(0, (void *)data, (size_t)len, pts);
             for (auto &it : detections) {
                 char s[50];
                 auto len = snprintf(s, sizeof(s), "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
@@ -291,11 +304,42 @@ void* read_send(void* arg)
     }
 }
 
+void udp_receiver(asio::ip::udp::socket *socket) {
+    char recv_buf[64];
+    asio::ip::udp::endpoint sender_endpoint;
+
+    while (socket->is_open()) {
+        asio::error_code error;
+        size_t len = socket->receive_from(asio::buffer(recv_buf), sender_endpoint, 0, error);
+
+        if (!error && len > 0) {
+            switch (recv_buf[0]) {
+                case 'v': {
+                    std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                    if (stream_endpoint_video != sender_endpoint) {
+                        stream_endpoint_video = sender_endpoint;
+                        std::cout << "Stream received video: " << stream_endpoint_video.address().to_string()
+                                  << ":" << stream_endpoint_video.port() << std::endl;
+                    }
+                } break;
+                case 'd': {
+                    std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                    if (stream_endpoint_detections != sender_endpoint) {
+                        stream_endpoint_detections = sender_endpoint;
+                        std::cout << "Stream received detections: " << stream_endpoint_detections.address().to_string()
+                                  << ":" << stream_endpoint_detections.port() << std::endl;
+                    }
+                } break;
+                default: ;
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     std::cout << "./rtspServer -H to show usage" << std::endl;
     std::cout << "./rtspServer -p 17305000 -t h265 -b /mnt/bb" << std::endl;
     // ffplay -rtsp_transport tcp -fflags nobuffer+ignidx+igndts -flags low_delay -framedrop -sync ext -i rtsp://10.42.0.156:8554/BackChannelTest
-
 
     KdMediaInputConfig config;
     std::string bb_path;
@@ -347,8 +391,12 @@ int main(int argc, char *argv[]) {
     }
     server->Start();
 
-    // 启动 数据发送 线程
-    std::thread readThread(read_send, server);
+
+    asio::io_context io_context;
+    asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
+    std::thread udp_receiver_thread(udp_receiver, &socket);
+
+    std::thread readThread(read_send, server, &socket);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -361,6 +409,9 @@ int main(int argc, char *argv[]) {
     }
 
     readThread.join();
+
+    socket.close();
+    udp_receiver_thread.join();
 
     // 关闭rtsp服务
     server->Stop();
