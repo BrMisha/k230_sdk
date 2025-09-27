@@ -275,6 +275,21 @@ void* read_send(void* arg, asio::ip::udp::socket *udp_socket)
                 fsync(fileno(output_file_detections));
             }
 
+            {
+                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                if (stream_endpoint_detections.port() != 0) {
+                    udp_socket->send_to(asio::buffer(detections_buffer, 2 + (detections.size() * sizeof(DetectionCommon))), stream_endpoint_detections);
+                }
+                if (stream_endpoint_video.port() != 0) {
+                    const unsigned int MAX = 50000;
+                    for (unsigned int i = 0; i < len;) {
+                        auto sent = std::min(MAX, len-i);
+                        udp_socket->send_to(asio::buffer(data + static_cast<size_t>(i), sent), stream_endpoint_video);
+                        i += sent;
+                    }
+                }
+            }
+
             printf("Timestamp: %lu, len: %d\n", pts, len);
             if (detections.size() > 0) {
                 printf("    Received %zu detections:\n", detections.size());
@@ -284,21 +299,6 @@ void* read_send(void* arg, asio::ip::udp::socket *udp_socket)
                            i + 1, detect_classes[det.class_id].c_str(), det.confidence,
                            det.x, det.y, det.w, det.h);
                 }
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
-                if (stream_endpoint_detections.port() != 0) {
-                    udp_socket->send_to(asio::buffer(detections_buffer, 2 + (detections.size() * sizeof(DetectionCommon))), stream_endpoint_detections);
-                }
-            }
-
-            //server->OnVEncData(0, (void *)data, (size_t)len, pts);
-            for (auto &it : detections) {
-                char s[50];
-                auto len = snprintf(s, sizeof(s), "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
-                            it.confidence, it.x, it.y, it.w, it.h);
-                //server->OnDetData(0, (uint8_t*)s, len, pts);
             }
         }
     }
