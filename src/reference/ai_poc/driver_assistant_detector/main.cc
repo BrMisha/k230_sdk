@@ -94,47 +94,9 @@
 static k_s32 g_s32Index = 0;
 static k_datafifo_handle hDataFifo[2] = {(k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE};
 static const k_s32 BLOCK_LEN = 1024000;
-k_char *buf = (k_char*)malloc(BLOCK_LEN);
-
-//*******************************encoder*************
-typedef enum
-{
-    VENC_SAMPLE_STATUS_IDLE = 0,
-    VENC_SAMPLE_STATUS_INIT,
-    VENC_SAMPLE_STATUS_START,
-    VENC_SAMPLE_STATUS_BINDED,
-    VENC_SAMPLE_STATUS_UNBINDED,
-    VENC_SAMPLE_STATUE_RUNING,
-    VENC_SAMPLE_STATUS_STOPED,
-    VENC_SAMPLE_STATUS_BUTT
-} VENC_SAMPLE_STATUS;
-
-typedef struct
-{
-    k_u16 width;
-    k_u16 height;
-    k_u16 line_width;
-    k_u16 startx;
-    k_u16 starty;
-} border_conf_t;
-
-typedef struct
-{
-    k_u32 ch_id;
-    k_u32 output_frames;
-} output_info;
-
-typedef struct
-{
-    k_u32 chnum;
-    pthread_t output_tid;
-    k_bool ch_done;
-} venc_conf_t;
+k_char *datafifo_buf = (k_char*)malloc(BLOCK_LEN);
 
 std::atomic<bool> isp_stop(false);
-
-VENC_SAMPLE_STATUS g_venc_sample_status = VENC_SAMPLE_STATUS_IDLE;
-venc_conf_t g_venc_conf;
 
 struct last_detection_t {
     std::vector<DetectionCommon> detections;
@@ -155,13 +117,13 @@ static inline void CHECK_RET(k_s32 ret, const char *func, const int line)
 /**
 * VB initialization
 */
-static k_s32 sample_vb_init(k_u32 ch_cnt)
+static k_s32 vb_init(k_u32 ch_cnt)
 {
     k_s32 ret;
     k_vb_config config;
 
     memset(&config, 0, sizeof(config));
-    
+
     config.max_pool_cnt = 64;
     config.comm_pool[0].blk_cnt = VE_INPUT_BUF_CNT * ch_cnt;
     config.comm_pool[0].blk_size = VE_FRAME_BUF_SIZE;
@@ -286,7 +248,7 @@ void datafifo_deinit(void)
 /**
 * Encoder output thread logic
 */
-static void *venc_output_thread(void *arg)
+static void venc_output(k_u32 venc_ch)
 {
     // datafifo
     k_s32 s32Ret = K_SUCCESS;
@@ -296,20 +258,20 @@ static void *venc_output_thread(void *arg)
         std::cout << "====== datafifo init failed ======";
     }
 
-    memset(buf, 0, BLOCK_LEN);
+    memset(datafifo_buf, 0, BLOCK_LEN);
     k_venc_stream output;
     int out_cnt, out_frames;
     k_s32 ret;
     int i;
     k_u32 total_len = 0;
-    output_info *info = (output_info *)arg;
+
     out_cnt = 0;
     out_frames = 0;
 
-    printf("venc_output_thread... started\n");
-    
+    printf("venc_output... started\n");
+
     // int index = 0;
-    while (1)
+    while (!isp_stop)
     {
         // datafifo
         k_u32 availWriteLen = 0;
@@ -317,18 +279,18 @@ static void *venc_output_thread(void *arg)
         s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
         if (K_SUCCESS != s32Ret)
         {
-            printf("venc_output_thread...write error:%x\n", s32Ret);
+            printf("venc_output...write error:%x\n", s32Ret);
         }
         s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
         if (K_SUCCESS != s32Ret)
         {
-            printf("venc_output_thread...get available write len error:%x\n", s32Ret);
+            printf("venc_output...get available write len error:%x\n", s32Ret);
             break;
         }
-        
+
 
         k_venc_chn_status status;
-        ret = kd_mpi_venc_query_status(info->ch_id, &status);
+        ret = kd_mpi_venc_query_status(venc_ch, &status);
         CHECK_RET(ret, __func__, __LINE__);
 
         if (status.cur_packs > 0)
@@ -344,14 +306,14 @@ static void *venc_output_thread(void *arg)
         //     ret = kd_mpi_venc_request_idr(0);
         // }
         // index ++;
-        
+
         // Get encoded stream
-        ret = kd_mpi_venc_get_stream(info->ch_id, &output, -1);
+        ret = kd_mpi_venc_get_stream(venc_ch, &output, -1);
         CHECK_RET(ret, __func__, __LINE__);
         // Write stream to h265 file
         out_cnt += output.pack_cnt;
         for (i = 0; i < output.pack_cnt; i++)
-        {printf("venc_output_thread... process %d\n", i);
+        {
             if (output.pack[i].type != K_VENC_HEADER)
             {
                 out_frames++;
@@ -387,40 +349,40 @@ static void *venc_output_thread(void *arg)
                     }
 
                     uint16_t s = detections.size();
-                    memcpy(buf, &s, sizeof(s));
+                    memcpy(datafifo_buf, &s, sizeof(s));
                     total_size = sizeof(s);
                     for (auto &it : detections) {
-                        memcpy(buf + total_size, &it, sizeof(DetectionCommon));
+                        memcpy(datafifo_buf + total_size, &it, sizeof(DetectionCommon));
                         total_size += sizeof(DetectionCommon);
                     }
                 }
                 else {
                     uint16_t s = UINT16_MAX;
-                    memcpy(buf, &s, sizeof(s));
+                    memcpy(datafifo_buf, &s, sizeof(s));
                     total_size = sizeof(s);
                 }
-                //printf("-----venc_output_thread %lu %lu %d\n", output.pack[i].pts, detections.size(), output.pack[i].type);
+                //printf("-----venc_output %lu %lu %d\n", output.pack[i].pts, detections.size(), output.pack[i].type);
                 // copy detections into the buf
 
 
-                memcpy(buf + total_size, (void *)&(output.pack[i].pts), sizeof(k_u64));
+                memcpy(datafifo_buf + total_size, (void *)&(output.pack[i].pts), sizeof(k_u64));
                 total_size += sizeof(k_u64);
-                memcpy(buf + total_size, (void *)&(output.pack[i].len), sizeof(k_u32));
+                memcpy(datafifo_buf + total_size, (void *)&(output.pack[i].len), sizeof(k_u32));
                 total_size += sizeof(k_u32);
-                memcpy(buf + total_size, (void *)pData, output.pack[i].len);
+                memcpy(datafifo_buf + total_size, (void *)pData, output.pack[i].len);
                 total_size += output.pack[i].len;
-                
-                s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
-                printf("venc_output_thread... kd_datafifo_write %lu\n", s32Ret);
+
+                s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
+                printf("venc_output... kd_datafifo_write %lu\n", s32Ret);
                 if (K_SUCCESS != s32Ret)
                 {
-                    printf("venc_output_thread...write error:%x\n", s32Ret);
+                    printf("venc_output...write error:%x\n", s32Ret);
                     break;
                 }
                 s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
                 if (K_SUCCESS != s32Ret)
                 {
-                    printf("venc_output_thread...write done error:%x\n", s32Ret);
+                    printf("venc_output...write done error:%x\n", s32Ret);
                     break;
                 }
 
@@ -431,14 +393,13 @@ static void *venc_output_thread(void *arg)
             total_len += output.pack[i].len;
         }
 
-        ret = kd_mpi_venc_release_stream(info->ch_id, &output);
+        ret = kd_mpi_venc_release_stream(venc_ch, &output);
         CHECK_RET(ret, __func__, __LINE__);
 
         free(output.pack);
     }
 
-    venc_debug("%s>done, ch %d: out_frames %d, size %d bits\n", __func__, info->ch_id, out_frames, total_len * 8);
-    return arg;
+    venc_debug("%s>done, ch %lu: out_frames %d, size %d bits\n", __func__, venc_ch, out_frames, total_len * 8);
 }
 
 /**
@@ -462,7 +423,7 @@ k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr,k_
     else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_1555)
         size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
     else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;      
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;
 
     printf("vb block size is %x \n", size);
 
@@ -500,41 +461,6 @@ k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr,k_
     return handle;
 }
 
-/**
-* Stop and destroy encoder
-*/
-k_s32 sample_exit(venc_conf_t *venc_conf)
-{
-    int ch = 0;
-    int ret = 0;
-
-    printf("%s>g_venc_sample_status = %d\n", __FUNCTION__, g_venc_sample_status);
-    switch (g_venc_sample_status)
-    {
-    case VENC_SAMPLE_STATUE_RUNING:
-    case VENC_SAMPLE_STATUS_START:
-        kd_mpi_venc_stop_chn(ch);
-    case VENC_SAMPLE_STATUS_INIT:
-        kd_mpi_venc_destroy_chn(ch);
-        break;
-    default:
-        break;
-    }
-
-    pthread_cancel(venc_conf->output_tid);
-    pthread_join(venc_conf->output_tid, NULL);
-
-    venc_debug("kill ch %d thread done! ch_done %d, chnum %d\n", ch, g_venc_conf.ch_done, g_venc_conf.chnum);
-
-    ret = kd_mpi_venc_close_fd();
-    CHECK_RET(ret, __func__, __LINE__);
-
-    g_venc_conf.ch_done = K_TRUE;
-    free(buf);
-
-    return K_SUCCESS;
-}
-
 cv::Mat nv12ToRGBHWC(const uint8_t* nv12Data, int width, int height, uint8_t* rgbChwData) {
     cv::Mat nv12Mat(height + height / 2, width, CV_8UC1, const_cast<uint8_t*>(nv12Data));
     cv::Mat rgbMat(height, width, CV_8UC3, rgbChwData);
@@ -545,7 +471,7 @@ cv::Mat nv12ToRGBHWC(const uint8_t* nv12Data, int width, int height, uint8_t* rg
 /**
 * Decoder output thread logic
 */
-void output_thread(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width)
+void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh, float overlap_ratio, int detection_max_width)
 {
     int ret;
 
@@ -793,14 +719,14 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    {
-        int debug_mode=atoi(argv[1]);
-        char *fd_kmodel_path=argv[2];
-        float facedet_obj_thresh=atof(argv[3]);
-        float facedet_nms_thresh=atof(argv[4]);
-        float overlap_ratio=atof(argv[5]);
-        int detection_max_width=atoi(argv[6]);
+    int debug_mode=atoi(argv[1]);
+    char *fd_kmodel_path=argv[2];
+    float facedet_obj_thresh=atof(argv[3]);
+    float facedet_nms_thresh=atof(argv[4]);
+    float overlap_ratio=atof(argv[5]);
+    int detection_max_width=atoi(argv[6]);
 
+    {
         k_s32 ret;
 
         //**********************encoder****************************************
@@ -814,10 +740,9 @@ int main(int argc, char *argv[])
         k_venc_rc_mode rc_mode  = K_VENC_RC_MODE_VBR;
         k_payload_type ve_type     = K_PT_H265;
         k_venc_profile profile  = VENC_PROFILE_H265_MAIN;
-        memset(&g_venc_conf, 0, sizeof(venc_conf_t));
 
         // VB initialization, (venc and vicap)
-        ret = sample_vb_init(chnum);
+        ret = vb_init(chnum);
         CHECK_RET(ret, __func__, __LINE__);
 
         // Configure encoding channel attributes
@@ -840,34 +765,31 @@ int main(int argc, char *argv[])
             ret = kd_mpi_venc_create_chn(venc_ch, &ve_attr);
             CHECK_RET(ret, __func__, __LINE__);
         }
-        g_venc_sample_status = VENC_SAMPLE_STATUS_INIT;
+
         // Keyframe
         kd_mpi_venc_enable_idr(venc_ch, K_TRUE);
         // Start encoding channel
         ret = kd_mpi_venc_start_chn(venc_ch);
         CHECK_RET(ret, __func__, __LINE__);
-        g_venc_sample_status = VENC_SAMPLE_STATUS_START;
-        // Encoding output stream settings
-        output_info info;
-        memset(&info, 0, sizeof(info));
-        info.ch_id = venc_ch;
-        info.output_frames = output_frames;
+
+        std::thread isp_ai_detector_thread(isp_ai_detector, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width);
 
         // Start thread to write output stream to h265 file
-        pthread_create(&g_venc_conf.output_tid, NULL, venc_output_thread, &info);
-        g_venc_sample_status = VENC_SAMPLE_STATUE_RUNING;
-
-        // Start video stream AI thread
-        std::thread face_det_enc(output_thread, debug_mode, fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, overlap_ratio, detection_max_width);
+        std::thread venc_output_thread(venc_output, venc_ch);
         while (getchar() != 'q')
         {
             usleep(10000);
         }
 
         isp_stop = true;
-        face_det_enc.join();
-        usleep(10000);
-        sample_exit(&g_venc_conf);
+        isp_ai_detector_thread.join();
+
+        venc_output_thread.join();
+        kd_mpi_venc_stop_chn(venc_ch);
+        kd_mpi_venc_destroy_chn(venc_ch);
+        ret = kd_mpi_venc_close_fd();
+        CHECK_RET(ret, __func__, __LINE__);
+        free(datafifo_buf);
 
         // datafifo exit
         datafifo_deinit();
