@@ -17,4 +17,9 @@ static_assert(sizeof(DetectionCommon) == 16, "Detection size must be 36 bytes");
 const std::vector<std::string> detect_classes{"objects-5YaV", "arrow_right", "tl_arrow_forward", "tl_arrow_left", "tl_green", "tl_red",
           "traffic_light", "traffic_light_back", "traffic_light_green", "traffic_light_red", "traffic_light_yellow"};
 
+typedef enum
+{
+    MSG_CMD_GET_PHY_ADDRESS=11,
+} ipc_msg_cmd_t;
+
 #endif //DETECTORMODULE_COMMON_H
