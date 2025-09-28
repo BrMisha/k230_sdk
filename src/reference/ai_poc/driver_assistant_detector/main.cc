@@ -759,7 +759,6 @@ int main(int argc, char *argv[]) {
     ret = kd_mpi_venc_start_chn(venc_ch);
     CHECK_RET(ret, __func__, __LINE__);
 
-    const k_char *IPCMSG_NAME = "driver_assistant";
     k_s32 ipcmsg_handle;
     {
         k_ipcmsg_connect_t stConnectAtt{

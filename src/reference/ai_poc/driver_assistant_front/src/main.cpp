@@ -260,8 +260,47 @@ int main(int argc, char *argv[]) {
     bool daemon_mode;
     int ret = parse_config(argc, argv, bb_path, daemon_mode);
 
-    // TODO: We need this delay to wait till detector open FIFO
-    if (daemon_mode) sleep(20);
+    k_u64 datafifo_phy_addr = 0;
+
+    k_ipcmsg_connect_t stConnectAtt {
+        .u32RemoteId = 1,
+        .u32Port = 101,
+        .u32Priority = 0
+    };
+
+    k_s32 ipcmsg_handle;
+    ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
+    if (ret != K_SUCCESS) {
+        printf("kd_ipcmsg_add_service failed: %d\n", ret);
+        return -1;
+    }
+    printf("kd_ipcmsg_connect...\n");
+    ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
+    if (ret != K_SUCCESS) {
+        printf("kd_ipcmsg_connect failed: %d\n", ret);
+        return -1;
+    }
+    std::thread ipcmsg_thread([ipcmsg_handle] {
+        kd_ipcmsg_run(ipcmsg_handle);
+    });
+    // request datafifo_phy_addr
+    auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_GET_PHY_ADDRESS, nullptr, 0);
+    k_ipcmsg_message_t *responce = nullptr;
+    ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 60*1000);
+    if (ret != K_SUCCESS) {
+        printf("kd_ipcmsg_send_sync failed: %d\n", ret);
+    }
+    else if (responce->u32CMD == MSG_CMD_GET_PHY_ADDRESS && responce->s32RetVal == K_SUCCESS && responce->u32BodyLen == sizeof(datafifo_phy_addr)) {
+        datafifo_phy_addr = *reinterpret_cast<k_u64*>(responce->pBody);
+    }
+    kd_ipcmsg_destroy_message(responce);
+    kd_ipcmsg_destroy_message(pReq);
+
+    if (datafifo_phy_addr == 0) {
+        printf("datafifo_phy_addr not received!d\n");
+        kd_ipcmsg_disconnect(ipcmsg_handle);
+        return -1;
+    }
 
     for (int i = 0; i < 0xFFFF; ++i) {
         char filename[50];
@@ -287,49 +326,11 @@ int main(int argc, char *argv[]) {
 
     if (!output_file_video || !output_file_detections) {
         std::cerr << "Can't open video file!" << std::endl;
+        kd_ipcmsg_disconnect(ipcmsg_handle);
         return -1;
     }
 
-    k_ipcmsg_connect_t stConnectAtt {
-        .u32RemoteId = 1,
-        .u32Port = 101,
-        .u32Priority = 0
-    };
-    const k_char* IPCMSG_NAME = "driver_assistant";
-    k_s32 ipcmsg_handle;
-    ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
-    if (ret != K_SUCCESS) {
-        printf("kd_ipcmsg_add_service failed: %d\n", ret);
-        return -1;
-    }
-    printf("kd_ipcmsg_connect...\n");
-    ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
-    if (ret != K_SUCCESS) {
-        printf("kd_ipcmsg_connect failed: %d\n", ret);
-        return -1;
-    }
-    std::thread ipcmsg_thread([ipcmsg_handle] {
-        kd_ipcmsg_run(ipcmsg_handle);
-    });
-
-    auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_GET_PHY_ADDRESS, nullptr, 0);
-    k_ipcmsg_message_t *responce = nullptr;
-    ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 60*1000);
-    if (ret != K_SUCCESS) {
-        printf("kd_ipcmsg_send_sync failed: %d\n", ret);
-        //return -1;
-    }
-    else /*if (responce->u32CMD == MSG_CMD_PHY_ADDRESS)*/ {
-        k_u64 phy_addr = *reinterpret_cast<k_u64*>(responce->pBody);
-        printf("phy_addr = %lx; %lu; %lu; %lu\n", phy_addr, responce->u32BodyLen, responce->u32CMD, responce->s32RetVal);
-    }
-    kd_ipcmsg_destroy_message(responce);
-    kd_ipcmsg_destroy_message(pReq);
-
-    // 初始化 datafifo
-    k_u64 phyAddr[2];
-    sscanf(argv[2], "%lx", &phyAddr[READER_INDEX]);
-    ret = datafifo_init(phyAddr[READER_INDEX]);
+    ret = datafifo_init(datafifo_phy_addr);
 
     asio::io_context io_context;
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
@@ -351,14 +352,15 @@ int main(int argc, char *argv[]) {
     socket.close();
     udp_receiver_thread.join();
 
-    kd_ipcmsg_disconnect(ipcmsg_handle);
-    ipcmsg_thread.join();
-
     // datafifo反初始化
     datafifo_deinit();
 
     fclose(output_file_video);
     fclose(output_file_detections);
+
+    kd_ipcmsg_disconnect(ipcmsg_handle);
+    kd_ipcmsg_del_service(IPCMSG_NAME);
+    ipcmsg_thread.join();
 
     return 0;
 }

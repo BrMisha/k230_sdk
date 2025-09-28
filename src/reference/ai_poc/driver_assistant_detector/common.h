@@ -22,4 +22,6 @@ typedef enum
     MSG_CMD_GET_PHY_ADDRESS=11,
 } ipc_msg_cmd_t;
 
+inline const char *IPCMSG_NAME = "driver_assistant";
+
 #endif //DETECTORMODULE_COMMON_H
