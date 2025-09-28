@@ -189,6 +189,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
             }
         }
     }
+
+    printf("read_fifo finished\n");
 }
 
 void udp_receiver(asio::ip::udp::socket *socket) {
@@ -197,6 +199,7 @@ void udp_receiver(asio::ip::udp::socket *socket) {
 
     while (socket->is_open()) {
         asio::error_code error;
+        // TODO: receive_from does not exit on socket close
         size_t len = socket->receive_from(asio::buffer(recv_buf), sender_endpoint, 0, error);
 
         if (!error && len > 0) {
@@ -223,6 +226,8 @@ void udp_receiver(asio::ip::udp::socket *socket) {
             }
         }
     }
+
+    printf("udp_receiver finished\n");
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
