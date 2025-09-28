@@ -79,13 +79,10 @@ int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
 
     int result;
     opterr = 0;
-    while ((result = getopt(argc, argv, "H:p:b:d")) != -1) {
+    while ((result = getopt(argc, argv, "H:b:d")) != -1) {
         switch (result) {
             case 'H': {
                 Usage();
-                break;
-            }
-            case 'p': {
                 break;
             }
             case 'b': {
@@ -231,30 +228,11 @@ void udp_receiver(asio::ip::udp::socket *socket) {
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
     printf("ipcmsg_recv %lu\n", msg->u32CMD);
-    /*switch (msg->u32CMD) {
-        case MSG_CMD_SIGNUP_RESULT:
-            common_msg_proc_helper(UI_CMD_SIGNUP_RESULT, (int8_t *)(msg->pBody));
-            break;
-        case MSG_CMD_IMPORT_RESULT:
-            common_msg_proc_helper(UI_CMD_IMPORT_RESULT, (int8_t *)(msg->pBody));
-            break;
-        case MSG_CMD_DELETE_RESULT:
-            common_msg_proc_helper(UI_CMD_DELETE_RESULT, (int8_t *)(msg->pBody));
-            break;
-        case MSG_CMD_FEATURE_SAVE: {
-            uint32_t phyaddr = *((uint32_t *)(msg->pBody));
-            uint32_t length = *(((uint32_t *)(msg->pBody)) + 1);
-            feature_db_save(phyaddr, length);
-            break;
-        }
-        default:
-            break;
-    }*/
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
-    std::cout << "./driver_assistant_front -p 17305000 -b /mnt/bb" << std::endl;
+    std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
 
     std::string bb_path;
     bool daemon_mode;
