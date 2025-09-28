@@ -243,13 +243,6 @@ void datafifo_deinit(void) {
 * Encoder output thread logic
 */
 static void venc_output(k_u32 venc_ch) {
-    // datafifo
-    k_s32 s32Ret = K_SUCCESS;
-    s32Ret = datafifo_init();
-    if (0 != s32Ret) {
-        std::cout << "====== datafifo init failed ======";
-    }
-
     memset(datafifo_buf, 0, BLOCK_LEN);
     k_venc_stream output;
     int out_cnt, out_frames;
@@ -267,13 +260,13 @@ static void venc_output(k_u32 venc_ch) {
         // datafifo
         k_u32 availWriteLen = 0;
         // call write NULL to flush
-        s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
-        if (K_SUCCESS != s32Ret) {
-            printf("venc_output...write error:%x\n", s32Ret);
+        ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+        if (K_SUCCESS != ret) {
+            printf("venc_output...write error:%x\n", ret);
         }
-        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
-        if (K_SUCCESS != s32Ret) {
-            printf("venc_output...get available write len error:%x\n", s32Ret);
+        ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
+        if (K_SUCCESS != ret) {
+            printf("venc_output...get available write len error:%x\n", ret);
             break;
         }
 
@@ -356,15 +349,15 @@ static void venc_output(k_u32 venc_ch) {
                 memcpy(datafifo_buf + total_size, (void *) pData, output.pack[i].len);
                 total_size += output.pack[i].len;
 
-                s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
-                printf("venc_output... kd_datafifo_write %lu\n", s32Ret);
-                if (K_SUCCESS != s32Ret) {
-                    printf("venc_output...write error:%x\n", s32Ret);
+                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
+                printf("venc_output... kd_datafifo_write %lu\n", ret);
+                if (K_SUCCESS != ret) {
+                    printf("venc_output...write error:%x\n", ret);
                     break;
                 }
-                s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
-                if (K_SUCCESS != s32Ret) {
-                    printf("venc_output...write done error:%x\n", s32Ret);
+                ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+                if (K_SUCCESS != ret) {
+                    printf("venc_output...write done error:%x\n", ret);
                     break;
                 }
 
@@ -758,6 +751,12 @@ int main(int argc, char *argv[]) {
     // Start encoding channel
     ret = kd_mpi_venc_start_chn(venc_ch);
     CHECK_RET(ret, __func__, __LINE__);
+
+    // datafifo
+    ret = datafifo_init();
+    if (0 != ret) {
+        std::cout << "====== datafifo init failed ======";
+    }
 
     k_s32 ipcmsg_handle;
     {

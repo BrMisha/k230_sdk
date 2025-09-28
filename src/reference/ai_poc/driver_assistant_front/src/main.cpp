@@ -280,7 +280,7 @@ int main(int argc, char *argv[]) {
     kd_ipcmsg_destroy_message(pReq);
 
     if (datafifo_phy_addr == 0) {
-        printf("datafifo_phy_addr not received!d\n");
+        printf("datafifo_phy_addr not received!\n");
         kd_ipcmsg_disconnect(ipcmsg_handle);
         return -1;
     }
