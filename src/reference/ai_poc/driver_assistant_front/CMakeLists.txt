@@ -8,15 +8,12 @@ set(k230_sdk ${nncase_sdk_root}/../../../)
 set(CDK_SRC_DIR ${k230_sdk}/src/common/cdk)
 set(RTSMART_SRC_DIR ${k230_sdk}/src/big/rt-smart)
 set(IPCMSG_ROOT ${CDK_SRC_DIR}/user/component/ipcmsg)
-set(MAPI_ROOT ${CDK_SRC_DIR}/user/mapi)
-set(MPI_ROOT ${RTSMART_SRC_DIR}/userapps/mpp)
-set(LIVE_ROOT ${CDK_SRC_DIR}/user/thirdparty/live)
-set(MW_ROOT ${CDK_SRC_DIR}/user/middleware)
+set(THIRDPARTY_PATH ${CDK_SRC_DIR}/user/thirdparty)
 
-set(rtsp_server_root "${PROJECT_SOURCE_DIR}/src")
+set(src_root "${PROJECT_SOURCE_DIR}/src")
 
 set(CMAKE_INSTALL_PREFIX "../")
-file(GLOB APP_SOURCES ${rtsp_server_root}/*.cpp)
+file(GLOB APP_SOURCES ${src_root}/*.cpp)
 
 set(BIN driver_assistant_front)
 
@@ -27,26 +24,17 @@ include_directories(${k230_sdk}/src/big/mpp/include/comm)
 include_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/include)
 
 include_directories(${IPCMSG_ROOT}/include)
-include_directories(${MAPI_ROOT}/include)
-include_directories(${MAPI_ROOT}/include/api)
-include_directories(${MAPI_ROOT}/include/comm)
-include_directories(/usr/local/include)
-include_directories(${MW_ROOT}/rtsp_server/include)
+include_directories(${THIRDPARTY_PATH}/asio)
 
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
 
 link_directories(${IPCMSG_ROOT}/host/lib)
-link_directories(${MAPI_ROOT}/mediaclient/lib)
-link_directories(${MW_ROOT}/rtsp_server/lib)
-link_directories(${LIVE_ROOT}/BasicUsageEnvironment)
-link_directories(${LIVE_ROOT}/groupsock)
-link_directories(${LIVE_ROOT}/liveMedia)
-link_directories(${LIVE_ROOT}/UsageEnvironment)
-link_directories(/usr/local/lib)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix")
 
 add_executable(${BIN} ${APP_SOURCES})
-target_link_libraries(${BIN} -Wl,--start-group datafifo pthread sys ipcmsg mapi rtsp_server liveMedia UsageEnvironment BasicUsageEnvironment groupsock -Wl,--end-group)
+target_link_libraries(${BIN} -Wl,--start-group datafifo pthread sys ipcmsg -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)

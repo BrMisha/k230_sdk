@@ -13,16 +13,14 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <vector>
+#include <asio.hpp>
 
 #include "k_datafifo.h"
-#include "rtsp_server.h"
-#include "media.h"
 #include "../../driver_assistant_detector/common.h"
 
 // datafifo
 #define READER_INDEX    0
 std::atomic<bool> send_stop(false);
-static k_s32 g_s32Index = 0;
 static const k_s32 BLOCK_LEN = 1024000;
 static k_datafifo_handle hDataFifo[2] = {(k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE};
 
@@ -30,6 +28,10 @@ using namespace std::chrono_literals;
 
 FILE *output_file_video = NULL;
 FILE *output_file_detections = NULL;
+
+std::mutex stream_endpoint_mutex;
+asio::ip::udp::endpoint stream_endpoint_video;
+asio::ip::udp::endpoint stream_endpoint_detections;
 
 static void release(void* pStream)
 {
@@ -66,31 +68,22 @@ void datafifo_deinit()
 }
 
 static void Usage() {
-    std::cout << "Usage: ./rtspServer [-p phyAddr] [-t <codec_type>]" << std::endl;
-    std::cout << "-p: phyAddr" << std::endl;
-    std::cout << "-t: the video encoder type: h264/h265, default h265" << std::endl;
+    std::cout << "Usage: ./driver_assistant_front [-p phyAddr] [-b bb_path] [-d]" << std::endl;
+    std::cout << "-p: phyAddr (physical address for datafifo)" << std::endl;
+    std::cout << "-b: bb_path (path for output files)" << std::endl;
+    std::cout << "-d: daemon mode" << std::endl;
     exit(-1);
 }
 
-int parse_config(int argc, char *argv[], KdMediaInputConfig &config, std::string &bb, bool &daemon_mode) {
+int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
     daemon_mode = false;
 
     int result;
     opterr = 0;
-    while ((result = getopt(argc, argv, "H:t:p:b:d")) != -1) {
+    while ((result = getopt(argc, argv, "H:p:b:d")) != -1) {
         switch(result) {
         case 'H' : {
             Usage(); break;
-        }
-        case 't': {
-            std::string s = optarg;
-            if (s == "h264") config.video_type = KdMediaVideoType::kVideoTypeH264;
-            else if (s == "h265") config.video_type = KdMediaVideoType::kVideoTypeH265;
-            else Usage();
-            config.video_valid = true;
-            config.venc_width = 1920;
-            config.venc_height = 1080;
-            break;
         }
         case 'p': {
             break;
@@ -106,106 +99,11 @@ int parse_config(int argc, char *argv[], KdMediaInputConfig &config, std::string
         default: Usage(); break;
         }
     }
-    if (config.video_valid) {
-        // validate the parameters... TODO
-        std::cout << "Validate the input config, not implemented yet, TODO." << std::endl;
-    }
     return 0;
 }
 
-class MyRtspServer : public IOnBackChannel, public IOnAEncData, public IOnVEncData {
-  public:
-    MyRtspServer() {}
-
-    // IOnBackChannel
-    virtual void OnBackChannelData(std::string &session_name, const uint8_t *data, size_t size, uint64_t timestamp) override {
-        if (started_) {
-            //  TODO， need to queue data to handle jitter and control accumulation
-            //   gather data to get complete frame(40ms).
-            if (backchannel_data_size == 0) {
-                timestamp_backchanel = timestamp;
-            }
-            for (size_t i = 0; i < size ;i++) {
-                g711_buffer_backchannel[backchannel_data_size++] = data[i];
-                if (backchannel_data_size == 320) {
-                    media_.SendData(g711_buffer_backchannel, backchannel_data_size, timestamp_backchanel);
-                    backchannel_data_size = 0;
-                    timestamp_backchanel = timestamp;
-                }
-            }
-        }
-    }
-
-    // IOnAEncData
-    virtual void OnAEncData(k_u32 chn_id, k_audio_stream* stream_data) override {
-        if (started_) {
-            rtsp_server_.SendAudioData(stream_url_, (const uint8_t*)stream_data->stream, stream_data->len, stream_data->time_stamp);
-        }
-    }
-
-    // IOnVEncData
-    virtual void OnVEncData(k_u32 chn_id, void *data, size_t size, uint64_t timestamp) override {
-        if (started_) {
-            rtsp_server_.SendVideoData(stream_url_, (const uint8_t*)data, size, timestamp);
-        }
-    }
-
-    int Init(const KdMediaInputConfig &config, const std::string &stream_url = "BackChannelTest", int port = 8554) {
-        if (rtsp_server_.Init(port, this) < 0) {
-            return -1;
-        }
-        // enable audio-track and backchannel-track
-        SessionAttr session_attr;
-        session_attr.with_audio = false;
-        session_attr.with_audio_backchannel = false;
-        session_attr.with_video = config.video_valid;
-        if (config.video_valid) {
-            if (config.video_type == KdMediaVideoType::kVideoTypeH264) session_attr.video_type = VideoType::kVideoTypeH264;
-            else if (config.video_type == KdMediaVideoType::kVideoTypeH265) session_attr.video_type = VideoType::kVideoTypeH265;
-            else {
-                std::cout << "video codec type not supported yet" << std::endl;
-                return -1;
-            }
-        }
-        if (rtsp_server_.CreateSession(stream_url, session_attr) < 0)  return -1;
-        stream_url_ = stream_url;
-
-        return 0;
-    }
-    int DeInit() {
-        Stop();
-        rtsp_server_.DeInit();
-        return 0;
-    }
-
-    int Start() {
-        if(started_) return 0;
-        rtsp_server_.Start();
-        started_ = true;
-        return 0;
-    }
-    int Stop() {
-        if (!started_) return 0;
-        rtsp_server_.Stop();
-        started_ = false;
-        return 0;
-    }
-
-  private:
-    KdRtspServer rtsp_server_;
-    KdMedia media_;
-    std::string stream_url_;
-    std::atomic<bool> started_{false};
-    uint8_t g711_buffer_backchannel[320];
-    size_t backchannel_data_size = 0;
-    uint64_t timestamp_backchanel;
-};
-
-
-
-void* read_send(void* arg)
+void read_send(asio::ip::udp::socket *udp_socket)
 {
-    MyRtspServer *server = (MyRtspServer *)arg;
     k_u32 readLen = 0;
     k_char* pBuf;
     k_s32 s32Ret = K_SUCCESS;
@@ -236,6 +134,7 @@ void* read_send(void* arg)
             }
 
             auto detections_count = ((uint16_t*)pBuf)[0];
+            k_char* detections_buffer = pBuf;
             pBuf += 2;
             std::vector<DetectionCommon> detections;
             if (detections_count != UINT16_MAX) {
@@ -269,6 +168,21 @@ void* read_send(void* arg)
                 fsync(fileno(output_file_detections));
             }
 
+            {
+                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                if (stream_endpoint_detections.port() != 0 && detections_count != UINT16_MAX) {
+                    udp_socket->send_to(asio::buffer(detections_buffer, 2 + (detections.size() * sizeof(DetectionCommon))), stream_endpoint_detections);
+                }
+                if (stream_endpoint_video.port() != 0) {
+                    const unsigned int MAX = 50000;
+                    for (unsigned int i = 0; i < len;) {
+                        auto sent = std::min(MAX, len-i);
+                        udp_socket->send_to(asio::buffer(data + static_cast<size_t>(i), sent), stream_endpoint_video);
+                        i += sent;
+                    }
+                }
+            }
+
             printf("Timestamp: %lu, len: %d\n", pts, len);
             if (detections.size() > 0) {
                 printf("    Received %zu detections:\n", detections.size());
@@ -279,28 +193,49 @@ void* read_send(void* arg)
                            det.x, det.y, det.w, det.h);
                 }
             }
+        }
+    }
+}
 
-            server->OnVEncData(0, (void *)data, (size_t)len, pts);
-            for (auto &it : detections) {
-                char s[50];
-                auto len = snprintf(s, sizeof(s), "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
-                            it.confidence, it.x, it.y, it.w, it.h);
-                //server->OnDetData(0, (uint8_t*)s, len, pts);
+void udp_receiver(asio::ip::udp::socket *socket) {
+    char recv_buf[64];
+    asio::ip::udp::endpoint sender_endpoint;
+
+    while (socket->is_open()) {
+        asio::error_code error;
+        size_t len = socket->receive_from(asio::buffer(recv_buf), sender_endpoint, 0, error);
+
+        if (!error && len > 0) {
+            switch (recv_buf[0]) {
+                case 'v': {
+                    std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                    if (stream_endpoint_video != sender_endpoint) {
+                        stream_endpoint_video = sender_endpoint;
+                        std::cout << "Stream received video: " << stream_endpoint_video.address().to_string()
+                                  << ":" << stream_endpoint_video.port() << std::endl;
+                    }
+                } break;
+                case 'd': {
+                    std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                    if (stream_endpoint_detections != sender_endpoint) {
+                        stream_endpoint_detections = sender_endpoint;
+                        std::cout << "Stream received detections: " << stream_endpoint_detections.address().to_string()
+                                  << ":" << stream_endpoint_detections.port() << std::endl;
+                    }
+                } break;
+                default: ;
             }
         }
     }
 }
 
 int main(int argc, char *argv[]) {
-    std::cout << "./rtspServer -H to show usage" << std::endl;
-    std::cout << "./rtspServer -p 17305000 -t h265 -b /mnt/bb" << std::endl;
-    // ffplay -rtsp_transport tcp -fflags nobuffer+ignidx+igndts -flags low_delay -framedrop -sync ext -i rtsp://10.42.0.156:8554/BackChannelTest
+    std::cout << "./driver_assistant_front -H to show usage" << std::endl;
+    std::cout << "./driver_assistant_front -p 17305000 -b /mnt/bb" << std::endl;
 
-
-    KdMediaInputConfig config;
     std::string bb_path;
     bool daemon_mode;
-    int ret = parse_config(argc, argv, config, bb_path, daemon_mode);
+    int ret = parse_config(argc, argv, bb_path, daemon_mode);
 
     // TODO: We need this delay to wait till detector open FIFO
     if (daemon_mode) sleep(20);
@@ -339,16 +274,11 @@ int main(int argc, char *argv[]) {
     sscanf(argv[2], "%lx", &phyAddr[READER_INDEX]);
     s32Ret = datafifo_init(phyAddr[READER_INDEX]);
 
-    // 创建 rtsp 服务
-    MyRtspServer *server = new MyRtspServer();
-    if (!server || server->Init(config) < 0) {
-        std::cout << "KdRtspServer Init failed." << std::endl;
-        return -1;
-    }
-    server->Start();
+    asio::io_context io_context;
+    asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
+    std::thread udp_receiver_thread(udp_receiver, &socket);
 
-    // 启动 数据发送 线程
-    std::thread readThread(read_send, server);
+    std::thread readThread(read_send, &socket);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -362,10 +292,9 @@ int main(int argc, char *argv[]) {
 
     readThread.join();
 
-    // 关闭rtsp服务
-    server->Stop();
-    server->DeInit();
-    delete server;
+    socket.close();
+    udp_receiver_thread.join();
+
     // datafifo反初始化
     datafifo_deinit();
 
