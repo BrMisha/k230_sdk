@@ -338,6 +338,55 @@ int main(int argc, char *argv[]) {
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
+    // example of fifo writer
+    {
+        int g_s32Index = 0;
+        k_char buf[BLOCK_LEN];
+        k_s32 s32Ret = K_SUCCESS;
+
+        k_u32 availWriteLen = 0;
+
+        // call write NULL to flush
+        s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+        if (K_SUCCESS != s32Ret)
+        {
+            printf("write error:%x\n", s32Ret);
+        }
+
+        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
+        if (K_SUCCESS != s32Ret)
+        {
+            printf("get available write len error:%x\n", s32Ret);
+            //break;
+        }
+        else if (availWriteLen >= BLOCK_LEN)
+        {
+            memset(buf, 0, BLOCK_LEN);
+            snprintf(buf, BLOCK_LEN, "==================================== %d ===================================", g_s32Index);
+            s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+            if (K_SUCCESS != s32Ret)
+            {
+                printf("write error:%x\n", s32Ret);
+                //break;
+            }
+
+            printf("send: %s\n", buf);
+
+            s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+            if (K_SUCCESS != s32Ret)
+            {
+                printf("write done error:%x\n", s32Ret);
+                //break;
+            }
+
+            g_s32Index++;
+        }
+        else
+        {
+            //printf("no free space: %d\n", availWriteLen);
+        }
+    }
+
     asio::io_context io_context;
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);

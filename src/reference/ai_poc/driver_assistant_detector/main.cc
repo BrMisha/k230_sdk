@@ -795,14 +795,47 @@ int main(int argc, char *argv[]) {
     std::thread isp_ai_detector_thread(isp_ai_detector, debug_mode, fd_kmodel_path, facedet_obj_thresh,
                                        facedet_nms_thresh, overlap_ratio, detection_max_width);
 
-    // Start thread to write output stream to h265 file
     std::thread venc_output_thread(venc_output, venc_ch);
+
+    // example of fifo reader
+    std::thread fifo_reader_thread([] {
+        while (!isp_stop) {
+            k_u32 readLen = 0;
+            k_s32 s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
+            if (K_SUCCESS != s32Ret)
+            {
+                printf("fifo_reader_thread get available read len error:%x\n", s32Ret);
+                break;
+            }
+
+            if (readLen > 0)
+            {
+                k_char* pBuf;
+                s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], (void**)&pBuf);
+                if (K_SUCCESS != s32Ret)
+                {
+                    printf("fifo_reader_thread read error:%x\n", s32Ret);
+                    break;
+                }
+                printf("fifo_reader_thread receive:%s\n", pBuf);
+                s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
+                if (K_SUCCESS != s32Ret)
+                {
+                    printf("fifo_reader_thread read done error:%x\n", s32Ret);
+                    break;
+                }
+            }
+        }
+    });
+
     while (getchar() != 'q') {
         usleep(10000);
     }
 
     isp_stop = true;
     isp_ai_detector_thread.join();
+
+    fifo_reader_thread.join();
 
     venc_output_thread.join();
     kd_mpi_venc_stop_chn(venc_ch);
