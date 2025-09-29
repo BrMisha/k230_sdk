@@ -8,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <memory>
+#include <optional>
+
 #include "k_vicap_comm.h"
 #include "k_venc_comm.h"
 #include "k_connector_comm.h"
@@ -19,13 +21,49 @@ struct MediaInputConfig {
     int bitrate_kbps = 4000;
 };
 
+class MediaIspDump {
+    friend class Media;
+
+    void *_vbvaddr;
+    size_t _size;
+
+    k_video_frame_info _dump_info;
+    k_vicap_dev _vicap_dev;
+    k_vicap_chn _vicap_chn;
+
+    MediaIspDump(void *vbvaddr, size_t size, k_video_frame_info dump_info, k_vicap_dev vicap_dev, k_vicap_chn vicap_chn)
+    : _vbvaddr(vbvaddr), _size(size), _dump_info(dump_info), _vicap_dev(vicap_dev), _vicap_chn(vicap_chn) {}
+
+    // Prevent copying, allow moving
+    MediaIspDump(const MediaIspDump&) = delete;
+    MediaIspDump& operator=(const MediaIspDump&) = delete;
+    MediaIspDump(MediaIspDump&&) = default;
+    MediaIspDump& operator=(MediaIspDump&&) = default;
+
+public:
+    ~MediaIspDump();
+
+    [[nodiscard]] void * vbvaddr() const {
+        return _vbvaddr;
+    }
+
+    [[nodiscard]] size_t size() const {
+        return _size;
+    }
+
+};
+
 class Media {
     MediaInputConfig _input_config;
 
-    int _venc_ch = 0;
+    const int _venc_ch = 0;
 
-    k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
-    k_vicap_chn _vicap_chn = VICAP_CHN_ID_0;
+    const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
+    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_0;
+    const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_1;
+
+    static const k_u32 _pool_id_yuv420 = 3;
+    static const k_u32 _pool_id_rgb = 4;
 
 public:
     Media(MediaInputConfig config);
@@ -33,6 +71,7 @@ public:
 
     k_s32 init();
 
+    std::optional<std::unique_ptr<MediaIspDump>> isp_dump();
 
 private:
     k_s32 init_vb();

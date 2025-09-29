@@ -58,6 +58,7 @@
 
 #include "vi_vo.h"
 #include "k_datafifo.h"
+#include "media.h"
 
 #include "common.h"
 
@@ -665,6 +666,36 @@ void print_usage(const char *name) {
 }
 
 int main(int argc, char *argv[]) {
+    {
+        MediaInputConfig config {
+            .sensor_width = 1920,
+            .sensor_height = 1080,
+            .bitrate_kbps = 4000
+        };
+        Media media(config);
+        media.init();
+        printf("-----------------------------------media init ok\n");
+
+        uint8_t *rgb_buffer = (uint8_t *) malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
+
+        for (int i = 0; i<10; i++) {
+            auto dump = media.isp_dump();
+            if (!dump) {
+                printf("can't dump\n");
+                break;
+            }
+            else {
+                printf("dump\n");
+                cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) dump.value()->vbvaddr(),config.sensor_width, config.sensor_height, rgb_buffer);
+                cv::imwrite("rgb.jpg", rgb_frame);
+
+            }
+
+        }
+    }
+    return 0;
+
+
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
     if (argc != 7) {
         print_usage(argv[0]);

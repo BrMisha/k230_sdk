@@ -6,7 +6,18 @@
 #include "mpi_vb_api.h"
 #include "mpi_venc_api.h"
 #include "mpi_vicap_api.h"
+#include "mpi_sys_api.h"
 #include <cstdio>
+#include <thread>
+#include <unistd.h>
+
+MediaIspDump::~MediaIspDump() {
+    kd_mpi_sys_munmap(_vbvaddr, _size);
+    auto ret = kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn, &_dump_info);
+    if (ret) {
+        printf("MediaIspDump::~MediaIspDump. kd_mpi_vicap_dump_release failed.\n");
+    }
+}
 
 Media::Media(MediaInputConfig config) :
 _input_config(config)
@@ -33,7 +44,57 @@ Media::~Media() {
 k_s32 Media::init() {
     init_vb();
     init_encoder();
-    return vivcap_start();
+    k_s32 ret;
+
+    while (1) {
+        ret = vivcap_start();
+        if (ret) {
+            printf("ERROR vivcap_start %lu\n", ret);
+            vivcap_stop();
+        } else {
+            sleep(2);
+            k_video_frame_info dump_info;
+            memset(&dump_info, 0, sizeof(k_video_frame_info));
+            ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
+            if (ret) {
+                printf("ERROR kd_mpi_vicap_dump_frame %lu\n", ret);
+
+                ret = kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
+                if (ret) {
+                    printf("ERROR kd_mpi_vicap_dump_release %lu\n", ret);
+                }
+
+                vivcap_stop();
+            } else {
+                kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
+                break;
+            }
+        }
+    }
+
+    return ret;
+}
+
+std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump() {
+
+    k_video_frame_info dump_info;
+    memset(&dump_info, 0, sizeof(k_video_frame_info));
+    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
+    if (ret) {
+        printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
+        return std::nullopt;
+    }
+    size_t size = (_input_config.sensor_width * _input_config.sensor_height * 3) / 2;
+    auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
+
+    if (vbvaddr == nullptr) {
+        kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
+        return std::nullopt;
+    }
+
+    auto d = new MediaIspDump(vbvaddr, size, std::move(dump_info), _vicap_dev, _vicap_chn_rgb888);
+
+    return std::unique_ptr<MediaIspDump>(d);
 }
 
 k_s32 Media::init_vb() {
@@ -41,7 +102,7 @@ k_s32 Media::init_vb() {
     k_vb_config vb_config;
     memset(&vb_config, 0, sizeof(vb_config));
 
-    vb_config.max_pool_cnt = 4;
+    vb_config.max_pool_cnt = 5;
 
     k_u64 pic_size = _input_config.sensor_width * _input_config.sensor_height * 2;
     k_u64 stream_size = _input_config.sensor_width * _input_config.sensor_height / 2;
@@ -51,17 +112,23 @@ k_s32 Media::init_vb() {
     vb_config.comm_pool[1].blk_cnt = 30;
     vb_config.comm_pool[1].blk_size = ((stream_size + 0xfff) & ~0xfff);
     vb_config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
+    vb_config.comm_pool[2].blk_cnt = 4;
+    vb_config.comm_pool[2].blk_size = (_input_config.sensor_width * _input_config.sensor_height * 4);
+    vb_config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
 
     //VB for YUV420SP output
-    vb_config.comm_pool[2].blk_cnt = 6;
-    vb_config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
-    vb_config.comm_pool[2].blk_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2,
+    static_assert(_pool_id_yuv420 == 3, "_pool_id_yuv420 must be 2");
+    vb_config.comm_pool[_pool_id_yuv420].blk_cnt = 6;
+    vb_config.comm_pool[_pool_id_yuv420].mode = VB_REMAP_MODE_NOCACHE;
+    vb_config.comm_pool[_pool_id_yuv420].blk_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2,
         VICAP_ALIGN_1K);
 
+
     //VB for RGB888 output
-    vb_config.comm_pool[3].blk_cnt = 5;
-    vb_config.comm_pool[3].mode = VB_REMAP_MODE_NOCACHE;
-    vb_config.comm_pool[3].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, VICAP_ALIGN_1K);
+    static_assert(_pool_id_rgb == 4, "_pool_id_rgb must be 3");
+    vb_config.comm_pool[_pool_id_rgb].blk_cnt = 5;
+    vb_config.comm_pool[_pool_id_rgb].mode = VB_REMAP_MODE_NOCACHE;
+    vb_config.comm_pool[_pool_id_rgb].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, VICAP_ALIGN_1K);
 
     ret = kd_mpi_vb_set_config(&vb_config);
     if (ret) {
@@ -192,8 +259,8 @@ k_s32 Media::vivcap_start()
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2, VICAP_ALIGN_1K);
 
-    printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
-    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn, chn_attr);
+    //printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
+    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_yuv420, chn_attr);
     if (ret) {
         printf("sample_vicap, kd_mpi_vicap_set_chn_attr failed.\n");
         return ret;
@@ -215,10 +282,10 @@ k_s32 Media::vivcap_start()
     // chn_attr.buffer_size = config.comm_pool[1].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_height * _input_config.sensor_width * 3 ), VICAP_ALIGN_1K);
 
-    printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
-    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, VICAP_CHN_ID_1, chn_attr);
+    //printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
+    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_rgb888, chn_attr);
     if (ret) {
-        printf("sample_vicap, kd_mpi_vicap_set_chn_attr failed.\n");
+        printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");
         return ret;
     }
     // set to header file database parse mode
@@ -228,17 +295,17 @@ k_s32 Media::vivcap_start()
         return ret;
     }*/
 
-    printf("sample_vicap ...kd_mpi_vicap_init\n");
+    //printf("sample_vicap ...kd_mpi_vicap_init\n");
     ret = kd_mpi_vicap_init(_vicap_dev);
     if (ret) {
-        printf("sample_vicap, kd_mpi_vicap_init failed.\n");
+        printf("Media. kd_mpi_vicap_init failed.\n");
         // goto err_exit;
     }
 
-    printf("sample_vicap ...kd_mpi_vicap_start_stream\n");
+    //printf("sample_vicap ...kd_mpi_vicap_start_stream\n");
     ret = kd_mpi_vicap_start_stream(_vicap_dev);
     if (ret) {
-        printf("sample_vicap, kd_mpi_vicap_init failed.\n");
+        printf("Media. kd_mpi_vicap_start_stream failed.\n");
         // goto err_exit;
     }
 
@@ -247,16 +314,16 @@ k_s32 Media::vivcap_start()
 
 k_s32 Media::vivcap_stop()
 {
-    printf("sample_vicap ...kd_mpi_vicap_stop_stream\n");
+    //printf("sample_vicap ...kd_mpi_vicap_stop_stream\n");
     int ret = kd_mpi_vicap_stop_stream(_vicap_dev);
     if (ret) {
-        printf("sample_vicap, kd_mpi_vicap_init failed.\n");
+        printf("Media. kd_mpi_vicap_stop_stream failed.\n");
         return ret;
     }
 
     ret = kd_mpi_vicap_deinit(_vicap_dev);
     if (ret) {
-        printf("sample_vicap, kd_mpi_vicap_deinit failed.\n");
+        printf("Media. kd_mpi_vicap_deinit failed.\n");
     }
 
     return ret;
