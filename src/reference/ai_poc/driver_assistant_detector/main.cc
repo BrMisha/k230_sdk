@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/sysinfo.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -448,16 +449,28 @@ k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr, k
     return handle;
 }
 
-cv::Mat nv12ToRGBHWC(const uint8_t *nv12Data, int width, int height, uint8_t *rgbChwData) {
-    cv::Mat nv12Mat(height + height / 2, width, CV_8UC1, const_cast<uint8_t *>(nv12Data));
-    cv::Mat rgbMat(height, width, CV_8UC3, rgbChwData);
-    cv::cvtColor(nv12Mat, rgbMat, cv::COLOR_YUV2BGR_NV12);
-    return rgbMat;
+
+std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int detection_max_width) {
+    std::vector<DetectionNormalized> results;
+
+    if (rgb_frame.cols > detection_max_width) {
+        ScopedTiming st("Image resize", 1);
+        float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
+        int new_width = detection_max_width;
+        int new_height = static_cast<int>(rgb_frame.rows * scale);
+        cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
+        rgb_frame.cols = new_width;
+        rgb_frame.rows = new_height;
+        std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
+    }
+    auto r = sahi.detect(rgb_frame);
+    for (auto it = r.cbegin(); it != r.cend(); ++it) {
+        results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
+    }
+
+    return results;
 }
 
-/**
-* Decoder output thread logic
-*/
 void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
                      float overlap_ratio, int detection_max_width) {
     int ret;
@@ -489,18 +502,6 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
     printf("vivcap done\n");
 
     size_t size = (SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH) / 2;
-    // alloc memory,get isp memory
-    /*size_t paddr = 0;
-    void *vaddr = nullptr;
-
-
-    int ret = kd_mpi_sys_mmz_alloc_cached(&paddr, &vaddr, "allocate", "anonymous", size);
-    if (ret)
-    {
-        std::cerr << "physical_memory_block::allocate failed: ret = " << ret << ", errno = " << strerror(errno) << std::endl;
-        std::abort();
-    }*/
-
 
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
@@ -541,27 +542,9 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
         }
         auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
-        /*{
-            if (time_pts == 5) {
-                // Save raw data to file for debugging
-                FILE* dump_file = fopen("dump.ch2", "wb");
-                if (dump_file) {
-                    fwrite(vbvaddr, 1, (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2, dump_file);
-                    fclose(dump_file);
-                    printf("Saved raw YUV data to dump\n");
-                } else {
-                    printf("Failed to open /tmp/dump.yuv for writing\n");
-                }
-            }
-
-            //memcpy(vaddr, (void *)vbvaddr, (ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * 3) / 2);  // This copy can be removed in the future
-            //kd_mpi_sys_munmap(vbvaddr, size);
-        }*/
-
         std::vector<DetectionNormalized> results;
 
-        cv::Mat rgb_frame = nv12ToRGBHWC((uint8_t *) vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
-        //cv::imwrite("rgb_frame.jpg", rgb_frame);
+        cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
 
         // Copy to encoder because the rgb_frame may resized on next step
         {
@@ -587,21 +570,7 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
 
         {
             ScopedTiming st("SAHI detection", 1);
-
-            if (rgb_frame.cols > detection_max_width) {
-                ScopedTiming st("Image resize", 1);
-                float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
-                int new_width = detection_max_width;
-                int new_height = static_cast<int>(rgb_frame.rows * scale);
-                cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
-                rgb_frame.cols = new_width;
-                rgb_frame.rows = new_height;
-                std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
-            }
-            auto r = sahi.detect(rgb_frame);
-            for (auto it = r.cbegin(); it != r.cend(); ++it) {
-                results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
-            }
+            results = detect(sahi, rgb_frame, detection_max_width);
         }
 
         {
@@ -621,7 +590,6 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
 
         {
             ScopedTiming st("venc_send_frame", debug_mode);
-
 
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
             vf_info.v_frame.pts = time_pts++;
@@ -668,14 +636,6 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
     // After decoding ends, encoding ends accordingly, must release corresponding k_vb_blk_handle
     ret = kd_mpi_vb_release_block(block_enc);
     CHECK_RET(ret, __func__, __LINE__);
-
-    // free memory
-    /*ret = kd_mpi_sys_mmz_free(paddr, vaddr);
-    if (ret)
-    {
-        std::cerr << "free failed: ret = " << ret << ", errno = " << strerror(errno) << std::endl;
-        std::abort();
-    }*/
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
@@ -718,7 +678,35 @@ int main(int argc, char *argv[]) {
     float overlap_ratio = atof(argv[5]);
     int detection_max_width = atoi(argv[6]);
 
-    k_s32 ret;
+    // datafifo
+    k_s32 ret = datafifo_init();
+    if (0 != ret) {
+        std::cout << "====== datafifo init failed ======";
+    }
+
+    k_s32 ipcmsg_handle;
+    {
+        k_ipcmsg_connect_t stConnectAtt{
+            .u32RemoteId = 0,
+            .u32Port = 101,
+            .u32Priority = 0
+        };
+        ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
+        if (ret != K_SUCCESS) {
+            printf("kd_ipcmsg_add_service failed: %d\n", ret);
+            return -1;
+        }
+        printf("kd_ipcmsg_connect...\n");
+        ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
+        if (ret != K_SUCCESS) {
+            printf("kd_ipcmsg_connect failed: %d\n", ret);
+            return -1;
+        }
+    }
+    std::thread ipcmsg_thread([ipcmsg_handle] {
+        kd_ipcmsg_run(ipcmsg_handle);
+    });
+
 
     //**********************encoder****************************************
     // Encoder configuration, encoding channel number is 0
@@ -762,35 +750,6 @@ int main(int argc, char *argv[]) {
     // Start encoding channel
     ret = kd_mpi_venc_start_chn(venc_ch);
     CHECK_RET(ret, __func__, __LINE__);
-
-    // datafifo
-    ret = datafifo_init();
-    if (0 != ret) {
-        std::cout << "====== datafifo init failed ======";
-    }
-
-    k_s32 ipcmsg_handle;
-    {
-        k_ipcmsg_connect_t stConnectAtt{
-            .u32RemoteId = 0,
-            .u32Port = 101,
-            .u32Priority = 0
-        };
-        ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
-        if (ret != K_SUCCESS) {
-            printf("kd_ipcmsg_add_service failed: %d\n", ret);
-            return -1;
-        }
-        printf("kd_ipcmsg_connect...\n");
-        ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
-        if (ret != K_SUCCESS) {
-            printf("kd_ipcmsg_connect failed: %d\n", ret);
-            return -1;
-        }
-    }
-    std::thread ipcmsg_thread([ipcmsg_handle] {
-        kd_ipcmsg_run(ipcmsg_handle);
-    });
 
     std::thread isp_ai_detector_thread(isp_ai_detector, debug_mode, fd_kmodel_path, facedet_obj_thresh,
                                        facedet_nms_thresh, overlap_ratio, detection_max_width);
