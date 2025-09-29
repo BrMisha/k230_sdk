@@ -472,10 +472,10 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int dete
     return results;
 }
 
-void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
+void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
                      float overlap_ratio, int detection_max_width) {
     int ret;
-
+/*
     while (1) {
         ret = vivcap_start();
         if (ret) {
@@ -503,14 +503,14 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
     printf("vivcap done\n");
 
     size_t size = (SENSOR_CHANNEL * ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH) / 2;
-
+*/
     OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
 
     //******************* After AI computation, assemble results into k_video_frame_info frame object format *******************
     // Some initialization settings here, choose to use 1080P, ARGB8888 format data
     // Use buffer pool 2 as AI result sending buffer here
-    k_u32 g_pool_id = 2;
+    /*k_u32 g_pool_id = 2;
     k_video_frame_info vf_info;
     void *pic_vaddr = NULL;
     memset(&vf_info, 0, sizeof(vf_info));
@@ -518,34 +518,28 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
     vf_info.v_frame.height = ISP_CHN1_HEIGHT;
     vf_info.v_frame.stride[0] = ISP_CHN1_WIDTH;
     vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr, g_pool_id);
+    k_vb_blk_handle block_enc = init_venc_frame(vf_info, &pic_vaddr, g_pool_id);*/
+
     k_u64 time_pts = 0;
     //**********************************************************************************************
 
     printf("start loop\n");
 
-    uint8_t *rgb_buffer = (uint8_t *) malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
+    uint8_t *rgb_buffer = (uint8_t *) malloc( media->input_config()->sensor_width * media->input_config()->sensor_height * 3);
 
     while (!isp_stop) {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
-
-        {
-            ScopedTiming st("read capture", debug_mode);
-            // Read one frame from vivcap to dump_info
-            memset(&dump_info, 0, sizeof(k_video_frame_info));
-            ret = kd_mpi_vicap_dump_frame(vicap_dev, VICAP_CHN_ID_1, VICAP_DUMP_YUV, &dump_info, 1000);
-            if (ret) {
-                printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
-                continue;
-            }
-            printf("Pixel format: %d, size: %d %d\n", dump_info.v_frame.pixel_format, dump_info.v_frame.width,
-                   dump_info.v_frame.height);
+        auto picture = media->isp_dump();
+        if (!picture) {
+            printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
+            break;
         }
-        auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
+
+        auto vbvaddr = picture.value()->vbvaddr();
 
         std::vector<DetectionNormalized> results;
 
-        cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr,ISP_CHN1_WIDTH, ISP_CHN1_HEIGHT, rgb_buffer);
+        cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr, media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
 
         // Copy to encoder because the rgb_frame may resized on next step
         {
@@ -553,7 +547,7 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
 
             // Convert RGB image to ARGB image, send to encoder
             uint8_t *src = rgb_frame.data;
-            uint8_t *dst = (uint8_t *) pic_vaddr;
+            uint8_t *dst = (uint8_t *) media->venc_get_pic_vaddr();
 
             for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
                 for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
@@ -593,11 +587,11 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
             ScopedTiming st("venc_send_frame", debug_mode);
 
             // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
-            vf_info.v_frame.pts = time_pts++;
+            time_pts++;
 
             {
                 last_detection_t ld;
-                ld.pts = vf_info.v_frame.pts;
+                ld.pts = time_pts;
 
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
                     auto d = Detection::from_normalized(*it, dump_info.v_frame.width, dump_info.v_frame.height);
@@ -619,24 +613,28 @@ void isp_ai_detector(int debug_mode, char *fd_kmodel_path, float facedet_obj_thr
                 last_detections.push(ld);
             }
 
-            printf("send kd_mpi_venc_send_frame\n");
+            /*printf("send kd_mpi_venc_send_frame\n");
             ret = kd_mpi_venc_send_frame(0, &vf_info, -1);
-            CHECK_RET(ret, __func__, __LINE__);
+            CHECK_RET(ret, __func__, __LINE__);*/
+
+
+            fails on 13 pts when it is uncommented. May be because of wrong vb settings
+            media->venc_push(time_pts);
         }
 
-        kd_mpi_sys_munmap(vbvaddr, size);
+        /*kd_mpi_sys_munmap(vbvaddr, size);
         ret = kd_mpi_vicap_dump_release(vicap_dev, VICAP_CHN_ID_1, &dump_info);
         if (ret) {
             printf("sample_vicap...kd_mpi_vicap_dump_release failed.\n");
-        }
+        }*/
         //break;
     }
 
-    vivcap_stop();
+    /*vivcap_stop();
 
     // After decoding ends, encoding ends accordingly, must release corresponding k_vb_blk_handle
     ret = kd_mpi_vb_release_block(block_enc);
-    CHECK_RET(ret, __func__, __LINE__);
+    CHECK_RET(ret, __func__, __LINE__);*/
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
@@ -666,7 +664,7 @@ void print_usage(const char *name) {
 }
 
 int main(int argc, char *argv[]) {
-    {
+    /*{
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
@@ -676,7 +674,7 @@ int main(int argc, char *argv[]) {
         media.init();
         printf("-----------------------------------media init ok\n");
 
-        uint8_t *rgb_buffer = (uint8_t *) malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
+        uint8_t *rgb  ste_buffer = (uint8_t *) malloc(ISP_CHN1_WIDTH * ISP_CHN1_HEIGHT * 3);
 
         for (int i = 0; i<10; i++) {
             auto dump = media.isp_dump();
@@ -716,7 +714,7 @@ int main(int argc, char *argv[]) {
 
         }
     }
-    return 0;
+    return 0;*/
 
 
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
@@ -737,7 +735,7 @@ int main(int argc, char *argv[]) {
     if (0 != ret) {
         std::cout << "====== datafifo init failed ======";
     }
-
+/*
     k_s32 ipcmsg_handle;
     {
         k_ipcmsg_connect_t stConnectAtt{
@@ -759,12 +757,12 @@ int main(int argc, char *argv[]) {
     }
     std::thread ipcmsg_thread([ipcmsg_handle] {
         kd_ipcmsg_run(ipcmsg_handle);
-    });
+    });*/
 
 
     //**********************encoder****************************************
     // Encoder configuration, encoding channel number is 0
-    int chnum = 1;
+    /*int chnum = 1;
     int venc_ch = 0;
     k_u32 output_frames = 10;
     k_u32 bitrate = 2000; //kbps
@@ -803,12 +801,20 @@ int main(int argc, char *argv[]) {
     kd_mpi_venc_enable_idr(venc_ch, K_TRUE);
     // Start encoding channel
     ret = kd_mpi_venc_start_chn(venc_ch);
-    CHECK_RET(ret, __func__, __LINE__);
+    CHECK_RET(ret, __func__, __LINE__);*/
 
-    std::thread isp_ai_detector_thread(isp_ai_detector, debug_mode, fd_kmodel_path, facedet_obj_thresh,
+    MediaInputConfig config {
+        .sensor_width = 1920,
+        .sensor_height = 1080,
+        .bitrate_kbps = 4000
+    };
+    Media media(config);
+    media.init();
+
+    std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
                                        facedet_nms_thresh, overlap_ratio, detection_max_width);
 
-    std::thread venc_output_thread(venc_output, venc_ch);
+    std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
     // example of fifo reader
     std::thread fifo_reader_thread([] {
@@ -851,20 +857,20 @@ int main(int argc, char *argv[]) {
     fifo_reader_thread.join();
 
     venc_output_thread.join();
-    kd_mpi_venc_stop_chn(venc_ch);
+    /*kd_mpi_venc_stop_chn(venc_ch);
     kd_mpi_venc_destroy_chn(venc_ch);
-    ret = kd_mpi_venc_close_fd();
+    ret = kd_mpi_venc_close_fd();*/
     CHECK_RET(ret, __func__, __LINE__);
     free(datafifo_buf);
 
-    kd_ipcmsg_disconnect(ipcmsg_handle);
+    /*kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
-    ipcmsg_thread.join();
+    ipcmsg_thread.join();*/
 
     // datafifo exit
     datafifo_deinit();
     // VB exit
-    sample_vb_exit();
+    //sample_vb_exit();
 
     vdec_debug("sample decode done!\n");
 

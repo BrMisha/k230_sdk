@@ -77,6 +77,8 @@ public:
 
     k_s32 init();
 
+    MediaInputConfig const *input_config() const { return &_input_config;}
+
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump();
 
     k_u32 venc_get_channel() const {return _venc_ch;}
