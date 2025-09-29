@@ -30,6 +30,7 @@ Media::~Media() {
     if (ret)
         printf("Media. vivcap_stop failed ret:%d\n", ret);
 
+    kd_mpi_vb_release_block(_block_enc);
     kd_mpi_venc_stop_chn(_venc_ch);
     kd_mpi_venc_destroy_chn(_venc_ch);
     ret = kd_mpi_venc_close_fd();
@@ -43,7 +44,15 @@ Media::~Media() {
 
 k_s32 Media::init() {
     init_vb();
+
     init_encoder();
+    memset(&_venc_vf_info, 0, sizeof(k_video_frame_info));
+    _venc_vf_info.v_frame.width = _input_config.sensor_width;
+    _venc_vf_info.v_frame.height = _input_config.sensor_height;
+    _venc_vf_info.v_frame.stride[0] = _input_config.sensor_width;
+    _venc_vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
+    _block_enc = init_venc_frame(_venc_vf_info, &_venc_pic_vaddr);
+
     k_s32 ret;
 
     while (1) {
@@ -97,6 +106,11 @@ std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump() {
     return std::unique_ptr<MediaIspDump>(d);
 }
 
+k_s32 Media::venc_push(k_u64 time_pts) {
+    _venc_vf_info.v_frame.pts = time_pts;
+    return kd_mpi_venc_send_frame(0, &_venc_vf_info, -1);
+}
+
 k_s32 Media::init_vb() {
     k_s32 ret = 0;
     k_vb_config vb_config;
@@ -112,12 +126,13 @@ k_s32 Media::init_vb() {
     vb_config.comm_pool[1].blk_cnt = 30;
     vb_config.comm_pool[1].blk_size = ((stream_size + 0xfff) & ~0xfff);
     vb_config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-    vb_config.comm_pool[2].blk_cnt = 4;
-    vb_config.comm_pool[2].blk_size = (_input_config.sensor_width * _input_config.sensor_height * 4);
-    vb_config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
+    static_assert(_pool_id_venc == 2, "_pool_id_yuv420 must be 2");
+    vb_config.comm_pool[_pool_id_venc].blk_cnt = 4;
+    vb_config.comm_pool[_pool_id_venc].blk_size = (_input_config.sensor_width * _input_config.sensor_height * 4);
+    vb_config.comm_pool[_pool_id_venc].mode = VB_REMAP_MODE_NOCACHE;
 
     //VB for YUV420SP output
-    static_assert(_pool_id_yuv420 == 3, "_pool_id_yuv420 must be 2");
+    static_assert(_pool_id_yuv420 == 3, "_pool_id_yuv420 must be 3");
     vb_config.comm_pool[_pool_id_yuv420].blk_cnt = 6;
     vb_config.comm_pool[_pool_id_yuv420].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_yuv420].blk_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2,
@@ -125,7 +140,7 @@ k_s32 Media::init_vb() {
 
 
     //VB for RGB888 output
-    static_assert(_pool_id_rgb == 4, "_pool_id_rgb must be 3");
+    static_assert(_pool_id_rgb == 4, "_pool_id_rgb must be 4");
     vb_config.comm_pool[_pool_id_rgb].blk_cnt = 5;
     vb_config.comm_pool[_pool_id_rgb].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_rgb].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, VICAP_ALIGN_1K);
@@ -327,4 +342,61 @@ k_s32 Media::vivcap_stop()
     }
 
     return ret;
+}
+
+k_vb_blk_handle Media::init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr) {
+    k_u64 phys_addr = 0;
+    k_u32 *virt_addr;
+    k_vb_blk_handle handle;
+    k_s32 size;
+
+    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_8888 || vf_info.v_frame.pixel_format ==
+        PIXEL_FORMAT_ARGB_8888)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 4;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_565 || vf_info.v_frame.pixel_format ==
+             PIXEL_FORMAT_BGR_565)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_4444 || vf_info.v_frame.pixel_format ==
+             PIXEL_FORMAT_ARGB_4444)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_888 || vf_info.v_frame.pixel_format ==
+             PIXEL_FORMAT_BGR_888)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 3;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info.v_frame.pixel_format ==
+             PIXEL_FORMAT_ABGR_1555)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
+    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
+        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;
+
+    printf("vb block size is %x \n", size);
+
+    handle = kd_mpi_vb_get_block(_pool_id_venc, size, NULL);
+    if (handle == VB_INVALID_HANDLE) {
+        printf("%s get vb block error\n", __func__);
+        return K_FAILED;
+    }
+
+    phys_addr = kd_mpi_vb_handle_to_phyaddr(handle);
+    if (phys_addr == 0) {
+        printf("%s get phys addr error\n", __func__);
+        return K_FAILED;
+    }
+
+    virt_addr = (k_u32 *) kd_mpi_sys_mmap(phys_addr, size);
+
+    if (virt_addr == NULL) {
+        printf("%s mmap error\n", __func__);
+        return K_FAILED;
+    }
+
+    vf_info.mod_id = K_ID_VO;
+    vf_info.pool_id = _pool_id_venc;
+    vf_info.v_frame.phys_addr[0] = phys_addr;
+    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
+        vf_info.v_frame.phys_addr[1] = phys_addr + (vf_info.v_frame.height * vf_info.v_frame.stride[0]);
+    *pic_vaddr = virt_addr;
+
+    printf("phys_addr is %lx g_pool_id is %d \n", phys_addr, _pool_id_venc);
+
+    return handle;
 }

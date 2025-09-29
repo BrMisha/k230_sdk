@@ -687,8 +687,31 @@ int main(int argc, char *argv[]) {
             else {
                 printf("dump\n");
                 cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) dump.value()->vbvaddr(),config.sensor_width, config.sensor_height, rgb_buffer);
-                cv::imwrite("rgb.jpg", rgb_frame);
 
+
+                // Copy to encoder because the rgb_frame may resized on next step
+                {
+                    ScopedTiming st("RGB to ARGB", 1);
+
+                    // Convert RGB image to ARGB image, send to encoder
+                    uint8_t *src = rgb_frame.data;
+                    uint8_t *dst = (uint8_t *) media.venc_get_pic_vaddr();
+
+                    for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
+                        for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
+                            int src_idx = (y * ISP_CHN1_WIDTH + x) * 3;
+                            int dst_idx = (y * ISP_CHN1_WIDTH + x) * 4;
+
+                            // Copy RGB values and add alpha channel (255 = fully opaque)
+                            dst[dst_idx + 0] = 255; // Alpha
+                            dst[dst_idx + 1] = src[src_idx + 2]; // B
+                            dst[dst_idx + 2] = src[src_idx + 1]; // G
+                            dst[dst_idx + 3] = src[src_idx + 0]; // R
+                        }
+                    }
+                }
+
+                media.venc_push(0);;
             }
 
         }

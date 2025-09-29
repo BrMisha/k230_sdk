@@ -14,6 +14,7 @@
 #include "k_venc_comm.h"
 #include "k_connector_comm.h"
 #include "k_type.h"
+#include "k_vb_comm.h"
 
 struct MediaInputConfig {
     int sensor_width = 1920;
@@ -64,6 +65,11 @@ class Media {
 
     static const k_u32 _pool_id_yuv420 = 3;
     static const k_u32 _pool_id_rgb = 4;
+    static const k_u32 _pool_id_venc = 2;
+
+    k_video_frame_info _venc_vf_info;
+    void    *_venc_pic_vaddr = nullptr;
+    k_vb_blk_handle _block_enc = 0;
 
 public:
     Media(MediaInputConfig config);
@@ -73,6 +79,9 @@ public:
 
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump();
 
+    void *venc_get_pic_vaddr() const {return _venc_pic_vaddr;}
+    k_s32 venc_push(k_u64 time_pts);
+
 private:
     k_s32 init_vb();
 
@@ -80,6 +89,8 @@ private:
 
     k_s32 vivcap_start();
     k_s32 vivcap_stop();
+
+    k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr);
 
 };
 
