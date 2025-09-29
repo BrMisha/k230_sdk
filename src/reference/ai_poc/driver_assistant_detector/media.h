@@ -57,7 +57,7 @@ public:
 class Media {
     MediaInputConfig _input_config;
 
-    const int _venc_ch = 0;
+    const k_u32 _venc_ch = 0;
 
     const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
     const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_0;
@@ -79,6 +79,7 @@ public:
 
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump();
 
+    k_u32 venc_get_channel() const {return _venc_ch;}
     void *venc_get_pic_vaddr() const {return _venc_pic_vaddr;}
     k_s32 venc_push(k_u64 time_pts);
 
