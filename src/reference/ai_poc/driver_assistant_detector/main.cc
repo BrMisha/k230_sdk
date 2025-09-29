@@ -92,12 +92,12 @@
 // datafifo
 #define READER_INDEX    0
 #define WRITER_INDEX    1
-static k_s32 g_s32Index = 0;
+
 static k_datafifo_handle hDataFifo[2] = {
     (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE
 };
-k_u64 datafifo_phy_addr = 0;
-static const k_s32 BLOCK_LEN = 1024000;
+k_u64 datafifo_phy_addr[2] = {0,0};
+static const k_s32 BLOCK_LEN = 102400;
 k_char *datafifo_buf = (k_char *) malloc(BLOCK_LEN);
 
 std::atomic<bool> isp_stop(false);
@@ -194,22 +194,18 @@ static int datafifo_init(void) {
     k_s32 s32Ret = K_SUCCESS;
 
     k_datafifo_params_s writer_params = {10, BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
-
     s32Ret = kd_datafifo_open(&hDataFifo[WRITER_INDEX], &writer_params);
-
     if (K_SUCCESS != s32Ret) {
         printf("open datafifo error:%x\n", s32Ret);
         return -1;
     }
 
-    s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_PHY_ADDR, &datafifo_phy_addr);
-
+    s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_PHY_ADDR, &datafifo_phy_addr[WRITER_INDEX]);
     if (K_SUCCESS != s32Ret) {
         printf("get datafifo phy addr error:%x\n", s32Ret);
         return -1;
     }
-
-    printf("PhyAddr: %lx\n", datafifo_phy_addr);
+    printf("PhyAddr writer: %lx\n", datafifo_phy_addr[WRITER_INDEX]);
 
     s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, (void *) release);
     // s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, &phyAddr);
@@ -218,6 +214,23 @@ static int datafifo_init(void) {
         printf("set release func callback error:%x\n", s32Ret);
         return -1;
     }
+
+    k_datafifo_params_s reader_params = {10, BLOCK_LEN, K_TRUE, DATAFIFO_READER};
+    s32Ret = kd_datafifo_open(&hDataFifo[READER_INDEX], &reader_params);
+    if (K_SUCCESS != s32Ret)
+    {
+        printf("open datafifo error:%x\n", s32Ret);
+        return -1;
+    }
+
+    s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_PHY_ADDR, &datafifo_phy_addr[READER_INDEX]);
+    if (K_SUCCESS != s32Ret)
+    {
+        printf("get datafifo phy addr error:%x\n", s32Ret);
+        return -1;
+    }
+    printf("PhyAddr reader: %lx\n", datafifo_phy_addr[READER_INDEX]);
+
 
     printf("datafifo_init finish\n");
 
@@ -234,7 +247,7 @@ void datafifo_deinit(void) {
     printf(" kd_datafifo_close %lx\n", hDataFifo[WRITER_INDEX]);
     // printf(" kd_datafifo_close %lx\n", hDataFifo[READER_INDEX]);
     kd_datafifo_close(hDataFifo[WRITER_INDEX]);
-    // kd_datafifo_close(hDataFifo[READER_INDEX]);
+    kd_datafifo_close(hDataFifo[READER_INDEX]);
     printf(" finish\n");
 }
 
@@ -360,8 +373,6 @@ static void venc_output(k_u32 venc_ch) {
                     printf("venc_output...write done error:%x\n", ret);
                     break;
                 }
-
-                g_s32Index++;
             }
 
             kd_mpi_sys_munmap(pData, output.pack[i].len);
@@ -671,7 +682,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
     printf("ipcmsg_recv %lu\n", msg->u32CMD);
     switch (msg->u32CMD) {
         case MSG_CMD_GET_PHY_ADDRESS: {
-            auto pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, &datafifo_phy_addr, sizeof(datafifo_phy_addr));
+            auto pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, datafifo_phy_addr, sizeof(datafifo_phy_addr));
             kd_ipcmsg_send_only(s32Id, pResp);
             kd_ipcmsg_destroy_message(pResp);
         } break;
