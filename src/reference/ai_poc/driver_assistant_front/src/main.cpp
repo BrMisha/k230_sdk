@@ -26,7 +26,6 @@
 static k_datafifo_handle hDataFifo[2] = {
     (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE
 };
-static const k_s32 BLOCK_LEN = 102400;
 
 std::atomic<bool> send_stop(false);
 
@@ -45,14 +44,14 @@ static void release(void *pStream) {
 
 int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
     k_s32 s32Ret = K_SUCCESS;
-    k_datafifo_params_s params_reader = {10, BLOCK_LEN, K_TRUE, DATAFIFO_READER};
+    k_datafifo_params_s params_reader = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
     s32Ret = kd_datafifo_open_by_addr(&hDataFifo[READER_INDEX], &params_reader, reader_phyAddr);
     if (K_SUCCESS != s32Ret) {
         printf("open datafifo error:%x\n", s32Ret);
         return -1;
     }
 
-    k_datafifo_params_s params_writer = {10, BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
+    k_datafifo_params_s params_writer = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
     s32Ret = kd_datafifo_open_by_addr(&hDataFifo[WRITER_INDEX], &params_writer, writer_phyAddr);
     if (K_SUCCESS != s32Ret)
     {
@@ -60,12 +59,12 @@ int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
         return -1;
     }
 
-    /*s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, release);
+    s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, (void *) release);
     if (K_SUCCESS != s32Ret)
     {
         printf("set release func callback error:%x\n", s32Ret);
         return -1;
-    }*/
+    }
 
     printf("datafifo_init finish\n");
 
@@ -302,6 +301,7 @@ int main(int argc, char *argv[]) {
     kd_ipcmsg_destroy_message(responce);
     kd_ipcmsg_destroy_message(pReq);
 
+    printf("datafifo WRITER_INDEX = %lx, READER_INDEX = %lx\n", datafifo_phy_addr[WRITER_INDEX], datafifo_phy_addr[READER_INDEX]);
     if (datafifo_phy_addr[WRITER_INDEX] == 0 || datafifo_phy_addr[READER_INDEX] == 0) {
         printf("datafifo_phy_addr not received!\n");
         kd_ipcmsg_disconnect(ipcmsg_handle);
@@ -341,7 +341,7 @@ int main(int argc, char *argv[]) {
     // example of fifo writer
     {
         int g_s32Index = 0;
-        k_char buf[BLOCK_LEN];
+        k_char buf[DATAFIFO_BLOCK_LEN];
         k_s32 s32Ret = K_SUCCESS;
 
         k_u32 availWriteLen = 0;
@@ -359,10 +359,11 @@ int main(int argc, char *argv[]) {
             printf("get available write len error:%x\n", s32Ret);
             //break;
         }
-        else if (availWriteLen >= BLOCK_LEN)
+        else if (availWriteLen >= DATAFIFO_BLOCK_LEN)
         {
-            memset(buf, 0, BLOCK_LEN);
-            snprintf(buf, BLOCK_LEN, "==================================== %d ===================================", g_s32Index);
+            printf("About to send...\n");
+            memset(buf, 0, DATAFIFO_BLOCK_LEN);
+            snprintf(buf, DATAFIFO_BLOCK_LEN, "==================================== %d ===================================", g_s32Index);
             s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
             if (K_SUCCESS != s32Ret)
             {
@@ -383,7 +384,7 @@ int main(int argc, char *argv[]) {
         }
         else
         {
-            //printf("no free space: %d\n", availWriteLen);
+            printf("no free space: %d\n", availWriteLen);
         }
     }
 

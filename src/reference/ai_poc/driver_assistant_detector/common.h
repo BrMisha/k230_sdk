@@ -24,4 +24,6 @@ typedef enum
 
 inline const char *IPCMSG_NAME = "driver_assistant";
 
+static const size_t DATAFIFO_BLOCK_LEN = 1024000;
+
 #endif //DETECTORMODULE_COMMON_H
