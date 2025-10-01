@@ -31,7 +31,6 @@
 #include <sys/types.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
-#include <opencv2/highgui/highgui.hpp>
 #include <mutex>
 #include <memory>
 
@@ -107,7 +106,6 @@ static int datafifo_init(void) {
     printf("PhyAddr writer: %lx\n", datafifo_phy_addr[WRITER_INDEX]);
 
     s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, (void *) release);
-    // s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, &phyAddr);
 
     if (K_SUCCESS != s32Ret) {
         printf("set release func callback error:%x\n", s32Ret);
@@ -156,20 +154,15 @@ void datafifo_deinit(void) {
 */
 static void venc_output(k_u32 venc_ch) {
     k_char *datafifo_buf = (k_char *) malloc(DATAFIFO_BLOCK_LEN);
-    //memset(datafifo_buf, 0, DATAFIFO_BLOCK_LEN);
+    memset(datafifo_buf, 0, DATAFIFO_BLOCK_LEN);
 
     k_venc_stream output;
-    int out_cnt, out_frames;
     k_s32 ret;
     int i;
-    k_u32 total_len = 0;
 
-    out_cnt = 0;
-    out_frames = 0;
 
     printf("venc_output... started\n");
 
-    // int index = 0;
     while (!isp_stop) {
         // datafifo
         k_u32 availWriteLen = 0;
@@ -207,12 +200,8 @@ static void venc_output(k_u32 venc_ch) {
         ret = kd_mpi_venc_get_stream(venc_ch, &output, -1);
         CHECK_RET(ret, __func__, __LINE__);
         // Write stream to h265 file
-        out_cnt += output.pack_cnt;
-        for (i = 0; i < output.pack_cnt; i++) {
-            if (output.pack[i].type != K_VENC_HEADER) {
-                out_frames++;
-            }
 
+        for (i = 0; i < output.pack_cnt; i++) {
             k_u8 *pData;
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
             printf("venc_output... size %lu, availWriteLen %lu\n", output.pack[i].len, availWriteLen);
@@ -224,8 +213,6 @@ static void venc_output(k_u32 venc_ch) {
                     std::vector<DetectionCommon> detections;
                     {
                         std::lock_guard<std::mutex> lock(last_detections_mutex);
-
-                        //printf("last_detections %d, %lu\n", last_detections.size(), output.pack[i].pts);
 
                         if (last_detections.size() != 0) {
                             auto item = std::move(last_detections.front());
@@ -253,9 +240,6 @@ static void venc_output(k_u32 venc_ch) {
                     memcpy(datafifo_buf, &s, sizeof(s));
                     total_size = sizeof(s);
                 }
-                //printf("-----venc_output %lu %lu %d\n", output.pack[i].pts, detections.size(), output.pack[i].type);
-                // copy detections into the buf
-
 
                 memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].pts), sizeof(k_u64));
                 total_size += sizeof(k_u64);
@@ -277,7 +261,6 @@ static void venc_output(k_u32 venc_ch) {
             }
 
             kd_mpi_sys_munmap(pData, output.pack[i].len);
-            total_len += output.pack[i].len;
         }
 
         ret = kd_mpi_venc_release_stream(venc_ch, &output);
@@ -319,7 +302,6 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
     SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
 
     k_u64 time_pts = 0;
-    //**********************************************************************************************
 
     printf("start loop\n");
 
@@ -506,7 +488,7 @@ int main(int argc, char *argv[]) {
         while (!isp_stop) {
             k_u32 readLen = 0;
             k_s32 s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
-            //printf("readLen = %d\n", readLen);
+
             if (K_SUCCESS != s32Ret)
             {
                 printf("fifo_reader_thread get available read len error:%x\n", s32Ret);
@@ -547,7 +529,6 @@ int main(int argc, char *argv[]) {
 
     venc_output_thread.join();
     CHECK_RET(ret, __func__, __LINE__);
-    //free(datafifo_buf);
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);

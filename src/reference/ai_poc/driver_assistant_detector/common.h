@@ -22,7 +22,7 @@ typedef enum
     MSG_CMD_GET_PHY_ADDRESS=11,
 } ipc_msg_cmd_t;
 
-inline const char *IPCMSG_NAME = "driver_assistant";
+static const char *IPCMSG_NAME = "driver_assistant";
 
 static const size_t DATAFIFO_BLOCK_LEN = 1024000;
 

@@ -37,14 +37,6 @@
 #include <opencv2/dnn.hpp>
 #include <nncase/functional/ai2d/ai2d_builder.h>
 
-#include <cmath>
-#include <stdio.h>
-#include <stdlib.h>
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 #include <stdint.h>
 
 #include <string>
