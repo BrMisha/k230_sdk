@@ -84,9 +84,7 @@ k_s32 Media::init() {
     return ret;
 }
 
-std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump() {
-
-    k_video_frame_info dump_info;
+std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump(k_video_frame_info &dump_info) {
     memset(&dump_info, 0, sizeof(k_video_frame_info));
     auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
     if (ret) {

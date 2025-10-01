@@ -27,13 +27,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <pthread.h>
+#include <thread>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <signal.h>
-#include <sys/sysinfo.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -56,40 +51,10 @@
 #include "vo_test_case.h"
 #include "sahi.h"
 
-#include "vi_vo.h"
 #include "k_datafifo.h"
 #include "media.h"
 
 #include "common.h"
-
-#define ENABLE_VDEC_DEBUG    1
-#define BIND_VO_LAYER   1
-
-#ifdef ENABLE_VDEC_DEBUG
-#define vdec_debug  printf
-#else
-#define vdec_debug(ARGS...)
-#endif
-
-#ifdef ENABLE_VDSS
-#include "k_vdss_comm.h"
-#include "mpi_vdss_api.h"
-#else
-#include "mpi_vicap_api.h"
-#endif
-
-#ifdef ENABLE_VENC_DEBUG
-#define venc_debug  printf
-#else
-#define venc_debug(ARGS...)
-#endif
-
-#define VE_MAX_WIDTH ISP_CHN1_WIDTH
-#define VE_MAX_HEIGHT ISP_CHN1_HEIGHT
-#define VE_STREAM_BUF_SIZE ((VE_MAX_WIDTH*VE_MAX_HEIGHT/2 + 0xfff) & ~0xfff)
-#define VE_FRAME_BUF_SIZE ((VE_MAX_WIDTH*VE_MAX_HEIGHT*2 + 0xfff) & ~0xfff)
-#define VE_INPUT_BUF_CNT   6
-#define VE_OUTPUT_BUF_CNT  15
 
 // datafifo
 #define READER_INDEX    0
@@ -99,7 +64,6 @@ static k_datafifo_handle hDataFifo[2] = {
     (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE
 };
 k_u64 datafifo_phy_addr[2] = {0,0};
-//k_char *datafifo_buf = (k_char *) malloc(DATAFIFO_BLOCK_LEN);
 
 std::atomic<bool> isp_stop(false);
 
@@ -116,72 +80,6 @@ std::queue<last_detection_t> last_detections;
 static inline void CHECK_RET(k_s32 ret, const char *func, const int line) {
     if (ret)
         printf("error ret %d, func %s line %d\n", ret, func, line);
-}
-
-/**
-* VB initialization
-*/
-static k_s32 vb_init(k_u32 ch_cnt) {
-    k_s32 ret;
-    k_vb_config config;
-
-    memset(&config, 0, sizeof(config));
-
-    config.max_pool_cnt = 64;
-    config.comm_pool[0].blk_cnt = VE_INPUT_BUF_CNT * ch_cnt;
-    config.comm_pool[0].blk_size = VE_FRAME_BUF_SIZE;
-    config.comm_pool[0].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[1].blk_cnt = VE_OUTPUT_BUF_CNT * ch_cnt;
-    config.comm_pool[1].blk_size = VE_STREAM_BUF_SIZE;
-    config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[2].blk_cnt = 4;
-    config.comm_pool[2].blk_size = (VE_MAX_WIDTH * VE_MAX_HEIGHT * 4);
-    config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
-
-    //VB for YUV420SP output
-    config.comm_pool[3].blk_cnt = 5;
-    config.comm_pool[3].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[3].blk_size = VICAP_ALIGN_UP((ISP_CHN0_WIDTH * ISP_CHN0_HEIGHT * SENSOR_CHANNEL) / 2,
-                                                  VICAP_ALIGN_1K);
-
-    //VB for RGB888 output
-    config.comm_pool[4].blk_cnt = 5;
-    config.comm_pool[4].mode = VB_REMAP_MODE_NOCACHE;
-    config.comm_pool[4].blk_size = VICAP_ALIGN_UP((ISP_CHN1_HEIGHT * ISP_CHN1_WIDTH * SENSOR_CHANNEL), VICAP_ALIGN_1K);
-
-    ret = kd_mpi_vb_set_config(&config);
-
-    k_vb_supplement_config supplement_config;
-    memset(&supplement_config, 0, sizeof(supplement_config));
-    supplement_config.supplement_config |= VB_SUPPLEMENT_JPEG_MASK;
-
-    ret = kd_mpi_vb_set_supplement_config(&supplement_config);
-    if (ret) {
-        printf("vb_set_supplement_config failed ret:%d\n", ret);
-        return ret;
-    }
-
-    venc_debug("-----------venc sample test------------------------\n");
-
-    if (ret)
-        venc_debug("vb_set_config failed ret:%d\n", ret);
-
-    ret = kd_mpi_vb_init();
-    if (ret)
-        venc_debug("vb_init failed ret:%d\n", ret);
-
-    return ret;
-}
-
-/**
-* VB exit
-*/
-static k_s32 sample_vb_exit(void) {
-    k_s32 ret;
-    ret = kd_mpi_vb_exit();
-    if (ret)
-        vdec_debug("vb_exit failed ret:%d\n", ret);
-    return ret;
 }
 
 
@@ -389,70 +287,7 @@ static void venc_output(k_u32 venc_ch) {
     }
 
     free(datafifo_buf);
-
-    venc_debug("%s>done, ch %lu: out_frames %d, size %d bits\n", __func__, venc_ch, out_frames, total_len * 8);
 }
-
-/**
-* Initialize frame to be sent to encoder after AI computation
-*/
-k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr, k_u32 g_pool_id) {
-    k_u64 phys_addr = 0;
-    k_u32 *virt_addr;
-    k_vb_blk_handle handle;
-    k_s32 size;
-
-    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_8888 || vf_info.v_frame.pixel_format ==
-        PIXEL_FORMAT_ARGB_8888)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 4;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_565 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_BGR_565)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_4444 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_ARGB_4444)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_888 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_BGR_888)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 3;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_ABGR_1555)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;
-
-    printf("vb block size is %x \n", size);
-
-    handle = kd_mpi_vb_get_block(g_pool_id, size, NULL);
-    if (handle == VB_INVALID_HANDLE) {
-        printf("%s get vb block error\n", __func__);
-        return K_FAILED;
-    }
-
-    phys_addr = kd_mpi_vb_handle_to_phyaddr(handle);
-    if (phys_addr == 0) {
-        printf("%s get phys addr error\n", __func__);
-        return K_FAILED;
-    }
-
-    virt_addr = (k_u32 *) kd_mpi_sys_mmap(phys_addr, size);
-
-    if (virt_addr == NULL) {
-        printf("%s mmap error\n", __func__);
-        return K_FAILED;
-    }
-
-    vf_info.mod_id = K_ID_VO;
-    vf_info.pool_id = g_pool_id;
-    vf_info.v_frame.phys_addr[0] = phys_addr;
-    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        vf_info.v_frame.phys_addr[1] = phys_addr + (vf_info.v_frame.height * vf_info.v_frame.stride[0]);
-    *pic_vaddr = virt_addr;
-
-    printf("phys_addr is %lx g_pool_id is %d \n", phys_addr, g_pool_id);
-
-    return handle;
-}
-
 
 std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int detection_max_width) {
     std::vector<DetectionNormalized> results;
@@ -492,7 +327,8 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
     while (!isp_stop) {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
-        auto picture = media->isp_dump();
+        k_video_frame_info dump_info;
+        auto picture = media->isp_dump(dump_info);
         if (!picture) {
             printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
             break;
@@ -512,10 +348,10 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             uint8_t *src = rgb_frame.data;
             uint8_t *dst = (uint8_t *) media->venc_get_pic_vaddr();
 
-            for (int y = 0; y < ISP_CHN1_HEIGHT; y++) {
-                for (int x = 0; x < ISP_CHN1_WIDTH; x++) {
-                    int src_idx = (y * ISP_CHN1_WIDTH + x) * 3;
-                    int dst_idx = (y * ISP_CHN1_WIDTH + x) * 4;
+            for (int y = 0; y < rgb_frame.rows; y++) {
+                for (int x = 0; x < rgb_frame.cols; x++) {
+                    int src_idx = (y * rgb_frame.cols + x) * 3;
+                    int dst_idx = (y * rgb_frame.cols + x) * 4;
 
                     // Copy RGB values and add alpha channel (255 = fully opaque)
                     dst[dst_idx + 0] = 255; // Alpha
@@ -719,9 +555,6 @@ int main(int argc, char *argv[]) {
 
     // datafifo exit
     datafifo_deinit();
-
-    vdec_debug("sample decode done!\n");
-
 
     return 0;
 }

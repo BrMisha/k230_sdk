@@ -79,7 +79,7 @@ public:
 
     MediaInputConfig const *input_config() const { return &_input_config;}
 
-    std::optional<std::unique_ptr<MediaIspDump>> isp_dump();
+    std::optional<std::unique_ptr<MediaIspDump>> isp_dump(k_video_frame_info &dump_info);
 
     k_u32 venc_get_channel() const {return _venc_ch;}
     void *venc_get_pic_vaddr() const {return _venc_pic_vaddr;}
