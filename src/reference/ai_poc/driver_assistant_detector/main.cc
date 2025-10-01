@@ -52,6 +52,7 @@
 
 #include "k_datafifo.h"
 #include "media.h"
+#include "image_decoder.h"
 
 #include "common.h"
 
@@ -64,7 +65,7 @@ static k_datafifo_handle hDataFifo[2] = {
 };
 k_u64 datafifo_phy_addr[2] = {0,0};
 
-std::atomic<bool> isp_stop(false);
+std::atomic<bool> running(true);
 
 struct last_detection_t {
     std::vector<DetectionCommon> detections;
@@ -163,7 +164,7 @@ static void venc_output(k_u32 venc_ch) {
 
     printf("venc_output... started\n");
 
-    while (!isp_stop) {
+    while (running) {
         // datafifo
         k_u32 availWriteLen = 0;
         // call write NULL to flush
@@ -307,7 +308,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
     uint8_t *rgb_buffer = (uint8_t *) malloc( media->input_config()->sensor_width * media->input_config()->sensor_height * 3);
 
-    while (!isp_stop) {
+    while (running) {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
         k_video_frame_info dump_info;
         auto picture = media->isp_dump(dump_info);
@@ -414,38 +415,42 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 }
 
 void print_usage(const char *name) {
-    cout << "Usage: " << name << "<kmodel> <obj_thresh> <nms_thresh> <debug_mode> " << endl
+    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio> <detection_max_width>" << endl
             << "For example: " << endl
-            << " [for isp] ./pose_detect.elf yolov8n-pose.kmodel 0.5 0.45 0" << endl
+            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2 1920" << endl
             << "Options:" << endl
-            << " 1> kmodel    Pose detection kmodel file path \n"
-            << " 2> obj_thresh  Pose detection threshold\n"
-            << " 3> nms_thresh  NMS threshold\n"
-            << " 4> debug_mode      Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
+            << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
+            << " 2> image_input_mode     Image input mode\n"
+            << " 3> kmodel               Object detection kmodel file path\n"
+            << " 4> obj_thresh           Object detection threshold\n"
+            << " 5> nms_thresh           NMS threshold\n"
+            << " 6> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
+            << " 7> detection_max_width  Maximum width for detection (image will be resized if larger)\n"
             << "\n"
             << endl;
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 7) {
+    if (argc != 8) {
         print_usage(argv[0]);
         return -1;
     }
 
     int debug_mode = atoi(argv[1]);
-    char *fd_kmodel_path = argv[2];
-    float facedet_obj_thresh = atof(argv[3]);
-    float facedet_nms_thresh = atof(argv[4]);
-    float overlap_ratio = atof(argv[5]);
-    int detection_max_width = atoi(argv[6]);
+    int image_input_mode = atoi(argv[2]);
+    char *fd_kmodel_path = argv[3];
+    float facedet_obj_thresh = atof(argv[4]);
+    float facedet_nms_thresh = atof(argv[5]);
+    float overlap_ratio = atof(argv[6]);
+    int detection_max_width = atoi(argv[7]);
 
     // datafifo
     k_s32 ret = datafifo_init();
     if (0 != ret) {
         std::cout << "====== datafifo init failed ======";
     }
-
+/*
     k_s32 ipcmsg_handle;
     {
         k_ipcmsg_connect_t stConnectAtt{
@@ -467,23 +472,43 @@ int main(int argc, char *argv[]) {
     }
     std::thread ipcmsg_thread([ipcmsg_handle] {
         kd_ipcmsg_run(ipcmsg_handle);
-    });
+    });*/
 
-    MediaInputConfig config {
-        .sensor_width = 1920,
-        .sensor_height = 1080,
-        .bitrate_kbps = 4000
-    };
-    Media media(config);
-    media.init();
+    if (image_input_mode) {
+        image_decoder decoder;
 
-    std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
-                                       facedet_nms_thresh, overlap_ratio, detection_max_width);
+    }
+    else {
+        MediaInputConfig config {
+            .sensor_width = 1920,
+            .sensor_height = 1080,
+            .bitrate_kbps = 4000
+        };
+        Media media(config);
+        media.init();
 
-    std::thread venc_output_thread(venc_output, media.venc_get_channel());
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
+                                           facedet_nms_thresh, overlap_ratio, detection_max_width);
+
+        std::thread venc_output_thread(venc_output, media.venc_get_channel());
+
+
+        while (getchar() != 'q') {
+            usleep(10000);
+        }
+        running = false;
+
+        isp_ai_detector_thread.join();
+
+        //fifo_reader_thread.join();
+
+        venc_output_thread.join();
+    }
+
+
 
     // example of fifo reader
-    std::thread fifo_reader_thread([] {
+    /*std::thread fifo_reader_thread([] {
         // TODO: DATAFIFO_CMD_GET_AVAIL_READ_LEN does not blocking!
         while (!isp_stop) {
             k_u32 readLen = 0;
@@ -516,23 +541,11 @@ int main(int argc, char *argv[]) {
                 usleep(10000);
             }
         }
-    });
+    });*/
 
-    while (getchar() != 'q') {
-        usleep(10000);
-    }
-
-    isp_stop = true;
-    isp_ai_detector_thread.join();
-
-    fifo_reader_thread.join();
-
-    venc_output_thread.join();
-    CHECK_RET(ret, __func__, __LINE__);
-
-    kd_ipcmsg_disconnect(ipcmsg_handle);
+    /*kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
-    ipcmsg_thread.join();
+    ipcmsg_thread.join();*/
 
     // datafifo exit
     datafifo_deinit();
