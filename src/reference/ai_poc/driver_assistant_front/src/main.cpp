@@ -139,12 +139,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                 printf("read error:%x\n", s32Ret);
                 break;
             }
-            // TODO: Call it only when pBuf does not need anymore
-            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
-            if (K_SUCCESS != s32Ret) {
-                printf("read done error:%x\n", s32Ret);
-                break;
-            }
+            auto pBuf_ = pBuf;
 
             auto detections_count = ((uint16_t *) pBuf)[0];
             k_char *detections_buffer = pBuf;
@@ -208,6 +203,15 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                            det.x, det.y, det.w, det.h);
                 }
             }
+
+            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf_);
+            if (K_SUCCESS != s32Ret) {
+                printf("read done error:%x\n", s32Ret);
+                break;
+            }
+        }
+        else {
+            usleep(10000);
         }
     }
 
@@ -341,7 +345,7 @@ int main(int argc, char *argv[]) {
 
     // example of fifo writer
     k_char buf[DATAFIFO_BLOCK_LEN];
-    for (int o = 0; o < 10; ++o)
+    for (int o = 0; o < 0; ++o)
     {
         // call write NULL to flush
         k_s32 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
