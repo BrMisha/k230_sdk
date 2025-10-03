@@ -139,6 +139,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                 printf("read error:%x\n", s32Ret);
                 break;
             }
+            // TODO: Call it only when pBuf does not need anymore
             s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
             if (K_SUCCESS != s32Ret) {
                 printf("read done error:%x\n", s32Ret);
@@ -340,19 +341,16 @@ int main(int argc, char *argv[]) {
 
     // example of fifo writer
     {
-        int g_s32Index = 0;
         k_char buf[DATAFIFO_BLOCK_LEN];
-        k_s32 s32Ret = K_SUCCESS;
-
-        k_u32 availWriteLen = 0;
 
         // call write NULL to flush
-        s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+        k_s32 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
         if (K_SUCCESS != s32Ret)
         {
             printf("write error:%x\n", s32Ret);
         }
 
+        k_u32 availWriteLen = 0;
         s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
         if (K_SUCCESS != s32Ret)
         {
@@ -362,16 +360,23 @@ int main(int argc, char *argv[]) {
         else if (availWriteLen >= DATAFIFO_BLOCK_LEN)
         {
             printf("About to send...\n");
-            memset(buf, 0, DATAFIFO_BLOCK_LEN);
-            snprintf(buf, DATAFIFO_BLOCK_LEN, "==================================== %d ===================================", g_s32Index);
+            //memset(buf, 0, DATAFIFO_BLOCK_LEN);
+
+            FILE *file = fopen("pic_nv12_quarter.raw", "rb");
+            if (file == NULL)
+            {
+                printf("%s failed to open pic.jpg\n", __func__);
+            }
+            size_t bytes_read = fread(buf, 1, DATAFIFO_BLOCK_LEN, file);
+            fclose(file);
+
+
             s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
             if (K_SUCCESS != s32Ret)
             {
                 printf("write error:%x\n", s32Ret);
                 //break;
             }
-
-            printf("send: %s\n", buf);
 
             s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
             if (K_SUCCESS != s32Ret)
@@ -380,7 +385,22 @@ int main(int argc, char *argv[]) {
                 //break;
             }
 
-            g_s32Index++;
+
+            MSG_CMD_DETECT_RGB_struct   msg {
+                .width = 648,
+                .height = 486,
+            };
+            auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg, sizeof(MSG_CMD_DETECT_RGB_struct));
+            k_ipcmsg_message_t *responce = nullptr;
+            ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 60*1000);
+            if (ret != K_SUCCESS) {
+                printf("kd_ipcmsg_send_sync failed: %d\n", ret);
+            }
+            else if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
+                printf("MSG_CMD_DETECT_RGB success\n");
+            }
+            kd_ipcmsg_destroy_message(responce);
+            kd_ipcmsg_destroy_message(pReq);
         }
         else
         {

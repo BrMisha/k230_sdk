@@ -409,6 +409,68 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
             kd_ipcmsg_send_only(s32Id, pResp);
             kd_ipcmsg_destroy_message(pResp);
         } break;
+        case MSG_CMD_DETECT_RGB: {
+            k_ipcmsg_message_t  *pResp = nullptr;
+            if (msg->u32BodyLen != sizeof(MSG_CMD_DETECT_RGB_struct)) {
+                printf("MSG_CMD_DETECT_RGB. Wrong len of header: %lu\n", msg->u32BodyLen);
+                pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);
+            }
+            else {
+                ScopedTiming st("MSG_CMD_DETECT_RGB", 1);
+                auto d = reinterpret_cast<MSG_CMD_DETECT_RGB_struct*>(msg->pBody);
+
+                k_u32 readLen = 0;
+                k_s32 s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
+                if (K_SUCCESS != s32Ret) {
+                    printf("fifo_reader_thread get available read len error:%x\n", s32Ret);
+                    break;
+                }
+
+                if (readLen > 0) {
+                    uint8_t* pBuf;
+                    s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], (void**)&pBuf);
+                    if (K_SUCCESS != s32Ret) {
+                        printf("kd_datafifo_read read error: %x\n", s32Ret);
+                        break;
+                    }
+
+                    static void *rgb_buffer = nullptr;
+                    if (rgb_buffer == nullptr) {
+                        rgb_buffer = malloc(2592 * 2048 * 3);
+                    }
+
+                    FILE *dump_file = fopen("dump", "wb");
+                    if (dump_file != NULL)
+                    {
+                        fwrite(pBuf, 1, static_cast<size_t>(d->height) * static_cast<size_t>(d->width) * 3 / 2, dump_file);
+                        fclose(dump_file);
+                    }
+
+                    cv::Mat rgb_frame = Utils::nv12ToRGBHWC(pBuf, d->width, d->height, reinterpret_cast<uint8_t*>(rgb_buffer));
+                    cv::imwrite("res.jpeg", rgb_frame);
+
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);////////
+
+
+
+                    s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
+                    if (K_SUCCESS != s32Ret) {
+                        printf("fifo_reader_thread read done error:%x\n", s32Ret);
+                        break;
+                    }
+                }
+                else {
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);
+                }
+
+            }
+
+            if (pResp) {
+                printf("Send responce\n");
+                kd_ipcmsg_send_only(s32Id, pResp);
+                kd_ipcmsg_destroy_message(pResp);
+            }
+        } break;
         default:
             break;
     }
@@ -450,7 +512,7 @@ int main(int argc, char *argv[]) {
     if (0 != ret) {
         std::cout << "====== datafifo init failed ======";
     }
-/*
+
     k_s32 ipcmsg_handle;
     {
         k_ipcmsg_connect_t stConnectAtt{
@@ -472,10 +534,13 @@ int main(int argc, char *argv[]) {
     }
     std::thread ipcmsg_thread([ipcmsg_handle] {
         kd_ipcmsg_run(ipcmsg_handle);
-    });*/
+    });
 
     if (image_input_mode) {
-
+        while (getchar() != 'q') {
+            usleep(10000);
+        }
+        running = false;
     }
     else {
         MediaInputConfig config {
@@ -542,9 +607,9 @@ int main(int argc, char *argv[]) {
         }
     });*/
 
-    /*kd_ipcmsg_disconnect(ipcmsg_handle);
+    kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
-    ipcmsg_thread.join();*/
+    ipcmsg_thread.join();
 
     // datafifo exit
     datafifo_deinit();
