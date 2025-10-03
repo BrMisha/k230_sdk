@@ -75,6 +75,10 @@ struct last_detection_t {
 std::mutex last_detections_mutex;
 std::queue<last_detection_t> last_detections;
 
+float overlap_ratio = 0;
+std::mutex obDet_mutex;
+OBDet *obDet;
+
 //****************function***********************************
 
 static inline void CHECK_RET(k_s32 ret, const char *func, const int line) {
@@ -299,9 +303,6 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                      float overlap_ratio, int detection_max_width) {
     int ret;
 
-    OBDet obDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
-    SAHI sahi(&obDet, cv::Size(320, 320), overlap_ratio);
-
     k_u64 time_pts = 0;
 
     printf("start loop\n");
@@ -347,6 +348,8 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
         {
             ScopedTiming st("SAHI detection", 1);
+            std::lock_guard<std::mutex> lock(obDet_mutex);
+            SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
             results = detect(sahi, rgb_frame, detection_max_width);
         }
 
@@ -410,14 +413,15 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
             kd_ipcmsg_destroy_message(pResp);
         } break;
         case MSG_CMD_DETECT_RGB: {
+            ScopedTiming st("MSG_CMD_DETECT_RGB", 1);
+
             k_ipcmsg_message_t  *pResp = nullptr;
             if (msg->u32BodyLen != sizeof(MSG_CMD_DETECT_RGB_struct)) {
                 printf("MSG_CMD_DETECT_RGB. Wrong len of header: %lu\n", msg->u32BodyLen);
-                pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);
+                pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, nullptr, 0);
             }
             else {
-                ScopedTiming st("MSG_CMD_DETECT_RGB", 1);
-                auto d = reinterpret_cast<MSG_CMD_DETECT_RGB_struct*>(msg->pBody);
+                auto data = reinterpret_cast<MSG_CMD_DETECT_RGB_struct*>(msg->pBody);
 
                 k_u32 readLen = 0;
                 k_s32 s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
@@ -439,28 +443,38 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         rgb_buffer = malloc(2592 * 2048 * 3);
                     }
 
-                    FILE *dump_file = fopen("dump", "wb");
-                    if (dump_file != NULL)
-                    {
-                        fwrite(pBuf, 1, static_cast<size_t>(d->height) * static_cast<size_t>(d->width) * 3 / 2, dump_file);
-                        fclose(dump_file);
-                    }
-
-                    cv::Mat rgb_frame = Utils::nv12ToRGBHWC(pBuf, d->width, d->height, reinterpret_cast<uint8_t*>(rgb_buffer));
-                    cv::imwrite("res.jpeg", rgb_frame);
-
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);////////
-
-
+                    cv::Mat rgb_frame = Utils::nv12ToRGBHWC(pBuf, data->width, data->height, reinterpret_cast<uint8_t*>(rgb_buffer));
 
                     s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
                     if (K_SUCCESS != s32Ret) {
                         printf("fifo_reader_thread read done error:%x\n", s32Ret);
                         break;
                     }
+
+                    std::lock_guard<std::mutex> lock(obDet_mutex);
+                    SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
+                    auto results = detect(sahi, rgb_frame, 5000);
+
+                    for (size_t i = 0; i < results.size(); ++i) {
+                        auto d = Detection::from_normalized(results[i], data->width, data->height);
+
+                        DetectionCommon dc;
+                        memset(&dc, 0, sizeof(DetectionCommon));
+                        dc.class_id = d.class_id;
+                        dc.confidence = d.confidence;
+
+                        dc.x = static_cast<uint16_t>(d.box.x);
+                        dc.y = static_cast<uint16_t>(d.box.y);
+                        dc.w = static_cast<uint16_t>(d.box.width);
+                        dc.h = static_cast<uint16_t>(d.box.height);
+
+                        memcpy(rgb_buffer + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
+                    }
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, results.size() * sizeof(DetectionCommon));
+
                 }
                 else {
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, 0, 0);
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_FAILED, nullptr, 0);
                 }
 
             }
@@ -504,8 +518,10 @@ int main(int argc, char *argv[]) {
     char *fd_kmodel_path = argv[3];
     float facedet_obj_thresh = atof(argv[4]);
     float facedet_nms_thresh = atof(argv[5]);
-    float overlap_ratio = atof(argv[6]);
+    overlap_ratio = atof(argv[6]);
     int detection_max_width = atoi(argv[7]);
+
+    obDet = new OBDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
 
     // datafifo
     k_s32 ret = datafifo_init();

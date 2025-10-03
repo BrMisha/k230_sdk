@@ -340,9 +340,9 @@ int main(int argc, char *argv[]) {
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
     // example of fifo writer
+    k_char buf[DATAFIFO_BLOCK_LEN];
+    for (int o = 0; o < 10; ++o)
     {
-        k_char buf[DATAFIFO_BLOCK_LEN];
-
         // call write NULL to flush
         k_s32 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
         if (K_SUCCESS != s32Ret)
@@ -385,19 +385,18 @@ int main(int argc, char *argv[]) {
                 //break;
             }
 
-
             MSG_CMD_DETECT_RGB_struct   msg {
                 .width = 648,
                 .height = 486,
             };
             auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg, sizeof(MSG_CMD_DETECT_RGB_struct));
             k_ipcmsg_message_t *responce = nullptr;
-            ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 60*1000);
+            ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
             if (ret != K_SUCCESS) {
                 printf("kd_ipcmsg_send_sync failed: %d\n", ret);
             }
             else if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                printf("MSG_CMD_DETECT_RGB success\n");
+                printf("MSG_CMD_DETECT_RGB success, %lu\n", responce->u32BodyLen);
             }
             kd_ipcmsg_destroy_message(responce);
             kd_ipcmsg_destroy_message(pReq);
