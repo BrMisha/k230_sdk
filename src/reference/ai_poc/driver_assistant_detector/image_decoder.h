@@ -22,6 +22,7 @@ class image_decoder {
     ~image_decoder();
 
     void push_data(const uint8_t* data, size_t data_size);
+    bool get_frame();
 
 private:
     k_s32 init_vb();

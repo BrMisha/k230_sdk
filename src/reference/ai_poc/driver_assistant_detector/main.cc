@@ -475,7 +475,6 @@ int main(int argc, char *argv[]) {
     });*/
 
     if (image_input_mode) {
-        image_decoder decoder;
 
     }
     else {
