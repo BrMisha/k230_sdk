@@ -22,11 +22,12 @@
 
 // datafifo
 #define READER_INDEX    0
-std::atomic<bool> send_stop(false);
-static const k_s32 BLOCK_LEN = 1024000;
+#define WRITER_INDEX    1
 static k_datafifo_handle hDataFifo[2] = {
     (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE
 };
+
+std::atomic<bool> send_stop(false);
 
 using namespace std::chrono_literals;
 
@@ -41,13 +42,27 @@ static void release(void *pStream) {
     printf("release %p\n", pStream);
 }
 
-int datafifo_init(k_u64 reader_phyAddr) {
+int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
     k_s32 s32Ret = K_SUCCESS;
-    k_datafifo_params_s params_reader = {10, BLOCK_LEN, K_TRUE, DATAFIFO_READER};
-
+    k_datafifo_params_s params_reader = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
     s32Ret = kd_datafifo_open_by_addr(&hDataFifo[READER_INDEX], &params_reader, reader_phyAddr);
     if (K_SUCCESS != s32Ret) {
         printf("open datafifo error:%x\n", s32Ret);
+        return -1;
+    }
+
+    k_datafifo_params_s params_writer = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
+    s32Ret = kd_datafifo_open_by_addr(&hDataFifo[WRITER_INDEX], &params_writer, writer_phyAddr);
+    if (K_SUCCESS != s32Ret)
+    {
+        printf("open datafifo error:%x\n", s32Ret);
+        return -1;
+    }
+
+    s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, (void *) release);
+    if (K_SUCCESS != s32Ret)
+    {
+        printf("set release func callback error:%x\n", s32Ret);
         return -1;
     }
 
@@ -58,11 +73,16 @@ int datafifo_init(k_u64 reader_phyAddr) {
 
 void datafifo_deinit() {
     k_s32 s32Ret = K_SUCCESS;
-    if (K_SUCCESS != s32Ret) {
+    // call write NULL to flush and release stream buffer.
+    s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+    if (K_SUCCESS != s32Ret)
+    {
         printf("write error:%x\n", s32Ret);
     }
 
     kd_datafifo_close(hDataFifo[READER_INDEX]);
+    kd_datafifo_close(hDataFifo[WRITER_INDEX]);
+
     printf("datafifo_deinit finish\n");
 }
 
@@ -119,11 +139,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                 printf("read error:%x\n", s32Ret);
                 break;
             }
-            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
-            if (K_SUCCESS != s32Ret) {
-                printf("read done error:%x\n", s32Ret);
-                break;
-            }
+            auto pBuf_ = pBuf;
 
             auto detections_count = ((uint16_t *) pBuf)[0];
             k_char *detections_buffer = pBuf;
@@ -187,6 +203,15 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                            det.x, det.y, det.w, det.h);
                 }
             }
+
+            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf_);
+            if (K_SUCCESS != s32Ret) {
+                printf("read done error:%x\n", s32Ret);
+                break;
+            }
+        }
+        else {
+            usleep(10000);
         }
     }
 
@@ -230,6 +255,110 @@ void udp_receiver(asio::ip::udp::socket *socket) {
     printf("udp_receiver finished\n");
 }
 
+void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
+    acceptor->async_accept([acceptor, ipcmsg_handle](asio::error_code ec, asio::ip::tcp::socket peer) {
+        if (!ec) {
+            // Handle client in separate thread
+            std::thread([peer = std::move(peer), ipcmsg_handle]() mutable {
+                printf("Client connected\n");
+
+                static k_char *buf = nullptr;
+                if (buf == nullptr) {
+                    buf = static_cast<k_char *>(malloc(DATAFIFO_BLOCK_LEN));
+                }
+                size_t buff_len = 0;
+
+                asio::error_code ec;
+                while (!ec) {
+                    size_t len = peer.read_some(asio::buffer(buf + buff_len, DATAFIFO_BLOCK_LEN - buff_len), ec);
+
+                    if (!ec && len > 0) {
+                        buff_len += len;
+                        printf("Received %zu bytes\n", buff_len);
+
+                        if (buff_len >= DATAFIFO_BLOCK_LEN) {
+                            std::cerr << "!!!!!Buffer overload!!!!!!" << std::endl;
+                            break;
+                        }
+
+                        // TODO: reg from incoming data
+                        MSG_CMD_DETECT_RGB_struct msg {
+                            .width = 648,
+                            .height = 486,
+                        };
+                        const size_t image_data_len = (static_cast<size_t>(msg.width) * static_cast<size_t>(msg.height) * 3) / 2;
+
+                        if (image_data_len == buff_len) {
+                            printf("Image data received\n");
+                            buff_len = 0;
+
+                            // call write NULL to flush
+                            k_s32 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+                            if (K_SUCCESS != ret) {
+                                printf("kd_datafifo_write error:%x\n", ret);
+                                break;
+                            }
+
+                            k_u32 datafifo_avail_write_len = 0;
+                            ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN,
+                                                     &datafifo_avail_write_len);
+                            if (K_SUCCESS != ret) {
+                                printf("get available write len error:%x\n", ret);
+                                break;
+                            }
+                            if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN) {
+                                printf("About to send...\n");
+
+                                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+                                if (K_SUCCESS != ret) {
+                                    printf("kd_datafifo_write error:%x\n", ret);
+                                    break;
+                                }
+
+                                ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+                                if (K_SUCCESS != ret) {
+                                    printf("DATAFIFO_CMD_WRITE_DONE error:%x\n", ret);
+                                    break;
+                                }
+
+                                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg,
+                                                                     sizeof(MSG_CMD_DETECT_RGB_struct));
+                                k_ipcmsg_message_t *responce = nullptr;
+                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
+                                if (ret != K_SUCCESS) {
+                                    printf("kd_ipcmsg_send_sync failed: %d\n", ret);
+                                    break;
+                                }
+                                if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
+                                    uint16_t count = responce->u32BodyLen / sizeof(DetectionCommon);
+                                    printf("MSG_CMD_DETECT_RGB success, %d\n", count);
+
+                                    peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
+                                    peer.write_some(asio::buffer(responce->pBody, responce->u32BodyLen));
+                                    peer.wait(asio::ip::tcp::socket::wait_write);
+
+                                    asio::error_code shutdown_ec;
+                                    peer.shutdown(asio::ip::tcp::socket::shutdown_both, shutdown_ec);
+                                    peer.close();
+                                }
+                                kd_ipcmsg_destroy_message(responce);
+                                kd_ipcmsg_destroy_message(pReq);
+                            } else {
+                                printf("no free space: %d\n", datafifo_avail_write_len);
+                            }
+                        }
+                    }
+                }
+
+                printf("Client disconnected\n");
+            }).detach();
+        }
+
+        // Accept next connection (RECURSIVE CALL)
+        tcp_server_accept(acceptor, ipcmsg_handle);
+    });
+}
+
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
     printf("ipcmsg_recv %lu\n", msg->u32CMD);
@@ -243,7 +372,7 @@ int main(int argc, char *argv[]) {
     bool daemon_mode;
     int ret = parse_config(argc, argv, bb_path, daemon_mode);
 
-    k_u64 datafifo_phy_addr = 0;
+    k_u64 datafifo_phy_addr[2] = {0,0};
 
     k_ipcmsg_connect_t stConnectAtt {
         .u32RemoteId = 1,
@@ -274,12 +403,15 @@ int main(int argc, char *argv[]) {
         printf("kd_ipcmsg_send_sync failed: %d\n", ret);
     }
     else if (responce->u32CMD == MSG_CMD_GET_PHY_ADDRESS && responce->s32RetVal == K_SUCCESS && responce->u32BodyLen == sizeof(datafifo_phy_addr)) {
-        datafifo_phy_addr = *reinterpret_cast<k_u64*>(responce->pBody);
+        auto p = reinterpret_cast<k_u64*>(responce->pBody);
+        datafifo_phy_addr[WRITER_INDEX] = p[0];
+        datafifo_phy_addr[READER_INDEX] = p[1];
     }
     kd_ipcmsg_destroy_message(responce);
     kd_ipcmsg_destroy_message(pReq);
 
-    if (datafifo_phy_addr == 0) {
+    printf("datafifo WRITER_INDEX = %lx, READER_INDEX = %lx\n", datafifo_phy_addr[WRITER_INDEX], datafifo_phy_addr[READER_INDEX]);
+    if (datafifo_phy_addr[WRITER_INDEX] == 0 || datafifo_phy_addr[READER_INDEX] == 0) {
         printf("datafifo_phy_addr not received!\n");
         kd_ipcmsg_disconnect(ipcmsg_handle);
         return -1;
@@ -313,11 +445,86 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    ret = datafifo_init(datafifo_phy_addr);
+    ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
+
+    // example of fifo writer
+    k_char buf[DATAFIFO_BLOCK_LEN];
+    for (int o = 0; o < 0; ++o)
+    {
+        // call write NULL to flush
+        k_s32 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+        if (K_SUCCESS != s32Ret)
+        {
+            printf("write error:%x\n", s32Ret);
+        }
+
+        k_u32 datafifo_avail_write_len = 0;
+        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &datafifo_avail_write_len);
+        if (K_SUCCESS != s32Ret)
+        {
+            printf("get available write len error:%x\n", s32Ret);
+            //break;
+        }
+        else if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN)
+        {
+            printf("About to send...\n");
+            //memset(buf, 0, DATAFIFO_BLOCK_LEN);
+
+            FILE *file = fopen("pic_nv12_quarter.raw", "rb");
+            if (file == NULL)
+            {
+                printf("%s failed to open pic.jpg\n", __func__);
+            }
+            size_t bytes_read = fread(buf, 1, DATAFIFO_BLOCK_LEN, file);
+            fclose(file);
+
+
+            s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+            if (K_SUCCESS != s32Ret)
+            {
+                printf("write error:%x\n", s32Ret);
+                //break;
+            }
+
+            s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+            if (K_SUCCESS != s32Ret)
+            {
+                printf("write done error:%x\n", s32Ret);
+                //break;
+            }
+
+            MSG_CMD_DETECT_RGB_struct   msg {
+                .width = 648,
+                .height = 486,
+            };
+            auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg, sizeof(MSG_CMD_DETECT_RGB_struct));
+            k_ipcmsg_message_t *responce = nullptr;
+            ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
+            if (ret != K_SUCCESS) {
+                printf("kd_ipcmsg_send_sync failed: %d\n", ret);
+            }
+            else if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
+                printf("MSG_CMD_DETECT_RGB success, %lu\n", responce->u32BodyLen);
+            }
+            kd_ipcmsg_destroy_message(responce);
+            kd_ipcmsg_destroy_message(pReq);
+        }
+        else
+        {
+            printf("no free space: %d\n", datafifo_avail_write_len);
+        }
+    }
 
     asio::io_context io_context;
+    // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
+    // TCP Server
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
+    tcp_server_accept(&acceptor, ipcmsg_handle);
+    std::thread io_context_thread([&io_context]() {
+        io_context.run();
+    });
 
     std::thread read_fifo_thread(read_fifo, &socket);
 
@@ -333,9 +540,10 @@ int main(int argc, char *argv[]) {
     read_fifo_thread.join();
 
     socket.close();
+    acceptor.close();
+    // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
 
-    // datafifo反初始化
     datafifo_deinit();
 
     fclose(output_file_video);

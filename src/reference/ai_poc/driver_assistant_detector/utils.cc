@@ -504,3 +504,10 @@ Detection Detection::from_normalized(const DetectionNormalized &n, int width, in
 
     return detection;
 }
+
+cv::Mat Utils::nv12ToRGBHWC(const uint8_t *nv12Data, int width, int height, uint8_t *rgbChwData) {
+    cv::Mat nv12Mat(height + height / 2, width, CV_8UC1, const_cast<uint8_t *>(nv12Data));
+    cv::Mat rgbMat(height, width, CV_8UC3, rgbChwData);
+    cv::cvtColor(nv12Mat, rgbMat, cv::COLOR_YUV2BGR_NV12);
+    return rgbMat;
+}

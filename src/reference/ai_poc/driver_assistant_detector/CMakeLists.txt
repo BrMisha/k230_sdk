@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-set(src main.cc utils.cc ai_base.cc ob_det.cc sahi.cpp)
+set(src main.cc utils.cc ai_base.cc ob_det.cc sahi.cpp media.cpp image_decoder.cpp)
 set(bin driver_assistant_detector.elf)
 
 include_directories(${PROJECT_SOURCE_DIR})

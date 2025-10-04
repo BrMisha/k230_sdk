@@ -37,14 +37,6 @@
 #include <opencv2/dnn.hpp>
 #include <nncase/functional/ai2d/ai2d_builder.h>
 
-#include <cmath>
-#include <stdio.h>
-#include <stdlib.h>
-#include<sys/types.h>
-#include<sys/stat.h>
-#include<fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 #include <stdint.h>
 
 #include <string>
@@ -455,6 +447,16 @@ public:
      * @return None
      */
     static void chw_rgb2bgr(const FrameSize &frame_size, unsigned char *data, std::vector<uint8_t> &chw_bgr_vec);
+
+    /**
+     * @brief 将NV12格式转换为RGB格式
+     * @param nv12Data             NV12格式输入数据
+     * @param width                图像宽度
+     * @param height               图像高度
+     * @param rgbChwData           RGB格式输出数据缓冲区
+     * @return cv::Mat             转换后的RGB图像
+     */
+    static cv::Mat nv12ToRGBHWC(const uint8_t *nv12Data, int width, int height, uint8_t *rgbChwData);
 };
 
 #endif
