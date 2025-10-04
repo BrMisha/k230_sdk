@@ -255,6 +255,100 @@ void udp_receiver(asio::ip::udp::socket *socket) {
     printf("udp_receiver finished\n");
 }
 
+void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
+    acceptor->async_accept([acceptor, ipcmsg_handle](asio::error_code ec, asio::ip::tcp::socket peer) {
+        if (!ec) {
+            // Handle client in separate thread
+            std::thread([peer = std::move(peer), ipcmsg_handle]() mutable {
+                printf("Client connected\n");
+
+                static k_char *buf = nullptr;
+                if (buf == nullptr) {
+                    buf = static_cast<k_char *>(malloc(DATAFIFO_BLOCK_LEN));
+                }
+                size_t buff_len = 0;
+
+                asio::error_code ec;
+                while (!ec) {
+                    size_t len = peer.read_some(asio::buffer(buf + buff_len, DATAFIFO_BLOCK_LEN - buff_len), ec);
+
+                    if (!ec && len > 0) {
+                        buff_len += len;
+                        printf("Received %zu bytes\n", buff_len);
+
+                        if (buff_len >= DATAFIFO_BLOCK_LEN) {
+                            std::cerr << "!!!!!Buffer overload!!!!!!" << std::endl;
+                            break;
+                        }
+
+                        MSG_CMD_DETECT_RGB_struct msg {
+                            .width = 648,
+                            .height = 486,
+                        };
+                        const size_t image_data_len = (static_cast<size_t>(msg.width) * static_cast<size_t>(msg.height) * 3) / 2;
+
+                        if (image_data_len == buff_len) {
+                            printf("Image data received\n");
+                            buff_len = 0;
+
+                            // call write NULL to flush
+                            k_s32 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+                            if (K_SUCCESS != ret) {
+                                printf("kd_datafifo_write error:%x\n", ret);
+                                break;
+                            }
+
+                            k_u32 datafifo_avail_write_len = 0;
+                            ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN,
+                                                     &datafifo_avail_write_len);
+                            if (K_SUCCESS != ret) {
+                                printf("get available write len error:%x\n", ret);
+                                break;
+                            }
+                            if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN) {
+                                printf("About to send...\n");
+
+                                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+                                if (K_SUCCESS != ret) {
+                                    printf("kd_datafifo_write error:%x\n", ret);
+                                    break;
+                                }
+
+                                ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+                                if (K_SUCCESS != ret) {
+                                    printf("DATAFIFO_CMD_WRITE_DONE error:%x\n", ret);
+                                    break;
+                                }
+
+                                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg,
+                                                                     sizeof(MSG_CMD_DETECT_RGB_struct));
+                                k_ipcmsg_message_t *responce = nullptr;
+                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
+                                if (ret != K_SUCCESS) {
+                                    printf("kd_ipcmsg_send_sync failed: %d\n", ret);
+                                    break;
+                                }
+                                if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
+                                    printf("MSG_CMD_DETECT_RGB success, %lu\n", responce->u32BodyLen);
+                                }
+                                kd_ipcmsg_destroy_message(responce);
+                                kd_ipcmsg_destroy_message(pReq);
+                            } else {
+                                printf("no free space: %d\n", datafifo_avail_write_len);
+                            }
+                        }
+                    }
+                }
+
+                printf("Client disconnected\n");
+            }).detach();
+        }
+
+        // Accept next connection (RECURSIVE CALL)
+        tcp_server_accept(acceptor, ipcmsg_handle);
+    });
+}
+
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
     printf("ipcmsg_recv %lu\n", msg->u32CMD);
@@ -354,14 +448,14 @@ int main(int argc, char *argv[]) {
             printf("write error:%x\n", s32Ret);
         }
 
-        k_u32 availWriteLen = 0;
-        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &availWriteLen);
+        k_u32 datafifo_avail_write_len = 0;
+        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &datafifo_avail_write_len);
         if (K_SUCCESS != s32Ret)
         {
             printf("get available write len error:%x\n", s32Ret);
             //break;
         }
-        else if (availWriteLen >= DATAFIFO_BLOCK_LEN)
+        else if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN)
         {
             printf("About to send...\n");
             //memset(buf, 0, DATAFIFO_BLOCK_LEN);
@@ -407,13 +501,20 @@ int main(int argc, char *argv[]) {
         }
         else
         {
-            printf("no free space: %d\n", availWriteLen);
+            printf("no free space: %d\n", datafifo_avail_write_len);
         }
     }
 
     asio::io_context io_context;
+    // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
+    // TCP Server
+    asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
+    tcp_server_accept(&acceptor, ipcmsg_handle);
+    std::thread io_context_thread([&io_context]() {
+        io_context.run();
+    });
 
     std::thread read_fifo_thread(read_fifo, &socket);
 
@@ -429,7 +530,9 @@ int main(int argc, char *argv[]) {
     read_fifo_thread.join();
 
     socket.close();
+    //acceptor.close();
     udp_receiver_thread.join();
+    //tcp_server_thread.join();
 
     // datafifo反初始化
     datafifo_deinit();
