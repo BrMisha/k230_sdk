@@ -281,6 +281,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                             break;
                         }
 
+                        // TODO: reg from incoming data
                         MSG_CMD_DETECT_RGB_struct msg {
                             .width = 648,
                             .height = 486,
@@ -329,7 +330,16 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    printf("MSG_CMD_DETECT_RGB success, %lu\n", responce->u32BodyLen);
+                                    uint16_t count = responce->u32BodyLen / sizeof(DetectionCommon);
+                                    printf("MSG_CMD_DETECT_RGB success, %d\n", count);
+
+                                    peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
+                                    peer.write_some(asio::buffer(responce->pBody, responce->u32BodyLen));
+                                    peer.wait(asio::ip::tcp::socket::wait_write);
+
+                                    asio::error_code shutdown_ec;
+                                    peer.shutdown(asio::ip::tcp::socket::shutdown_both, shutdown_ec);
+                                    peer.close();
                                 }
                                 kd_ipcmsg_destroy_message(responce);
                                 kd_ipcmsg_destroy_message(pReq);
@@ -530,11 +540,10 @@ int main(int argc, char *argv[]) {
     read_fifo_thread.join();
 
     socket.close();
-    //acceptor.close();
+    acceptor.close();
+    // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
-    //tcp_server_thread.join();
 
-    // datafifo反初始化
     datafifo_deinit();
 
     fclose(output_file_video);
