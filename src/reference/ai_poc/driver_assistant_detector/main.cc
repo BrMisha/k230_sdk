@@ -23,6 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <condition_variable>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -301,28 +302,68 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int dete
 
 void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
                      float overlap_ratio, int detection_max_width) {
-    int ret;
+
+    struct Buffer {
+        uint8_t *rgb;
+        //uint8_t *argb;
+        k_u32   width{};
+        k_u32   height{};
+        std::mutex mutex;
+        std::condition_variable cv;
+
+        Buffer(size_t _width, size_t _height) {
+            width = _width;
+            height = _height;
+
+            rgb = static_cast<uint8_t *>(malloc(width * height * 3));
+        }
+        ~Buffer() {
+            free(rgb);
+        }
+    };
 
     k_u64 time_pts = 0;
 
     printf("start loop\n");
 
-    uint8_t *rgb_buffer = (uint8_t *) malloc( media->input_config()->sensor_width * media->input_config()->sensor_height * 3);
+    Buffer buffer = Buffer(media->input_config()->sensor_width, media->input_config()->sensor_height);
+
+    std::thread camera_receiver_thread([&]() {
+        while (running) {
+            k_video_frame_info dump_info;
+            int ret;
+            auto picture = media->isp_dump(dump_info);
+            if (!picture) {
+                printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
+                break;
+            }
+
+            auto vbvaddr = picture.value()->vbvaddr();
+
+            std::unique_lock<std::mutex> lock(buffer.mutex, std::try_to_lock);
+            // if unable to lock, this frame will droped (we need only last frame for minimal latency)
+            if (lock.owns_lock()) {
+                buffer.width = dump_info.v_frame.width;
+                buffer.height = dump_info.v_frame.height;
+
+                // convert to rgb and save to buffer.rgb
+                Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
+                    media->input_config()->sensor_width, media->input_config()->sensor_height, buffer.rgb);
+
+                buffer.cv.notify_one();
+            }
+        }
+
+        buffer.cv.notify_one();
+    });
 
     while (running) {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
-        k_video_frame_info dump_info;
-        auto picture = media->isp_dump(dump_info);
-        if (!picture) {
-            printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
-            break;
-        }
 
-        auto vbvaddr = picture.value()->vbvaddr();
-
-        std::vector<DetectionNormalized> results;
-
-        cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr, media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+        std::unique_lock<std::mutex> lock(buffer.mutex);
+        buffer.cv.wait(lock);
+        cv::Mat rgb_frame(buffer.height, buffer.width, CV_8UC3, buffer.rgb);
+        if (buffer.width == 0 || buffer.height == 0) continue;
 
         // Copy to encoder because the rgb_frame may resized on next step
         {
@@ -346,6 +387,12 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             }
         }
 
+
+
+        //cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr, media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+
+        std::vector<DetectionNormalized> results;
+
         {
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
@@ -358,7 +405,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto &det = results[i];
-                auto d = Detection::from_normalized(det, dump_info.v_frame.width, dump_info.v_frame.height);
+                auto d = Detection::from_normalized(det, buffer.width, buffer.height);
                 std::cout << "Object " << (i + 1) << ": "
                         << detect_classes[d.class_id] << " (ID:" << d.class_id << ") "
                         << "confidence=" << d.confidence << " "
@@ -379,7 +426,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                 ld.pts = time_pts;
 
                 for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, dump_info.v_frame.width, dump_info.v_frame.height);
+                    auto d = Detection::from_normalized(*it, buffer.width, buffer.height);
 
                     DetectionCommon dc;
                     memset(&dc, 0, sizeof(DetectionCommon));
@@ -402,6 +449,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
         }
     }
 
+    camera_receiver_thread.join();
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {

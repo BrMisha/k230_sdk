@@ -298,7 +298,7 @@ k_s32 Media::vivcap_start()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_YVU_PLANAR_420;
-    chn_attr.buffer_num = 5 - 1;//at least 3 buffers for isp
+    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2, VICAP_ALIGN_1K);
 
@@ -321,7 +321,7 @@ k_s32 Media::vivcap_start()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_BGR_888_PLANAR;
-    chn_attr.buffer_num = 5;//at least 3 buffers for isp
+    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[1].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_height * _input_config.sensor_width * 3 ), VICAP_ALIGN_1K);
 
