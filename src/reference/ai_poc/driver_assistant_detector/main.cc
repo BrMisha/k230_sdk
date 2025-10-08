@@ -502,6 +502,8 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     std::lock_guard<std::mutex> lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
                     auto results = detect(sahi, rgb_frame, 5000);
+                    printf("Detected count: %lu\n", results.size());
+                    static_cast<uint8_t*>(rgb_buffer)[0] = static_cast<uint8_t>(results.size());
 
                     for (size_t i = 0; i < results.size(); ++i) {
                         auto d = Detection::from_normalized(results[i], data->width, data->height);
@@ -516,9 +518,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         dc.w = static_cast<uint16_t>(d.box.width);
                         dc.h = static_cast<uint16_t>(d.box.height);
 
-                        memcpy(rgb_buffer + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
+                        memcpy(rgb_buffer + sizeof(uint8_t) + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
                     }
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, results.size() * sizeof(DetectionCommon));
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, sizeof(uint8_t) + results.size() * sizeof(DetectionCommon));
 
                 }
                 else {
