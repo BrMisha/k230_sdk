@@ -30,6 +30,9 @@
 #include <string.h>
 #include <thread>
 #include <sys/types.h>
+#include <fcntl.h>
+#include <future>
+#include <sys/ioctl.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <mutex>
@@ -57,6 +60,20 @@
 
 #include "common.h"
 
+// GPIO userspace definitions (from sample_gpio.c)
+#define GPIO_DM_OUTPUT           _IOW('G', 0, int)
+#define GPIO_DM_INPUT            _IOW('G', 1, int)
+#define GPIO_DM_INPUT_PULL_UP    _IOW('G', 2, int)
+#define GPIO_DM_INPUT_PULL_DOWN  _IOW('G', 3, int)
+#define GPIO_WRITE_LOW           _IOW('G', 4, int)
+#define GPIO_WRITE_HIGH          _IOW('G', 5, int)
+#define LED_PIN_NUM 52
+
+typedef struct {
+    unsigned short pin;     /* pin number, from 0 to 63 */
+    unsigned short mode;    /* pin level status, 0 low level, 1 high level */
+} pin_mode_t;
+
 // datafifo
 #define READER_INDEX    0
 #define WRITER_INDEX    1
@@ -79,6 +96,8 @@ std::queue<last_detection_t> last_detections;
 float overlap_ratio = 0;
 std::mutex obDet_mutex;
 OBDet *obDet;
+
+int gpio_led_fd = 0;
 
 //****************function***********************************
 
@@ -535,6 +554,16 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                 kd_ipcmsg_destroy_message(pResp);
             }
         } break;
+        case MSG_CMD_LED_SET: {
+            if (msg->u32BodyLen == sizeof(uint8_t)) {
+                auto state = *static_cast<uint8_t *>(msg->pBody);
+
+                pin_mode_t mode;
+                mode.pin = LED_PIN_NUM;
+                ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
+                ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
+            }
+        } break;
         default:
             break;
     }
@@ -570,6 +599,12 @@ int main(int argc, char *argv[]) {
     float facedet_nms_thresh = atof(argv[5]);
     overlap_ratio = atof(argv[6]);
     int detection_max_width = atoi(argv[7]);
+
+    gpio_led_fd = open("/dev/gpio", O_RDWR);
+    pin_mode_t mode;
+    mode.pin = LED_PIN_NUM;
+    ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
+    ioctl(gpio_led_fd, GPIO_WRITE_LOW, &mode);
 
     obDet = new OBDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
 

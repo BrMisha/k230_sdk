@@ -23,6 +23,7 @@ typedef enum
 {
     MSG_CMD_GET_PHY_ADDRESS=11,
     MSG_CMD_DETECT_RGB,
+    MSG_CMD_LED_SET,
 } ipc_msg_cmd_t;
 
 struct MSG_CMD_DETECT_RGB_struct {

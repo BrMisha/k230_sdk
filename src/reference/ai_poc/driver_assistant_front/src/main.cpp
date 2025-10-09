@@ -17,7 +17,6 @@
 
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
-#include "../../../../common/cdk/user/component/ipcmsg/include/k_ipcmsg.h"
 #include "../../driver_assistant_detector/common.h"
 
 // datafifo
@@ -120,10 +119,11 @@ int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
     k_u32 readLen = 0;
     k_char *pBuf;
     k_s32 s32Ret = K_SUCCESS;
+    int counter = 0;
 
     while (!send_stop) {
         readLen = 0;
@@ -169,11 +169,32 @@ void read_fifo(asio::ip::udp::socket *udp_socket) {
                     }
                     fprintf(output_file_detections, "\n");
                 }
+            }
 
-                fflush(output_file_video);
-                fflush(output_file_detections);
-                fsync(fileno(output_file_video));
-                fsync(fileno(output_file_detections));
+            if (counter++ > 10) {
+                counter = 0;
+
+                if (output_file_video && output_file_detections) {
+                    fflush(output_file_video);
+                    fflush(output_file_detections);
+                    fsync(fileno(output_file_video));
+                    fsync(fileno(output_file_detections));
+                }
+
+                // TODO: MEMORY LEAK!!!
+                /*std::thread([ipcmsg_handle]() {
+                    uint8_t state = 1;
+                    auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
+                    auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
+                    kd_ipcmsg_destroy_message(pReq);
+
+                    usleep(200000);
+
+                    state = 0;
+                    pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
+                    ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
+                    kd_ipcmsg_destroy_message(pReq);
+                }).detach();*/
             }
 
             {
@@ -336,7 +357,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                         printf("MSG_CMD_DETECT_RGB success, %d\n", count);
 
                                         peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
-                                        peer.write_some(asio::buffer(responce->pBody + 1, responce->u32BodyLen-1));
+                                        peer.write_some(asio::buffer( static_cast<uint8_t*>(responce->pBody) + 1, responce->u32BodyLen-1));
                                         peer.wait(asio::ip::tcp::socket::wait_write);
                                     }
 
@@ -529,7 +550,7 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
