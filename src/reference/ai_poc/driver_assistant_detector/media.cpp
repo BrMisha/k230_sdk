@@ -237,9 +237,39 @@ k_s32 Media::vivcap_start()
     dev_attr.mode = VICAP_WORK_ONLINE_MODE; /* Online mode, raw data from sensor does not need memory buffering */
     //dev_attr.mode = VICAP_WORK_OFFLINE_MODE;
 
-    dev_attr.pipe_ctrl.data = 0xFFFFFFFF;
-    dev_attr.pipe_ctrl.bits.af_enable = 0; /* No AF function */
-    dev_attr.pipe_ctrl.bits.ahdr_enable = 0; /* Not HDR */
+    // Optimized for traffic light detection: maximize contrast and detail
+    dev_attr.pipe_ctrl.data = 0x00000000;  // Start with all disabled
+
+    // ESSENTIAL - Basic image formation
+    dev_attr.pipe_ctrl.bits.demosaic_enable = 1;  // Convert Bayer → RGB
+    dev_attr.pipe_ctrl.bits.ccm_enable = 1;       // Color correction for accurate R/G/Y
+    dev_attr.pipe_ctrl.bits.wb_enable = 1;        // White balance for color accuracy
+    dev_attr.pipe_ctrl.bits.dpcc_enable = 1;      // Remove dead pixels
+
+    // CRITICAL FOR CONTRAST & DETAIL
+    dev_attr.pipe_ctrl.bits.cproc_enable = 1;     // High contrast/saturation
+    dev_attr.pipe_ctrl.bits.ee_enable = 1;        // Edge enhancement (sharpening)
+    dev_attr.pipe_ctrl.bits.gc_enable = 1;        // Gamma for better contrast
+
+    // WIDE DYNAMIC RANGE - handles bright lights without saturation
+    dev_attr.pipe_ctrl.bits.wdr_enable = 1;       // Hardware WDR (no latency)
+
+    // OPTIONAL - Lens correction
+    dev_attr.pipe_ctrl.bits.lsc_enable = 1;       // Fix vignetting
+
+    // ENABLE Auto Exposure for adaptive brightness
+    dev_attr.pipe_ctrl.bits.ae_enable = 1;        // AUTO exposure - adapts to lighting
+    dev_attr.pipe_ctrl.bits.awb_enable = 1;       // AUTO white balance
+    dev_attr.pipe_ctrl.bits.af_enable = 0;        // No autofocus needed
+    dev_attr.pipe_ctrl.bits.ahdr_enable = 0;      // No multi-frame HDR (use WDR instead)
+
+    // DISABLE - Noise reduction (blurs edges, reduces detail)
+    dev_attr.pipe_ctrl.bits.cnr_enable = 0;       // Color NR blurs
+    dev_attr.pipe_ctrl.bits.ynr_enable = 0;       // Luma NR blurs
+    dev_attr.pipe_ctrl.bits.dnr2_enable = 0;      // 2D denoise blurs
+    dev_attr.pipe_ctrl.bits.dnr3_enable = 0;      // 3D denoise blurs
+    dev_attr.pipe_ctrl.bits.dpf_enable = 0;       // Prefilter blurs
+
     dev_attr.dw_enable = K_FALSE;
 
     dev_attr.cpature_frame = 0; /* Continuously capture images */
@@ -268,7 +298,7 @@ k_s32 Media::vivcap_start()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_YVU_PLANAR_420;
-    chn_attr.buffer_num = 5 - 1;//at least 3 buffers for isp
+    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2, VICAP_ALIGN_1K);
 
@@ -291,7 +321,7 @@ k_s32 Media::vivcap_start()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_BGR_888_PLANAR;
-    chn_attr.buffer_num = 5;//at least 3 buffers for isp
+    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[1].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_height * _input_config.sensor_width * 3 ), VICAP_ALIGN_1K);
 
@@ -314,6 +344,8 @@ k_s32 Media::vivcap_start()
         printf("Media. kd_mpi_vicap_init failed.\n");
         // goto err_exit;
     }
+
+    // AE (Auto Exposure) is enabled - it will automatically adjust exposure and gain
 
     //printf("sample_vicap ...kd_mpi_vicap_start_stream\n");
     ret = kd_mpi_vicap_start_stream(_vicap_dev);

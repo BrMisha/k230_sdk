@@ -281,15 +281,12 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                             break;
                         }
 
-                        // TODO: reg from incoming data
-                        MSG_CMD_DETECT_RGB_struct msg {
-                            .width = 648,
-                            .height = 486,
-                        };
-                        const size_t image_data_len = (static_cast<size_t>(msg.width) * static_cast<size_t>(msg.height) * 3) / 2;
+                        auto msg = reinterpret_cast<MSG_CMD_DETECT_RGB_struct *>(buf);
+                        const size_t image_data_len = (static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height) * 3) / 2;
+                        printf("Image size: %dx%d\n", msg->width, msg->height);
 
-                        if (image_data_len == buff_len) {
-                            printf("Image data received\n");
+                        if (image_data_len + sizeof(MSG_CMD_DETECT_RGB_struct) == buff_len) {
+                            printf("Image data received, image_data_len = %lu\n", image_data_len);
                             buff_len = 0;
 
                             // call write NULL to flush
@@ -309,7 +306,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                             if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN) {
                                 printf("About to send...\n");
 
-                                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
+                                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf + sizeof(MSG_CMD_DETECT_RGB_struct));
                                 if (K_SUCCESS != ret) {
                                     printf("kd_datafifo_write error:%x\n", ret);
                                     break;
@@ -321,7 +318,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
 
-                                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg,
+                                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, msg,
                                                                      sizeof(MSG_CMD_DETECT_RGB_struct));
                                 k_ipcmsg_message_t *responce = nullptr;
                                 ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
@@ -330,12 +327,18 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    uint16_t count = responce->u32BodyLen / sizeof(DetectionCommon);
-                                    printf("MSG_CMD_DETECT_RGB success, %d\n", count);
+                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionCommon);
+                                    uint16_t count = static_cast<uint8_t*>(responce->pBody)[0];
+                                    if (count != est_count) {
+                                        printf("Wrong esimated count! %hu %lu\n", count, est_count);
+                                    }
+                                    else {
+                                        printf("MSG_CMD_DETECT_RGB success, %d\n", count);
 
-                                    peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
-                                    peer.write_some(asio::buffer(responce->pBody, responce->u32BodyLen));
-                                    peer.wait(asio::ip::tcp::socket::wait_write);
+                                        peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
+                                        peer.write_some(asio::buffer(responce->pBody + 1, responce->u32BodyLen-1));
+                                        peer.wait(asio::ip::tcp::socket::wait_write);
+                                    }
 
                                     asio::error_code shutdown_ec;
                                     peer.shutdown(asio::ip::tcp::socket::shutdown_both, shutdown_ec);
