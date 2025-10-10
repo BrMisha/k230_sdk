@@ -437,9 +437,6 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
         {
             ScopedTiming st("venc_send_frame", debug_mode);
 
-            // Channel 1 is decoder, channel 0 is encoder, send to channel 0, vf_info is frame data pointer, -1 means blocking mode
-            time_pts++;
-
             {
                 last_detection_t ld;
                 ld.pts = time_pts;
@@ -464,7 +461,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                 last_detections.push(ld);
             }
 
-            media->venc_push(time_pts);
+            media->venc_push(time_pts++);
         }
     }
 
