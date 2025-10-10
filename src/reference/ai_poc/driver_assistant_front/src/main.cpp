@@ -181,8 +181,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
                     fsync(fileno(output_file_detections));
                 }
 
-                // TODO: MEMORY LEAK!!!
-                /*std::thread([ipcmsg_handle]() {
+                std::thread([ipcmsg_handle]() {
                     uint8_t state = 1;
                     auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
                     auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
@@ -194,7 +193,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
                     pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
                     ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
                     kd_ipcmsg_destroy_message(pReq);
-                }).detach();*/
+                }).detach();
             }
 
             {
