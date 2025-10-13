@@ -43,14 +43,14 @@ static void release(void *pStream) {
 
 int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
     k_s32 s32Ret = K_SUCCESS;
-    k_datafifo_params_s params_reader = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
+    k_datafifo_params_s params_reader = {10, DATAFIFO_DETECTOR_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
     s32Ret = kd_datafifo_open_by_addr(&hDataFifo[READER_INDEX], &params_reader, reader_phyAddr);
     if (K_SUCCESS != s32Ret) {
         printf("open datafifo error:%x\n", s32Ret);
         return -1;
     }
 
-    k_datafifo_params_s params_writer = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
+    k_datafifo_params_s params_writer = {2, DATAFIFO_FRONT_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
     s32Ret = kd_datafifo_open_by_addr(&hDataFifo[WRITER_INDEX], &params_writer, writer_phyAddr);
     if (K_SUCCESS != s32Ret)
     {
@@ -284,19 +284,19 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
 
                 static k_char *buf = nullptr;
                 if (buf == nullptr) {
-                    buf = static_cast<k_char *>(malloc(DATAFIFO_BLOCK_LEN));
+                    buf = static_cast<k_char *>(malloc(DATAFIFO_FRONT_BLOCK_LEN));
                 }
                 size_t buff_len = 0;
 
                 asio::error_code ec;
                 while (!ec) {
-                    size_t len = peer.read_some(asio::buffer(buf + buff_len, DATAFIFO_BLOCK_LEN - buff_len), ec);
+                    size_t len = peer.read_some(asio::buffer(buf + buff_len, DATAFIFO_FRONT_BLOCK_LEN - buff_len), ec);
 
                     if (!ec && len > 0) {
                         buff_len += len;
                         printf("Received %zu bytes\n", buff_len);
 
-                        if (buff_len >= DATAFIFO_BLOCK_LEN) {
+                        if (buff_len >= DATAFIFO_FRONT_BLOCK_LEN) {
                             std::cerr << "!!!!!Buffer overload!!!!!!" << std::endl;
                             break;
                         }
@@ -323,7 +323,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                 printf("get available write len error:%x\n", ret);
                                 break;
                             }
-                            if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN) {
+                            if (datafifo_avail_write_len >= DATAFIFO_FRONT_BLOCK_LEN) {
                                 printf("About to send...\n");
 
                                 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf + sizeof(MSG_CMD_DETECT_RGB_struct));
@@ -469,74 +469,6 @@ int main(int argc, char *argv[]) {
     }
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
-
-    // example of fifo writer
-    k_char buf[DATAFIFO_BLOCK_LEN];
-    for (int o = 0; o < 0; ++o)
-    {
-        // call write NULL to flush
-        k_s32 s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
-        if (K_SUCCESS != s32Ret)
-        {
-            printf("write error:%x\n", s32Ret);
-        }
-
-        k_u32 datafifo_avail_write_len = 0;
-        s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &datafifo_avail_write_len);
-        if (K_SUCCESS != s32Ret)
-        {
-            printf("get available write len error:%x\n", s32Ret);
-            //break;
-        }
-        else if (datafifo_avail_write_len >= DATAFIFO_BLOCK_LEN)
-        {
-            printf("About to send...\n");
-            //memset(buf, 0, DATAFIFO_BLOCK_LEN);
-
-            FILE *file = fopen("pic_nv12_quarter.raw", "rb");
-            if (file == NULL)
-            {
-                printf("%s failed to open pic.jpg\n", __func__);
-            }
-            size_t bytes_read = fread(buf, 1, DATAFIFO_BLOCK_LEN, file);
-            fclose(file);
-
-
-            s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf);
-            if (K_SUCCESS != s32Ret)
-            {
-                printf("write error:%x\n", s32Ret);
-                //break;
-            }
-
-            s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
-            if (K_SUCCESS != s32Ret)
-            {
-                printf("write done error:%x\n", s32Ret);
-                //break;
-            }
-
-            MSG_CMD_DETECT_RGB_struct   msg {
-                .width = 648,
-                .height = 486,
-            };
-            auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, &msg, sizeof(MSG_CMD_DETECT_RGB_struct));
-            k_ipcmsg_message_t *responce = nullptr;
-            ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
-            if (ret != K_SUCCESS) {
-                printf("kd_ipcmsg_send_sync failed: %d\n", ret);
-            }
-            else if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                printf("MSG_CMD_DETECT_RGB success, %lu\n", responce->u32BodyLen);
-            }
-            kd_ipcmsg_destroy_message(responce);
-            kd_ipcmsg_destroy_message(pReq);
-        }
-        else
-        {
-            printf("no free space: %d\n", datafifo_avail_write_len);
-        }
-    }
 
     asio::io_context io_context;
     // UDP Server

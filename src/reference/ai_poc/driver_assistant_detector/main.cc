@@ -1,28 +1,3 @@
-/* Copyright (c) 2023, Canaan Bright Sight Co., Ltd
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- * 1. Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
- * CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
- * INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
- * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
- * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
- * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
-
 #include <condition_variable>
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,7 +91,7 @@ static void release(void *pStream) {
 static int datafifo_init(void) {
     k_s32 s32Ret = K_SUCCESS;
 
-    k_datafifo_params_s writer_params = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
+    k_datafifo_params_s writer_params = {10, DATAFIFO_DETECTOR_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
     s32Ret = kd_datafifo_open(&hDataFifo[WRITER_INDEX], &writer_params);
     if (K_SUCCESS != s32Ret) {
         printf("open datafifo error:%x\n", s32Ret);
@@ -137,7 +112,7 @@ static int datafifo_init(void) {
         return -1;
     }
 
-    k_datafifo_params_s reader_params = {10, DATAFIFO_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
+    k_datafifo_params_s reader_params = {2, DATAFIFO_FRONT_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
     s32Ret = kd_datafifo_open(&hDataFifo[READER_INDEX], &reader_params);
     if (K_SUCCESS != s32Ret)
     {
@@ -178,8 +153,8 @@ void datafifo_deinit(void) {
 * Encoder output thread logic
 */
 static void venc_output(k_u32 venc_ch) {
-    k_char *datafifo_buf = (k_char *) malloc(DATAFIFO_BLOCK_LEN);
-    memset(datafifo_buf, 0, DATAFIFO_BLOCK_LEN);
+    k_char *datafifo_buf = (k_char *) malloc(DATAFIFO_DETECTOR_BLOCK_LEN);
+    memset(datafifo_buf, 0, DATAFIFO_DETECTOR_BLOCK_LEN);
 
     k_venc_stream output;
     k_s32 ret;
@@ -231,7 +206,7 @@ static void venc_output(k_u32 venc_ch) {
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
             printf("venc_output... size %lu, availWriteLen %lu\n", output.pack[i].len, availWriteLen);
 
-            if (availWriteLen >= DATAFIFO_BLOCK_LEN) {
+            if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
                 size_t total_size = 0;
 
                 if (output.pack[i].type != K_VENC_HEADER) {
