@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <vector>
 #include <asio.hpp>
+#include <optional>
 
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
@@ -30,8 +31,8 @@ std::atomic<bool> send_stop(false);
 
 using namespace std::chrono_literals;
 
-FILE *output_file_video = NULL;
-FILE *output_file_detections = NULL;
+FILE *output_file_video = nullptr;
+FILE *output_file_detections = nullptr;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_video;
@@ -93,7 +94,7 @@ static void Usage() {
     exit(-1);
 }
 
-int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
+int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &daemon_mode) {
     daemon_mode = false;
 
     int result;
@@ -105,7 +106,7 @@ int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
                 break;
             }
             case 'b': {
-                bb = optarg;
+                bb = std::make_optional(optarg);
                 break;
             }
             case 'd': {
@@ -391,7 +392,7 @@ int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
     std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
 
-    std::string bb_path;
+    std::optional<std::string> bb_path;
     bool daemon_mode;
     int ret = parse_config(argc, argv, bb_path, daemon_mode);
 
@@ -440,33 +441,37 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    for (int i = 0; i < 0xFFFF; ++i) {
-        char filename[50];
-        sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
-        FILE *file = fopen(filename, "r");
-        if (!file) {
-            sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
-            file = fopen(filename, "r");
+    if (bb_path.has_value()) {
+        for (int i = 0; i < 0xFFFF; ++i) {
+            char filename[50];
+            sprintf(filename, (*bb_path + "/%d.h265").c_str(), i);
+            FILE *file = fopen(filename, "r");
             if (!file) {
-                sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
-                printf("output_file_video %s\n", filename);
-                output_file_video = fopen(filename, "wb");
+                sprintf(filename, (*bb_path + "/%d.txt").c_str(), i);
+                file = fopen(filename, "r");
+                if (!file) {
+                    sprintf(filename, (*bb_path + "/%d.h265").c_str(), i);
+                    printf("output_file_video %s\n", filename);
+                    output_file_video = fopen(filename, "wb");
 
-                sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
-                printf("output_file_detections %s\n", filename);
-                output_file_detections = fopen(filename, "w");
+                    sprintf(filename, (*bb_path + "/%d.txt").c_str(), i);
+                    printf("output_file_detections %s\n", filename);
+                    output_file_detections = fopen(filename, "w");
 
-                break;
-            }
-            fclose(file);
-        } else fclose(file);
+                    break;
+                }
+                fclose(file);
+            } else fclose(file);
+        }
+
+        if (!output_file_video || !output_file_detections) {
+            std::cerr << "Can't open video file!" << std::endl;
+            kd_ipcmsg_disconnect(ipcmsg_handle);
+            return -1;
+        }
     }
 
-    if (!output_file_video || !output_file_detections) {
-        std::cerr << "Can't open video file!" << std::endl;
-        kd_ipcmsg_disconnect(ipcmsg_handle);
-        return -1;
-    }
+
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
@@ -501,8 +506,8 @@ int main(int argc, char *argv[]) {
 
     datafifo_deinit();
 
-    fclose(output_file_video);
-    fclose(output_file_detections);
+    if (output_file_video) fclose(output_file_video);
+    if (output_file_detections) fclose(output_file_detections);
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);

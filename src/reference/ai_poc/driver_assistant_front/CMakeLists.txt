@@ -3,6 +3,9 @@ include(./cmake/Riscv64.cmake)
 
 project(driver_assistant_front C CXX)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
 set(CDK_SRC_DIR ${k230_sdk}/src/common/cdk)
