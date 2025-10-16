@@ -160,6 +160,12 @@ static void venc_output(k_u32 venc_ch) {
     k_s32 ret;
     int i;
 
+    FILE *h265_file = fopen("dump.h265", "ab");
+    if (!h265_file) {
+        printf("Failed to open dump.h265 for writing\n");
+        free(datafifo_buf);
+        return;
+    }
 
     printf("venc_output... started\n");
 
@@ -206,7 +212,30 @@ static void venc_output(k_u32 venc_ch) {
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
             printf("venc_output... size %lu, availWriteLen %lu\n", output.pack[i].len, availWriteLen);
 
-            if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
+
+
+            size_t total_size = 0;
+            if (output.pack[i].type == K_VENC_HEADER) {
+            } else {
+                /*uint16_t s = UINT16_MAX;
+                memcpy(datafifo_buf, &s, sizeof(s));
+                total_size = sizeof(s);
+                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].pts), sizeof(k_u64));
+                total_size += sizeof(k_u64);
+                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].len), sizeof(k_u32));
+                total_size += sizeof(k_u32);
+                memcpy(datafifo_buf + total_size, (void *) pData, output.pack[i].len);
+                total_size += output.pack[i].len;*/
+
+
+                FILE *f = fopen("dump.h265", "ab");
+                if (f) {
+                    fwrite(pData, 1, output.pack[i].len, f);
+                    fclose(f);
+                }
+            }
+
+            /*if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
                 size_t total_size = 0;
 
                 if (output.pack[i].type != K_VENC_HEADER) {
@@ -258,7 +287,7 @@ static void venc_output(k_u32 venc_ch) {
                     printf("venc_output...write done error:%x\n", ret);
                     break;
                 }
-            }
+            }*/
 
             kd_mpi_sys_munmap(pData, output.pack[i].len);
         }
@@ -312,6 +341,8 @@ void isp_poll(Media *media, int debug_mode, int detection_max_width) {
         // Now the rgb_buffer contains image and camera buffer released
 
         cv::Mat rgb_frame(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3, rgb_buffer);
+        printf("dump_info %dx%d\n", dump_info.v_frame.width, dump_info.v_frame.height);
+        printf("rgb_frame %dx%d\n", rgb_frame.cols, rgb_frame.rows);
 
         {
             ScopedTiming st("RGB to encoder", debug_mode);

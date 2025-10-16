@@ -124,13 +124,13 @@ k_s32 Media::init_vb() {
     vb_config.comm_pool[1].blk_cnt = 30;
     vb_config.comm_pool[1].blk_size = ((stream_size + 0xfff) & ~0xfff);
     vb_config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-    static_assert(_pool_id_venc == 2, "_pool_id_yuv420 must be 2");
+    static_assert(_pool_id_venc == 2);
     vb_config.comm_pool[_pool_id_venc].blk_cnt = 4;
     vb_config.comm_pool[_pool_id_venc].blk_size = (_input_config.sensor_width * _input_config.sensor_height * 4);
     vb_config.comm_pool[_pool_id_venc].mode = VB_REMAP_MODE_NOCACHE;
 
     //VB for YUV420SP output
-    static_assert(_pool_id_yuv420 == 3, "_pool_id_yuv420 must be 3");
+    static_assert(_pool_id_yuv420 == 3);
     vb_config.comm_pool[_pool_id_yuv420].blk_cnt = 6;
     vb_config.comm_pool[_pool_id_yuv420].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_yuv420].blk_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2,
@@ -138,7 +138,7 @@ k_s32 Media::init_vb() {
 
 
     //VB for RGB888 output
-    static_assert(_pool_id_rgb == 4, "_pool_id_rgb must be 4");
+    static_assert(_pool_id_rgb == 4);
     vb_config.comm_pool[_pool_id_rgb].blk_cnt = 5;
     vb_config.comm_pool[_pool_id_rgb].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_rgb].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, VICAP_ALIGN_1K);
