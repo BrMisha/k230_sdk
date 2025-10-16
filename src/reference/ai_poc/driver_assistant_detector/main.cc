@@ -272,17 +272,89 @@ static void venc_output(k_u32 venc_ch) {
     free(datafifo_buf);
 }
 
+void rgb_reduce_size(cv::Mat &rgb_frame, int max_width) {
+    if (rgb_frame.cols <= max_width) return;
+
+    float scale = static_cast<float>(max_width) / rgb_frame.cols;
+    int new_width = max_width;
+    int new_height = static_cast<int>(rgb_frame.rows * scale);
+    cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
+    rgb_frame.cols = new_width;
+    rgb_frame.rows = new_height;
+}
+
+// Receive picture from camera.
+// Push to encoder.
+// Resizes to max_width and put to buffer
+void isp_poll(Media *media, int debug_mode, int detection_max_width) {
+    k_u64 time_pts = 0;
+    uint8_t *rgb_buffer = static_cast<uint8_t *>(malloc(static_cast<size_t>(media->input_config()->sensor_width) *
+        static_cast<size_t>(media->input_config()->sensor_height) * 3));
+
+    while (running) {
+        ScopedTiming st("----- isp_poll total", 1);
+
+        k_video_frame_info dump_info;
+        {
+            ScopedTiming st("isp_dump", 1);
+            auto picture = media->isp_dump(dump_info);
+            if (!picture) {
+                printf("!!!!!!!!! ISP DUMP !!!!!!!!\n");
+                break;
+            }
+
+            auto vbvaddr = picture.value()->vbvaddr();
+
+            // convert to rgb and save to rgb
+            Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
+                media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+        }
+        // Now the rgb_buffer contains image and camera buffer released
+
+        cv::Mat rgb_frame(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3, rgb_buffer);
+
+        {
+            ScopedTiming st("RGB to encoder", debug_mode);
+
+            // Convert RGB image to ARGB image, send to encoder
+            uint8_t *src = rgb_frame.data;
+            uint8_t *dst = static_cast<uint8_t *>(media->venc_get_pic_vaddr());
+
+            for (int y = 0; y < rgb_frame.rows; y++) {
+                for (int x = 0; x < rgb_frame.cols; x++) {
+                    int src_idx = (y * rgb_frame.cols + x) * 3;
+                    int dst_idx = (y * rgb_frame.cols + x) * 4;
+
+                    // Copy RGB values and add alpha channel (255 = fully opaque)
+                    dst[dst_idx + 0] = 255; // Alpha
+                    dst[dst_idx + 1] = src[src_idx + 2]; // B
+                    dst[dst_idx + 2] = src[src_idx + 1]; // G
+                    dst[dst_idx + 3] = src[src_idx + 0]; // R
+                }
+            }
+
+            media->venc_push(time_pts);
+        }
+
+        if (rgb_frame.cols > detection_max_width) {
+            ScopedTiming st("Image resize", 1);
+            rgb_reduce_size(rgb_frame, detection_max_width);
+            std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
+        }
+
+
+        time_pts++;
+    }
+
+    free(rgb_buffer);
+}
+
 std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int detection_max_width) {
     std::vector<DetectionNormalized> results;
 
     if (rgb_frame.cols > detection_max_width) {
         ScopedTiming st("Image resize", 1);
-        float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
-        int new_width = detection_max_width;
-        int new_height = static_cast<int>(rgb_frame.rows * scale);
-        cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
-        rgb_frame.cols = new_width;
-        rgb_frame.rows = new_height;
+        rgb_reduce_size(rgb_frame, detection_max_width);
         std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
     }
 
@@ -587,7 +659,7 @@ int main(int argc, char *argv[]) {
     }
 
     k_s32 ipcmsg_handle;
-    {
+    /*{
         k_ipcmsg_connect_t stConnectAtt{
             .u32RemoteId = 0,
             .u32Port = 101,
@@ -604,9 +676,9 @@ int main(int argc, char *argv[]) {
             printf("kd_ipcmsg_connect failed: %d\n", ret);
             return -1;
         }
-    }
+    }*/
     std::thread ipcmsg_thread([ipcmsg_handle] {
-        kd_ipcmsg_run(ipcmsg_handle);
+        //kd_ipcmsg_run(ipcmsg_handle);
     });
 
     if (image_input_mode) {
@@ -624,8 +696,10 @@ int main(int argc, char *argv[]) {
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
-                                           facedet_nms_thresh, overlap_ratio, detection_max_width);
+        std::thread isp_poll_thread(isp_poll, &media, debug_mode, detection_max_width);
+
+        /*std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
+                                           facedet_nms_thresh, overlap_ratio, detection_max_width);*/
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
@@ -634,7 +708,7 @@ int main(int argc, char *argv[]) {
         }
         running = false;
 
-        isp_ai_detector_thread.join();
+        isp_poll_thread.join();
         venc_output_thread.join();
     }
 
