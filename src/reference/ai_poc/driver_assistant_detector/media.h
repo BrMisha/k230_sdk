@@ -95,6 +95,7 @@ private:
 
     k_s32 init_encoder();
 
+    k_s32 vivcap_init();
     k_s32 vivcap_start();
     k_s32 vivcap_stop();
 
