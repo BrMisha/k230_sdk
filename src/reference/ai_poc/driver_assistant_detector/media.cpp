@@ -85,13 +85,17 @@ k_s32 Media::init() {
 }
 
 std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump(k_video_frame_info &dump_info) {
+    k_vicap_dump_format format = VICAP_DUMP_RGB;
+
     memset(&dump_info, 0, sizeof(k_video_frame_info));
-    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
+    //kd_mpi_vicap_3d_mode_crtl(K_FALSE);
+    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, format, &dump_info, 1000);
     if (ret) {
         printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
         return std::nullopt;
     }
-    size_t size = (_input_config.sensor_width * _input_config.sensor_height * 3) / 2;
+    //kd_mpi_vicap_3d_mode_crtl(K_TRUE);
+    size_t size = (_input_config.sensor_width * _input_config.sensor_height * 3);
     auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
     if (vbvaddr == nullptr) {
@@ -302,7 +306,7 @@ k_s32 Media::vivcap_start()
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2, VICAP_ALIGN_1K);
 
-    //printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
+    printf("sample_vicap ...kd_mpi_vicap_set_chn_attr yuv, buffer_size[%d]\n", chn_attr.buffer_size);
     ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_yuv420, chn_attr);
     if (ret) {
         printf("sample_vicap, kd_mpi_vicap_set_chn_attr failed.\n");
@@ -320,12 +324,12 @@ k_s32 Media::vivcap_start()
     chn_attr.crop_enable = K_FALSE;
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
-    chn_attr.pix_format = PIXEL_FORMAT_BGR_888_PLANAR;
-    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
+    chn_attr.pix_format = PIXEL_FORMAT_RGB_888;
+    chn_attr.buffer_num = 4;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[1].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_height * _input_config.sensor_width * 3 ), VICAP_ALIGN_1K);
 
-    //printf("sample_vicap ...kd_mpi_vicap_set_chn_attr, buffer_size[%d]\n", chn_attr.buffer_size);
+    printf("sample_vicap ...kd_mpi_vicap_set_chn_attr rgb, buffer_size[%d]\n", chn_attr.buffer_size);
     ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_rgb888, chn_attr);
     if (ret) {
         printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");

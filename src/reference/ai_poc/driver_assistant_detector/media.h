@@ -60,8 +60,8 @@ class Media {
     const k_u32 _venc_ch = 0;
 
     const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
-    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_0;
-    const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_1;
+    const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
+    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_1;
 
     static const k_u32 _pool_id_yuv420 = 3;
     static const k_u32 _pool_id_rgb = 4;
