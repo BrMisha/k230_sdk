@@ -19,6 +19,8 @@
 struct MediaInputConfig {
     int sensor_width = 1920;
     int sensor_height = 1080;
+    int rgb888_2_width = 1920;
+    int rgb888_2_height = 1080;
     int bitrate_kbps = 4000;
 };
 
@@ -61,10 +63,12 @@ class Media {
 
     const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
     const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
-    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_1;
+    const k_vicap_chn _vicap_chn_rgb888_2 = VICAP_CHN_ID_1;
+    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_2;
 
     static const k_u32 _pool_id_yuv420 = 3;
     static const k_u32 _pool_id_rgb = 4;
+    static const k_u32 _pool_id_rgb_2 = 5;
     static const k_u32 _pool_id_venc = 2;
 
     k_video_frame_info _venc_vf_info;
@@ -79,7 +83,8 @@ public:
 
     MediaInputConfig const *input_config() const { return &_input_config;}
 
-    std::optional<std::unique_ptr<MediaIspDump>> isp_dump(k_video_frame_info &dump_info);
+    std::optional<std::unique_ptr<MediaIspDump>> isp_dump_rgb888(k_video_frame_info &dump_info, uint8_t channel); // channel 0 or 1
+    std::optional<std::unique_ptr<MediaIspDump>> isp_dump_yuv420(k_video_frame_info &dump_info);
 
     k_u32 venc_get_channel() const {return _venc_ch;}
     void *venc_get_pic_vaddr() const {return _venc_pic_vaddr;}

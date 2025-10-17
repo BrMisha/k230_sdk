@@ -84,26 +84,47 @@ k_s32 Media::init() {
     return ret;
 }
 
-std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump(k_video_frame_info &dump_info) {
-    k_vicap_dump_format format = VICAP_DUMP_RGB;
+std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump_rgb888(k_video_frame_info &dump_info, uint8_t channel) {
+    k_vicap_chn vicap_chn = channel == 0 ? _vicap_chn_rgb888 : _vicap_chn_rgb888_2;
 
     memset(&dump_info, 0, sizeof(k_video_frame_info));
     //kd_mpi_vicap_3d_mode_crtl(K_FALSE);
-    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, format, &dump_info, 1000);
+    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, vicap_chn, VICAP_DUMP_RGB, &dump_info, 1000);
     if (ret) {
         printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
         return std::nullopt;
     }
     //kd_mpi_vicap_3d_mode_crtl(K_TRUE);
-    size_t size = (_input_config.sensor_width * _input_config.sensor_height * 3);
+    size_t size = (dump_info.v_frame.width * dump_info.v_frame.height * 3);
     auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
 
     if (vbvaddr == nullptr) {
-        kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
+        kd_mpi_vicap_dump_release(_vicap_dev, vicap_chn, &dump_info);
         return std::nullopt;
     }
 
-    auto d = new MediaIspDump(vbvaddr, size, std::move(dump_info), _vicap_dev, _vicap_chn_rgb888);
+    auto d = new MediaIspDump(vbvaddr, size, std::move(dump_info), _vicap_dev, vicap_chn);
+
+    return std::unique_ptr<MediaIspDump>(d);
+}
+
+std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump_yuv420(k_video_frame_info &dump_info) {
+    memset(&dump_info, 0, sizeof(k_video_frame_info));
+    auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_yuv420, VICAP_DUMP_YUV, &dump_info, 1000);
+    if (ret) {
+        printf("sample_vicap...kd_mpi_vicap_dump_frame failed. Error: %d\n", ret);
+        return std::nullopt;
+    }
+
+    size_t size = (dump_info.v_frame.width * dump_info.v_frame.height * 3) / 2;
+    auto vbvaddr = kd_mpi_sys_mmap(dump_info.v_frame.phys_addr[0], size);
+
+    if (vbvaddr == nullptr) {
+        kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_yuv420, &dump_info);
+        return std::nullopt;
+    }
+
+    auto d = new MediaIspDump(vbvaddr, size, std::move(dump_info), _vicap_dev, _vicap_chn_yuv420);
 
     return std::unique_ptr<MediaIspDump>(d);
 }
@@ -118,7 +139,7 @@ k_s32 Media::init_vb() {
     k_vb_config vb_config;
     memset(&vb_config, 0, sizeof(vb_config));
 
-    vb_config.max_pool_cnt = 5;
+    vb_config.max_pool_cnt = 6;
 
     k_u64 pic_size = _input_config.sensor_width * _input_config.sensor_height * 2;
     k_u64 stream_size = _input_config.sensor_width * _input_config.sensor_height / 2;
@@ -135,7 +156,7 @@ k_s32 Media::init_vb() {
 
     //VB for YUV420SP output
     static_assert(_pool_id_yuv420 == 3);
-    vb_config.comm_pool[_pool_id_yuv420].blk_cnt = 6;
+    vb_config.comm_pool[_pool_id_yuv420].blk_cnt = 3;
     vb_config.comm_pool[_pool_id_yuv420].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_yuv420].blk_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2,
         VICAP_ALIGN_1K);
@@ -143,9 +164,15 @@ k_s32 Media::init_vb() {
 
     //VB for RGB888 output
     static_assert(_pool_id_rgb == 4);
-    vb_config.comm_pool[_pool_id_rgb].blk_cnt = 5;
+    vb_config.comm_pool[_pool_id_rgb].blk_cnt = 3;
     vb_config.comm_pool[_pool_id_rgb].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_rgb].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, VICAP_ALIGN_1K);
+
+    //VB for RGB888_2 output
+    static_assert(_pool_id_rgb_2 == 5);
+    vb_config.comm_pool[_pool_id_rgb_2].blk_cnt = 3;
+    vb_config.comm_pool[_pool_id_rgb_2].mode = VB_REMAP_MODE_NOCACHE;
+    vb_config.comm_pool[_pool_id_rgb_2].blk_size = VICAP_ALIGN_UP(_input_config.rgb888_2_width * _input_config.rgb888_2_height * 3, VICAP_ALIGN_1K);
 
     ret = kd_mpi_vb_set_config(&vb_config);
     if (ret) {
@@ -325,7 +352,7 @@ k_s32 Media::vivcap_start()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_RGB_888;
-    chn_attr.buffer_num = 4;  // Minimum buffers for real-time (reduce latency)
+    chn_attr.buffer_num = 3;  // Minimum buffers for real-time (reduce latency)
     // chn_attr.buffer_size = config.comm_pool[1].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_height * _input_config.sensor_width * 3 ), VICAP_ALIGN_1K);
 
@@ -335,6 +362,17 @@ k_s32 Media::vivcap_start()
         printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");
         return ret;
     }
+
+    //set chn2 output rgb888p
+    chn_attr.out_win.width = _input_config.rgb888_2_width;
+    chn_attr.out_win.height = _input_config.rgb888_2_height;
+    chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.rgb888_2_height * _input_config.rgb888_2_width * 3 ), VICAP_ALIGN_1K);
+    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_rgb888_2, chn_attr);
+    if (ret) {
+        printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");
+        return ret;
+    }
+
     // set to header file database parse mode
     /*ret = kd_mpi_vicap_set_database_parse_mode(vicap_dev, VICAP_DATABASE_PARSE_XML_JSON);
     if (ret) {
