@@ -201,17 +201,17 @@ static void venc_output(k_u32 venc_ch) {
         for (i = 0; i < output.pack_cnt; i++) {
             k_u8 *pData;
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
-            printf("venc_output... size %lu, type %d, pts %lu\n", output.pack[i].len, output.pack[i].type, output.pack[i].pts);
+            //printf("venc_output... size %lu, type %d, pts %lu\n", output.pack[i].len, output.pack[i].type, output.pack[i].pts);
 
             if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
                 auto dff = reinterpret_cast<DataFifoFrame_t *>(datafifo_buf);
                 dff->type = output.pack[i].type;
                 dff->pts = output.pack[i].pts;
                 dff->data_len = output.pack[i].len;
-                if (DATAFIFO_DETECTOR_BLOCK_LEN <= sizeof(DataFifoFrame_t) + dff->data_len) {
+                if (DATAFIFO_DETECTOR_BLOCK_LEN >= sizeof(DataFifoFrame_t) + dff->data_len) {
                     memcpy(dff->data, static_cast<void *>(pData), dff->data_len);
                 } else {
-                    printf("data fifo size IS INVALID!!!!!!!!!!!!!!!!!!!\n");
+                    printf("data fifo size IS INVALID %lu !!!!!!!!!!!!!!!!!!!\n", sizeof(DataFifoFrame_t) + dff->data_len);
                 }
 
                 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
@@ -322,14 +322,8 @@ void isp_poll(Media *media, int debug_mode, int detection_max_width) {
     free(rgb_buffer);
 }
 
-std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int detection_max_width) {
+std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
     std::vector<DetectionNormalized> results;
-
-    if (rgb_frame.cols > detection_max_width) {
-        ScopedTiming st("Image resize", 1);
-        rgb_reduce_size(rgb_frame, detection_max_width);
-        std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
-    }
 
     auto r = sahi.detect(rgb_frame);
     for (auto it = r.cbegin(); it != r.cend(); ++it) {
@@ -340,10 +334,10 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int dete
 }
 
 void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
-                     float overlap_ratio, int detection_max_width) {
+                     float overlap_ratio) {
 
     struct Buffer {
-        uint8_t *rgb;
+        //uint8_t *rgb;
         //uint8_t *argb;
         k_u32   width{};
         k_u32   height{};
@@ -354,10 +348,10 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             width = _width;
             height = _height;
 
-            rgb = static_cast<uint8_t *>(malloc(width * height * 3));
+            //rgb = static_cast<uint8_t *>(malloc(width * height * 3));
         }
         ~Buffer() {
-            free(rgb);
+            //free(rgb);
         }
     };
 
@@ -365,70 +359,26 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
     printf("start loop\n");
 
-    Buffer buffer = Buffer(media->input_config()->sensor_width, media->input_config()->sensor_height);
-
-    std::thread camera_receiver_thread([&]() {
-        while (running) {
-            /*k_video_frame_info dump_info;
-            int ret;
-            auto picture = media->isp_dump(dump_info);
-            if (!picture) {
-                printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
-                break;
-            }
-
-            auto vbvaddr = picture.value()->vbvaddr();
-
-            std::unique_lock<std::mutex> lock(buffer.mutex, std::try_to_lock);
-            // if unable to lock, this frame will droped (we need only last frame for minimal latency)
-            if (lock.owns_lock()) {
-                buffer.width = dump_info.v_frame.width;
-                buffer.height = dump_info.v_frame.height;
-
-                // convert to rgb and save to buffer.rgb
-                Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
-                    media->input_config()->sensor_width, media->input_config()->sensor_height, buffer.rgb);
-
-                buffer.cv.notify_one();
-            }*/
-        }
-
-        buffer.cv.notify_one();
-    });
+    Buffer buffer = Buffer(media->input_config()->rgb888_2_width, media->input_config()->rgb888_2_height);
+    cv::Mat rgb_frame(buffer.height, buffer.width, CV_8UC3);
 
     while (running) {
         ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
 
-        std::unique_lock<std::mutex> lock(buffer.mutex);
-        buffer.cv.wait(lock);
-        cv::Mat rgb_frame(buffer.height, buffer.width, CV_8UC3, buffer.rgb);
-        if (buffer.width == 0 || buffer.height == 0) continue;
-
-        // Copy to encoder because the rgb_frame may resized on next step
+        k_video_frame_info dump_info;
+        int ret;
         {
-            ScopedTiming st("RGB to ARGB", debug_mode);
-
-            // Convert RGB image to ARGB image, send to encoder
-            uint8_t *src = rgb_frame.data;
-            uint8_t *dst = (uint8_t *) media->venc_get_pic_vaddr();
-
-            for (int y = 0; y < rgb_frame.rows; y++) {
-                for (int x = 0; x < rgb_frame.cols; x++) {
-                    int src_idx = (y * rgb_frame.cols + x) * 3;
-                    int dst_idx = (y * rgb_frame.cols + x) * 4;
-
-                    // Copy RGB values and add alpha channel (255 = fully opaque)
-                    dst[dst_idx + 0] = 255; // Alpha
-                    dst[dst_idx + 1] = src[src_idx + 2]; // B
-                    dst[dst_idx + 2] = src[src_idx + 1]; // G
-                    dst[dst_idx + 3] = src[src_idx + 0]; // R
-                }
+            ScopedTiming st_isp_dump_rgb888("isp_dump_rgb888", debug_mode);
+            auto picture = media->isp_dump_rgb888(dump_info, 1);
+            if (!picture) {
+                printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
+                break;
             }
+            // Copy camera RGB data to buffer. We can not use vbvaddr directly for detection because it is to low
+            memcpy(rgb_frame.data, picture.value()->vbvaddr(), rgb_frame.cols * rgb_frame.rows * 3);
         }
 
-
-
-        //cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr, media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+        if (buffer.width == 0 || buffer.height == 0) continue;
 
         std::vector<DetectionNormalized> results;
 
@@ -436,7 +386,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
             SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
-            results = detect(sahi, rgb_frame, detection_max_width);
+            results = detect(sahi, rgb_frame);
         }
 
         {
@@ -454,7 +404,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             }
         }
 
-        {
+        /*{
             ScopedTiming st("venc_send_frame", debug_mode);
 
             {
@@ -482,10 +432,8 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             }
 
             media->venc_push(time_pts++);
-        }
+        }*/
     }
-
-    camera_receiver_thread.join();
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
@@ -537,7 +485,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 
                     std::lock_guard<std::mutex> lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
-                    auto results = detect(sahi, rgb_frame, 5000);
+                    auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
                     static_cast<uint8_t*>(rgb_buffer)[0] = static_cast<uint8_t>(results.size());
 
@@ -554,7 +502,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         dc.w = static_cast<uint16_t>(d.box.width);
                         dc.h = static_cast<uint16_t>(d.box.height);
 
-                        memcpy(rgb_buffer + sizeof(uint8_t) + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
+                        memcpy( static_cast<uint8_t*>(rgb_buffer) + sizeof(uint8_t) + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
                     }
                     pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, sizeof(uint8_t) + results.size() * sizeof(DetectionCommon));
 
@@ -587,9 +535,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 }
 
 void print_usage(const char *name) {
-    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio> <detection_max_width>" << endl
+    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio>" << endl
             << "For example: " << endl
-            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2 1920" << endl
+            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2" << endl
             << "Options:" << endl
             << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
             << " 2> image_input_mode     Image input mode\n"
@@ -597,62 +545,13 @@ void print_usage(const char *name) {
             << " 4> obj_thresh           Object detection threshold\n"
             << " 5> nms_thresh           NMS threshold\n"
             << " 6> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
-            << " 7> detection_max_width  Maximum width for detection (image will be resized if larger)\n"
             << "\n"
             << endl;
 }
 
 int main(int argc, char *argv[]) {
-    {
-        datafifo_init();
-
-        MediaInputConfig config {
-            .sensor_width = 1920,
-            .sensor_height = 1080,
-            .rgb888_2_width = 768,
-            .rgb888_2_height = 432,
-            .bitrate_kbps = 4000
-        };
-        Media media(config);
-        media.init();
-
-        std::thread venc_output_thread(venc_output, media.venc_get_channel());
-
-        k_video_frame_info d;
-         /*{
-            auto st = new ScopedTiming("YUV ISP dump", 1);
-            auto picture = media.isp_dump_yuv420(d);
-            delete st;
-            printf("p: %d, f: %d, %dx%d\n", d.pool_id, d.v_frame.pixel_format, d.v_frame.width, d.v_frame.height);
-            printf("Pixel format received: %d (RGB_888=%d, YUV420=%d)\n",
-                   d.v_frame.pixel_format,
-                   PIXEL_FORMAT_RGB_888,
-                   PIXEL_FORMAT_YUV_SEMIPLANAR_420);
-
-            if (picture.has_value()) {
-                auto vbvaddr = picture.value()->vbvaddr();
-
-                printf("vbvaddr: %lu\n",vbvaddr);
-                // Save raw RGB888 data to file
-                FILE *f = fopen("dump.yuv420", "wb");
-                if (f) {
-                    size_t size = picture.value()->size();
-                    fwrite(vbvaddr, 1, size, f);
-                    fclose(f);
-                    printf("Saved %zu bytes to dump.yuv420\n", size);
-                }
-            }
-        }*/
-
-        usleep(3000000);
-
-        running = false;
-        venc_output_thread.join();
-        datafifo_deinit();
-        return 0;
-    }
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 8) {
+    if (argc != 7) {
         print_usage(argv[0]);
         return -1;
     }
@@ -663,7 +562,6 @@ int main(int argc, char *argv[]) {
     float facedet_obj_thresh = atof(argv[4]);
     float facedet_nms_thresh = atof(argv[5]);
     overlap_ratio = atof(argv[6]);
-    int detection_max_width = atoi(argv[7]);
 
     gpio_led_fd = open("/dev/gpio", O_RDWR);
     pin_mode_t mode;
@@ -712,15 +610,17 @@ int main(int argc, char *argv[]) {
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
+            .rgb888_2_width = 768,
+            .rgb888_2_height = 432,
             .bitrate_kbps = 4000
         };
         Media media(config);
         media.init();
 
-        std::thread isp_poll_thread(isp_poll, &media, debug_mode, detection_max_width);
+        //std::thread isp_poll_thread(isp_poll, &media, debug_mode, detection_max_width);
 
-        /*std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
-                                           facedet_nms_thresh, overlap_ratio, detection_max_width);*/
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
+                                           facedet_nms_thresh, overlap_ratio);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
@@ -729,7 +629,7 @@ int main(int argc, char *argv[]) {
         }
         running = false;
 
-        isp_poll_thread.join();
+        isp_ai_detector_thread.join();
         venc_output_thread.join();
     }
 

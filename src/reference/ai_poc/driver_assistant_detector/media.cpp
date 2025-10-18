@@ -26,6 +26,8 @@ _input_config(config)
 }
 
 Media::~Media() {
+    kd_mpi_sys_unbind(&_vi_mpp_chn, &_venc_mpp_chn);
+
     auto ret = vivcap_stop();
     if (ret)
         printf("Media. vivcap_stop failed ret:%d\n", ret);
@@ -63,20 +65,17 @@ k_s32 Media::init() {
         } else {
             // Bind YUV camera channel to encoder channel
             {
-                k_mpp_chn venc_mpp_chn;
-                k_mpp_chn vi_mpp_chn;
-
                 // Source: VI (camera) YUV420 channel
-                vi_mpp_chn.mod_id = K_ID_VI;
-                vi_mpp_chn.dev_id = _vicap_dev;
-                vi_mpp_chn.chn_id = _vicap_chn_yuv420;
+                _vi_mpp_chn.mod_id = K_ID_VI;
+                _vi_mpp_chn.dev_id = _vicap_dev;
+                _vi_mpp_chn.chn_id = _vicap_chn_yuv420;
 
                 // Destination: VENC (encoder) channel
-                venc_mpp_chn.mod_id = K_ID_VENC;
-                venc_mpp_chn.dev_id = 0;
-                venc_mpp_chn.chn_id = _venc_ch;
+                _venc_mpp_chn.mod_id = K_ID_VENC;
+                _venc_mpp_chn.dev_id = 0;
+                _venc_mpp_chn.chn_id = _venc_ch;
 
-                ret = kd_mpi_sys_bind(&vi_mpp_chn, &venc_mpp_chn);
+                ret = kd_mpi_sys_bind(&_vi_mpp_chn, &_venc_mpp_chn);
                 if (ret)
                 {
                     printf("kd_mpi_sys_bind failed:0x%x\n", ret);

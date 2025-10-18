@@ -75,6 +75,9 @@ class Media {
     void    *_venc_pic_vaddr = nullptr;
     k_vb_blk_handle _block_enc = 0;
 
+    k_mpp_chn _venc_mpp_chn;
+    k_mpp_chn _vi_mpp_chn;
+
 public:
     Media(MediaInputConfig config);
     ~Media();
