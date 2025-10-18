@@ -197,7 +197,7 @@ k_s32 Media::init_vb() {
 
     //VB for RGB888_2 output
     static_assert(_pool_id_rgb_2 == 5);
-    vb_config.comm_pool[_pool_id_rgb_2].blk_cnt = 3;
+    vb_config.comm_pool[_pool_id_rgb_2].blk_cnt = 2;
     vb_config.comm_pool[_pool_id_rgb_2].mode = VB_REMAP_MODE_NOCACHE;
     vb_config.comm_pool[_pool_id_rgb_2].blk_size = VICAP_ALIGN_UP(_input_config.rgb888_2_width * _input_config.rgb888_2_height * 3, 0x1000);
 
@@ -395,6 +395,7 @@ k_s32 Media::vivcap_init()
     chn_attr.out_win.width = _input_config.rgb888_2_width;
     chn_attr.out_win.height = _input_config.rgb888_2_height;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.rgb888_2_height * _input_config.rgb888_2_width * 3 ), 0x1000);
+    chn_attr.buffer_num = 2;
     ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_rgb888_2, chn_attr);
     if (ret) {
         printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");
