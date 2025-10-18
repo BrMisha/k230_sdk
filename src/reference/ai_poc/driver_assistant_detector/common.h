@@ -13,6 +13,13 @@ struct DetectionCommon {
 } __attribute__((packed));
 static_assert(sizeof(DetectionCommon) == 16);
 
+struct DetectionNormalizedCommon {
+    int class_id;
+    float confidence{0.0};
+    float x, y, w, h;
+} __attribute__((packed));
+static_assert(sizeof(DetectionNormalizedCommon) == 24);
+
 const std::vector<std::string> detect_classes{"objects-5YaV", "arrow_right", "color_green", "color_red",
           "tl_arrow_forward", "tl_arrow_left", "traffic_light", "traffic_light_back",
           "traffic_light_green", "traffic_light_red", "traffic_light_red_yellow", "traffic_light_yellow"};
@@ -22,6 +29,7 @@ typedef enum
     MSG_CMD_GET_PHY_ADDRESS=11,
     MSG_CMD_DETECT_RGB,
     MSG_CMD_LED_SET,
+    MSG_CMD_DETECTIONS,
 } ipc_msg_cmd_t;
 
 struct MSG_CMD_DETECT_RGB_struct {

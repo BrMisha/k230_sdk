@@ -39,7 +39,7 @@ asio::ip::udp::endpoint stream_endpoint_video;
 asio::ip::udp::endpoint stream_endpoint_detections;
 
 static void release(void *pStream) {
-    printf("release %p\n", pStream);
+    //printf("release %p\n", pStream);
 }
 
 int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
@@ -122,7 +122,6 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
 
 void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
     k_u32 readLen = 0;
-    k_char *pBuf;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
 
@@ -135,11 +134,25 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
         }
 
         if (readLen > 0) {
-            s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], (void **) &pBuf);
+            k_char *pBuf;
+            s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], reinterpret_cast<void **>(&pBuf));
             if (K_SUCCESS != s32Ret) {
                 printf("read error:%x\n", s32Ret);
                 break;
             }
+
+            auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
+
+            uint64_t microseconds = frame->pts;
+            uint64_t milliseconds = microseconds / 1000;
+            uint64_t seconds = milliseconds / 1000;
+            uint64_t minutes = seconds / 60;
+            uint64_t hours = minutes / 60;
+            printf("Read frame. pts: %02lu:%02lu:%02lu.%03lu\n",
+                   hours, minutes % 60, seconds % 60, milliseconds % 1000);
+
+
+            /*
             auto pBuf_ = pBuf;
 
             auto detections_count = ((uint16_t *) pBuf)[0];
@@ -223,9 +236,9 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
                            i + 1, detect_classes[det.class_id].c_str(), det.confidence,
                            det.x, det.y, det.w, det.h);
                 }
-            }
+            }*/
 
-            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf_);
+            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
             if (K_SUCCESS != s32Ret) {
                 printf("read done error:%x\n", s32Ret);
                 break;
@@ -386,6 +399,35 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
     printf("ipcmsg_recv %lu\n", msg->u32CMD);
+    switch (msg->u32CMD) {
+        case MSG_CMD_DETECTIONS: {
+            auto pts = static_cast<uint64_t*>(msg->pBody);
+            size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
+            auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
+
+            // Convert PTS from microseconds to human-readable time format
+            uint64_t microseconds = *pts;
+            uint64_t milliseconds = microseconds / 1000;
+            uint64_t seconds = milliseconds / 1000;
+            uint64_t minutes = seconds / 60;
+            uint64_t hours = minutes / 60;
+
+            printf("Detections: %lu, pts: %02lu:%02lu:%02lu.%03lu\n",
+                   count, hours, minutes % 60, seconds % 60, milliseconds % 1000);
+            for (size_t i = 0; i < count; i++) {
+                auto det = &detections_p[i];
+                std::cout << "\t" << (i + 1) << ": "
+                                            << detect_classes[det->class_id]
+                                            << "confidence=" << det->confidence << " "
+                                            << "box=[" << det->x << "," << det->y << ","
+                                            << det->w << "x" << det->h << "]"
+                                            << std::endl;
+            }
+
+        } break;
+        default:
+            break;
+    }
 }
 
 int main(int argc, char *argv[]) {

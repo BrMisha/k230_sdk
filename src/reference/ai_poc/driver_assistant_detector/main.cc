@@ -85,7 +85,7 @@ static inline void CHECK_RET(k_s32 ret, const char *func, const int line) {
 // datafifo
 
 static void release(void *pStream) {
-    printf("release %p\n", pStream);
+    //printf("release %p\n", pStream);
 }
 
 static int datafifo_init(void) {
@@ -249,8 +249,7 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
     return results;
 }
 
-void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
-                     float overlap_ratio) {
+void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
     uint64_t results_to_push_pts;
@@ -258,7 +257,9 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
     std::condition_variable results_to_push_cv;
 
     std::thread push_thread([&]() {
-        while (running) {
+        static const size_t MAX_COUNT = 50;
+        auto *buf = static_cast<uint8_t *>(malloc(  sizeof(DetectionNormalizedCommon) * MAX_COUNT + sizeof(results_to_push_pts)));
+        while (ipcmsg_handle && running) {
             std::unique_lock<std::mutex> lock(results_to_push_mutex);
             if (results_to_push.empty()) {
                 if (running)
@@ -277,10 +278,25 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                             << std::endl;
                 }
 
+                *reinterpret_cast<uint64_t*>(buf) = results_to_push_pts;
+                for (size_t i = 0; i < results_to_push.size() && i < MAX_COUNT;  ++i) {
+                    auto dnc = &reinterpret_cast<DetectionNormalizedCommon*>(buf + sizeof(results_to_push_pts))[i];
+                    dnc->class_id = results_to_push[i].class_id;
+                    dnc->confidence = results_to_push[i].confidence;
+                    dnc->x = results_to_push[i].box.x;
+                    dnc->y = results_to_push[i].box.y;
+                    dnc->w = results_to_push[i].box.width;
+                    dnc->h = results_to_push[i].box.height;
+                }
+                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECTIONS, buf,
+                    sizeof(results_to_push_pts) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
+                auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
+                kd_ipcmsg_destroy_message(pReq);
+
                 results_to_push.clear();
             }
         }
-
+        free(buf);
     });
 
     std::unique_ptr<cv::Mat> rgb_frame;
@@ -313,43 +329,13 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             std::lock_guard<std::mutex> lock(obDet_mutex);
             SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
             results = detect(sahi, *rgb_frame);
+            printf("Detections count: %lu\n", results.size());
         }
 
         std::lock_guard<std::mutex> lock(results_to_push_mutex);
         results_to_push_pts = dump_info.v_frame.pts;
         results_to_push = std::move(results);
         results_to_push_cv.notify_all();
-
-
-        /*{
-            ScopedTiming st("venc_send_frame", debug_mode);
-
-            {
-                last_detection_t ld;
-                ld.pts = time_pts;
-
-                for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, buffer.width, buffer.height);
-
-                    DetectionCommon dc;
-                    memset(&dc, 0, sizeof(DetectionCommon));
-                    dc.class_id = d.class_id;
-                    dc.confidence = d.confidence;
-
-                    dc.x = static_cast<uint16_t>(d.box.x);
-                    dc.y = static_cast<uint16_t>(d.box.y);
-                    dc.w = static_cast<uint16_t>(d.box.width);
-                    dc.h = static_cast<uint16_t>(d.box.height);
-
-                    ld.detections.push_back(dc);
-                }
-
-                std::lock_guard<std::mutex> lock(last_detections_mutex);
-                last_detections.push(ld);
-            }
-
-            media->venc_push(time_pts++);
-        }*/
     }
 
     results_to_push_cv.notify_all();
@@ -497,8 +483,8 @@ int main(int argc, char *argv[]) {
         std::cout << "====== datafifo init failed ======";
     }
 
-    k_s32 ipcmsg_handle;
-    /*{
+    k_s32 ipcmsg_handle = 0;
+    {
         k_ipcmsg_connect_t stConnectAtt{
             .u32RemoteId = 0,
             .u32Port = 101,
@@ -515,9 +501,9 @@ int main(int argc, char *argv[]) {
             printf("kd_ipcmsg_connect failed: %d\n", ret);
             return -1;
         }
-    }*/
+    }
     std::thread ipcmsg_thread([ipcmsg_handle] {
-        //kd_ipcmsg_run(ipcmsg_handle);
+        if (ipcmsg_handle) kd_ipcmsg_run(ipcmsg_handle);
     });
 
     if (image_input_mode) {
@@ -537,8 +523,7 @@ int main(int argc, char *argv[]) {
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
-                                           facedet_nms_thresh, overlap_ratio);
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, overlap_ratio, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
