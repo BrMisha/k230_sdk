@@ -160,13 +160,6 @@ static void venc_output(k_u32 venc_ch) {
     k_s32 ret;
     int i;
 
-    FILE *h265_file = fopen("dump.h265", "ab");
-    if (!h265_file) {
-        printf("Failed to open dump.h265 for writing\n");
-        free(datafifo_buf);
-        return;
-    }
-
     printf("venc_output... started\n");
 
     while (running) {
@@ -182,7 +175,6 @@ static void venc_output(k_u32 venc_ch) {
             printf("venc_output...get available write len error:%x\n", ret);
             break;
         }
-
 
         k_venc_chn_status status;
         ret = kd_mpi_venc_query_status(venc_ch, &status);
@@ -205,77 +197,22 @@ static void venc_output(k_u32 venc_ch) {
         // Get encoded stream
         ret = kd_mpi_venc_get_stream(venc_ch, &output, -1);
         CHECK_RET(ret, __func__, __LINE__);
-        // Write stream to h265 file
 
         for (i = 0; i < output.pack_cnt; i++) {
             k_u8 *pData;
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
-            printf("venc_output... size %lu, availWriteLen %lu\n", output.pack[i].len, availWriteLen);
+            printf("venc_output... size %lu, type %d, pts %lu\n", output.pack[i].len, output.pack[i].type, output.pack[i].pts);
 
-
-
-            size_t total_size = 0;
-            if (output.pack[i].type == K_VENC_HEADER) {
-            } else {
-                /*uint16_t s = UINT16_MAX;
-                memcpy(datafifo_buf, &s, sizeof(s));
-                total_size = sizeof(s);
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].pts), sizeof(k_u64));
-                total_size += sizeof(k_u64);
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].len), sizeof(k_u32));
-                total_size += sizeof(k_u32);
-                memcpy(datafifo_buf + total_size, (void *) pData, output.pack[i].len);
-                total_size += output.pack[i].len;*/
-
-
-                FILE *f = fopen("dump.h265", "ab");
-                if (f) {
-                    fwrite(pData, 1, output.pack[i].len, f);
-                    fclose(f);
-                }
-            }
-
-            /*if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
-                size_t total_size = 0;
-
-                if (output.pack[i].type != K_VENC_HEADER) {
-                    std::vector<DetectionCommon> detections;
-                    {
-                        std::lock_guard<std::mutex> lock(last_detections_mutex);
-
-                        if (last_detections.size() != 0) {
-                            auto item = std::move(last_detections.front());
-                            last_detections.pop();
-
-                            if (item.pts == output.pack[i].pts) {
-                                detections = std::move(item.detections);
-                                //printf("last_detections_pts valid\n");
-                            } else {
-                                printf("last_detections_pts IS INVALID!!!!!!!!!!!!!!!!!!!! %lu %lu\n", item.pts,
-                                       output.pack[i].pts);
-                            }
-                        }
-                    }
-
-                    uint16_t s = detections.size();
-                    memcpy(datafifo_buf, &s, sizeof(s));
-                    total_size = sizeof(s);
-                    for (auto &it: detections) {
-                        memcpy(datafifo_buf + total_size, &it, sizeof(DetectionCommon));
-                        total_size += sizeof(DetectionCommon);
-                    }
+            if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
+                auto dff = reinterpret_cast<DataFifoFrame_t *>(datafifo_buf);
+                dff->type = output.pack[i].type;
+                dff->pts = output.pack[i].pts;
+                dff->data_len = output.pack[i].len;
+                if (DATAFIFO_DETECTOR_BLOCK_LEN <= sizeof(DataFifoFrame_t) + dff->data_len) {
+                    memcpy(dff->data, static_cast<void *>(pData), dff->data_len);
                 } else {
-                    uint16_t s = UINT16_MAX;
-                    memcpy(datafifo_buf, &s, sizeof(s));
-                    total_size = sizeof(s);
+                    printf("data fifo size IS INVALID!!!!!!!!!!!!!!!!!!!\n");
                 }
-
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].pts), sizeof(k_u64));
-                total_size += sizeof(k_u64);
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].len), sizeof(k_u32));
-                total_size += sizeof(k_u32);
-                memcpy(datafifo_buf + total_size, (void *) pData, output.pack[i].len);
-                total_size += output.pack[i].len;
 
                 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
                 if (K_SUCCESS != ret) {
@@ -287,7 +224,7 @@ static void venc_output(k_u32 venc_ch) {
                     printf("venc_output...write done error:%x\n", ret);
                     break;
                 }
-            }*/
+            }
 
             kd_mpi_sys_munmap(pData, output.pack[i].len);
         }
@@ -326,20 +263,25 @@ void isp_poll(Media *media, int debug_mode, int detection_max_width) {
         k_video_frame_info dump_info;
         {
             ScopedTiming st("isp_dump", 1);
-            auto picture = media->isp_dump(dump_info);
+            // About 30ms (on 30fps)
+            /*auto picture = media->isp_dump(dump_info);
             if (!picture) {
                 printf("!!!!!!!!! ISP DUMP !!!!!!!!\n");
                 break;
             }
 
-            auto vbvaddr = picture.value()->vbvaddr();
+            auto vbvaddr = picture.value()->vbvaddr();*/
 
             // convert to rgb and save to rgb
-            Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
-                media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+            /*Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
+                media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);*/
+
+
+            //memcpy(media->venc_get_pic_vaddr(), vbvaddr, (1920*1080*3)/2);
+            //media->venc_push(time_pts);
         }
         // Now the rgb_buffer contains image and camera buffer released
-
+/*
         cv::Mat rgb_frame(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3, rgb_buffer);
         printf("dump_info %dx%d\n", dump_info.v_frame.width, dump_info.v_frame.height);
         printf("rgb_frame %dx%d\n", rgb_frame.cols, rgb_frame.rows);
@@ -371,7 +313,7 @@ void isp_poll(Media *media, int debug_mode, int detection_max_width) {
             ScopedTiming st("Image resize", 1);
             rgb_reduce_size(rgb_frame, detection_max_width);
             std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
-        }
+        }*/
 
 
         time_pts++;
@@ -427,7 +369,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
     std::thread camera_receiver_thread([&]() {
         while (running) {
-            k_video_frame_info dump_info;
+            /*k_video_frame_info dump_info;
             int ret;
             auto picture = media->isp_dump(dump_info);
             if (!picture) {
@@ -448,7 +390,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                     media->input_config()->sensor_width, media->input_config()->sensor_height, buffer.rgb);
 
                 buffer.cv.notify_one();
-            }
+            }*/
         }
 
         buffer.cv.notify_one();
@@ -661,6 +603,54 @@ void print_usage(const char *name) {
 }
 
 int main(int argc, char *argv[]) {
+    {
+        datafifo_init();
+
+        MediaInputConfig config {
+            .sensor_width = 1920,
+            .sensor_height = 1080,
+            .rgb888_2_width = 768,
+            .rgb888_2_height = 432,
+            .bitrate_kbps = 4000
+        };
+        Media media(config);
+        media.init();
+
+        std::thread venc_output_thread(venc_output, media.venc_get_channel());
+
+        k_video_frame_info d;
+         /*{
+            auto st = new ScopedTiming("YUV ISP dump", 1);
+            auto picture = media.isp_dump_yuv420(d);
+            delete st;
+            printf("p: %d, f: %d, %dx%d\n", d.pool_id, d.v_frame.pixel_format, d.v_frame.width, d.v_frame.height);
+            printf("Pixel format received: %d (RGB_888=%d, YUV420=%d)\n",
+                   d.v_frame.pixel_format,
+                   PIXEL_FORMAT_RGB_888,
+                   PIXEL_FORMAT_YUV_SEMIPLANAR_420);
+
+            if (picture.has_value()) {
+                auto vbvaddr = picture.value()->vbvaddr();
+
+                printf("vbvaddr: %lu\n",vbvaddr);
+                // Save raw RGB888 data to file
+                FILE *f = fopen("dump.yuv420", "wb");
+                if (f) {
+                    size_t size = picture.value()->size();
+                    fwrite(vbvaddr, 1, size, f);
+                    fclose(f);
+                    printf("Saved %zu bytes to dump.yuv420\n", size);
+                }
+            }
+        }*/
+
+        usleep(3000000);
+
+        running = false;
+        venc_output_thread.join();
+        datafifo_deinit();
+        return 0;
+    }
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
     if (argc != 8) {
         print_usage(argv[0]);
