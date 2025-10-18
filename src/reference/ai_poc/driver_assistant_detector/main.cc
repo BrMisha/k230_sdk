@@ -336,7 +336,7 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
 void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
                      float overlap_ratio) {
 
-    struct Buffer {
+    /*struct Buffer {
         //uint8_t *rgb;
         //uint8_t *argb;
         k_u32   width{};
@@ -355,15 +355,12 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
         }
     };
 
-    k_u64 time_pts = 0;
-
-    printf("start loop\n");
-
-    Buffer buffer = Buffer(media->input_config()->rgb888_2_width, media->input_config()->rgb888_2_height);
-    cv::Mat rgb_frame(buffer.height, buffer.width, CV_8UC3);
+    Buffer buffer = Buffer(media->input_config()->rgb888_2_width, media->input_config()->rgb888_2_height);*/
+    //cv::Mat *rgb_frame = nullptr;// (buffer.height, buffer.width, CV_8UC3);
+    std::unique_ptr<cv::Mat> rgb_frame;
 
     while (running) {
-        ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
+        ScopedTiming st("----------------Total time--------------- ", 1);
 
         k_video_frame_info dump_info;
         int ret;
@@ -374,11 +371,15 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
                 printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
                 break;
             }
+
+            if (!rgb_frame)
+                rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
+
             // Copy camera RGB data to buffer. We can not use vbvaddr directly for detection because it is to low
-            memcpy(rgb_frame.data, picture.value()->vbvaddr(), rgb_frame.cols * rgb_frame.rows * 3);
+            memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
         }
 
-        if (buffer.width == 0 || buffer.height == 0) continue;
+        if (!rgb_frame) continue;
 
         std::vector<DetectionNormalized> results;
 
@@ -386,7 +387,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
             SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
-            results = detect(sahi, rgb_frame);
+            results = detect(sahi, *rgb_frame);
         }
 
         {
@@ -394,7 +395,7 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
 
             for (int i = 0; i < results.size(); ++i) {
                 const auto &det = results[i];
-                auto d = Detection::from_normalized(det, buffer.width, buffer.height);
+                auto d = Detection::from_normalized(det, rgb_frame->cols, rgb_frame->rows);
                 std::cout << "Object " << (i + 1) << ": "
                         << detect_classes[d.class_id] << " (ID:" << d.class_id << ") "
                         << "confidence=" << d.confidence << " "
