@@ -19,6 +19,7 @@
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common.h"
+#include "media_streamer_file.h"
 
 // datafifo
 #define READER_INDEX    0
@@ -125,6 +126,12 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
 
+    MediaStreamerFile streamer_file;
+    streamer_file.init("/mnt/bb/recording.mp4", 1920, 1080);
+
+    bool recording_started = false;
+    std::vector<uint8_t> header_buffer;
+
     while (!send_stop) {
         readLen = 0;
         s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
@@ -148,9 +155,39 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
             uint64_t seconds = milliseconds / 1000;
             uint64_t minutes = seconds / 60;
             uint64_t hours = minutes / 60;
-            printf("Read frame. pts: %02lu:%02lu:%02lu.%03lu\n",
-                   hours, minutes % 60, seconds % 60, milliseconds % 1000);
+            //printf("Read frame. pts: %02lu:%02lu:%02lu.%03lu, type %d, len %u\n",
+            //       hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
 
+            if (!recording_started) {
+                if (frame->type == 3) {
+                    // Buffer Type 3 (VPS/SPS/PPS) - don't write yet
+                    header_buffer.assign(frame->data, frame->data + frame->data_len);
+                    printf("Header buffered, size=%zu bytes\n", header_buffer.size());
+                }
+                else if (frame->type == 2 && !header_buffer.empty()) {
+                    // Combine header + IDR and write together
+                    std::vector<uint8_t> combined;
+                    combined.reserve(header_buffer.size() + frame->data_len);
+                    combined.insert(combined.end(), header_buffer.begin(), header_buffer.end());
+                    combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
+
+                    int ret = streamer_file.write_video_frame(combined.data(), combined.size(),
+                                                         frame->pts, true);
+                    if (ret == 0) {
+                        recording_started = true;
+                        printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
+                               combined.size());
+                    } else {
+                        printf("Failed to write first frame (header+IDR): error %d\n", ret);
+                    }
+                    header_buffer.clear();
+                }
+                // Discard Type 1 (P-frames) until we have header+IDR written
+            }
+            else {
+                // After recording started, write all subsequent frames normally
+                streamer_file.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+            }
 
             /*
             auto pBuf_ = pBuf;
@@ -248,6 +285,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
             usleep(10000);
         }
     }
+
+    streamer_file.stop();
 
     printf("read_fifo finished\n");
 }

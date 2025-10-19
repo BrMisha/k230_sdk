@@ -28,9 +28,11 @@ include_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/include)
 
 include_directories(${IPCMSG_ROOT}/include)
 include_directories(${THIRDPARTY_PATH}/asio)
+include_directories(${CDK_SRC_DIR}/user/middleware/mp4_format/include)
 
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
+link_directories(${CDK_SRC_DIR}/user/middleware/mp4_format/lib)
 
 link_directories(${IPCMSG_ROOT}/host/lib)
 
@@ -38,6 +40,6 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix")
 
 add_executable(${BIN} ${APP_SOURCES})
-target_link_libraries(${BIN} -Wl,--start-group datafifo pthread sys ipcmsg -Wl,--end-group)
+target_link_libraries(${BIN} -Wl,--start-group datafifo pthread sys ipcmsg mp4 -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)
