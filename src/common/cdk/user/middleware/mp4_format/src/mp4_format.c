@@ -62,6 +62,7 @@ typedef struct ktrack_ctx {
     struct mpeg4_hevc_t hevc;
     k_mp4_audio_info_s audio_info;
     k_mp4_video_info_s video_info;
+    k_mp4_subtitle_info_s subtitle_info;
 } k_track_ctx;
 
 typedef struct kmuxer_instance {
@@ -447,6 +448,19 @@ int kd_mp4_create_track(KD_HANDLE mp4_handle, KD_HANDLE *track_handle, k_mp4_tra
         track->track_flag = 1;
         track->add_to_mp4 = -1;
         memcpy(&track->audio_info, &(mp4_track_info->audio_info), sizeof(k_mp4_audio_info_s));
+    } else if (mp4_track_info->track_type == K_MP4_STREAM_SUBTITLE) {
+        track = (k_track_ctx *)calloc(1, sizeof(k_track_ctx));
+        if (!track) {
+            printf("kd_mp4_create_track: create track failed.\n");
+            return -1;
+        }
+
+        track->track_type = K_MP4_STREAM_SUBTITLE;
+        track->pts = 0;
+        track->dts = 0;
+        track->track_flag = 1;
+        track->add_to_mp4 = -1;
+        memcpy(&track->subtitle_info, &(mp4_track_info->subtitle_info), sizeof(k_mp4_subtitle_info_s));
     } else {
         printf("kd_mp4_create_track: the track type is invalid.\n");
         return -1;
@@ -666,6 +680,13 @@ int kd_mp4_write_frame(KD_HANDLE mp4_handle, KD_HANDLE track_handle, k_mp4_frame
             track->pts = frame_data->time_stamp / 1000;
             mp4_writer_write(mp4_instance->muxer_instance.mov, track->add_to_mp4, frame_data->data, frame_data->data_length, track->pts, track->pts, 0);
         }
+    } else if (track->track_type == K_MP4_STREAM_SUBTITLE) {
+        if (track->add_to_mp4 < 0) {
+            track->add_to_mp4 = mp4_writer_add_subtitle(mp4_instance->muxer_instance.mov, MOV_OBJECT_TEXT, NULL, 0);
+        }
+
+        track->pts = frame_data->time_stamp / 1000;
+        mp4_writer_write(mp4_instance->muxer_instance.mov, track->add_to_mp4, frame_data->data, frame_data->data_length, track->pts, track->pts, 0);
     }
 
     return 0;

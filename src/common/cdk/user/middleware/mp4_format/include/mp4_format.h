@@ -22,6 +22,7 @@ typedef enum {
 typedef enum {
     K_MP4_STREAM_VIDEO = 1,
     K_MP4_STREAM_AUDIO,
+    K_MP4_STREAM_SUBTITLE,
     K_MP4_STREAM_BUTT
 } k_mp4_track_type_e;
 
@@ -66,11 +67,16 @@ typedef struct {
 } k_mp4_audio_info_s;
 
 typedef struct {
+    uint32_t track_id;
+} k_mp4_subtitle_info_s;
+
+typedef struct {
     k_mp4_track_type_e track_type;
     uint32_t time_scale;
     union {
         k_mp4_video_info_s video_info;
         k_mp4_audio_info_s audio_info;
+        k_mp4_subtitle_info_s subtitle_info;
     };
 } k_mp4_track_info_s;
 
