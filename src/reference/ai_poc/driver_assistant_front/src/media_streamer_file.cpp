@@ -1,6 +1,7 @@
 #include "media_streamer_file.h"
 #include <stdio.h>
 #include <string.h>
+#include <vector>
 
 // K230 SDK headers
 #include "k_type.h"
@@ -126,13 +127,24 @@ int MediaStreamerFile::write_metadata(const char* metadata_json, uint64_t pts_us
         pts_us -= first_frame_time_stamp_;
     }
 
-    // Write JSON as subtitle data
+    // Prepare subtitle data with 2-byte big-endian length prefix (tx3g format requirement)
+    size_t text_len = strlen(metadata_json);
+    std::vector<uint8_t> buffer(2 + text_len);
+
+    // Write big-endian 16-bit length prefix
+    buffer[0] = (text_len >> 8) & 0xFF;  // High byte
+    buffer[1] = text_len & 0xFF;         // Low byte
+
+    // Copy text data after prefix
+    memcpy(&buffer[2], metadata_json, text_len);
+
+    // Write subtitle sample to MP4
     k_mp4_frame_data_s frame_data;
     memset(&frame_data, 0, sizeof(frame_data));
-    frame_data.codec_id = K_MP4_CODEC_ID_BUTT; // Not used for subtitles
-    frame_data.data = (uint8_t*)metadata_json;
-    frame_data.data_length = strlen(metadata_json);
-    frame_data.time_stamp = pts_us; // Already in microseconds, will be converted to ms in mp4_format.c
+    frame_data.codec_id = K_MP4_CODEC_ID_BUTT;
+    frame_data.data = buffer.data();
+    frame_data.data_length = buffer.size();
+    frame_data.time_stamp = pts_us;
 
     k_s32 ret = kd_mp4_write_frame((KD_HANDLE)mp4_muxer_,
                                    (KD_HANDLE)subtitle_track_handle_,
