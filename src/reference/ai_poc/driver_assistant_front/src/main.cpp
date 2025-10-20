@@ -40,9 +40,6 @@ std::mutex pending_detections_mutex;
 
 using namespace std::chrono_literals;
 
-FILE *output_file_video = nullptr;
-FILE *output_file_detections = nullptr;
-
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
 
@@ -128,15 +125,16 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_file_path) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
 
     MediaStreamerFile streamer_file;
-    streamer_file.init("/mnt/bb/recording.mp4", 1920, 1080);
-    /*MediaStreamerRtsp streamer_file;
-    streamer_file.init("live", 1920, 1080);*/
+    if (bb_file_path.has_value())
+        streamer_file.init(bb_file_path.value().c_str(), 1920, 1080);
+    MediaStreamerRtsp streamer_rtsp;
+    streamer_rtsp.init("live", 1920, 1080);
 
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
@@ -181,8 +179,16 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
                     combined.insert(combined.end(), header_buffer.begin(), header_buffer.end());
                     combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
 
-                    int ret = streamer_file.write_video_frame(combined.data(), combined.size(),
-                                                         frame->pts, true);
+                    int ret = -1;
+
+                    if (streamer_file.is_ready())
+                        ret = streamer_file.write_video_frame(combined.data(), combined.size(), frame->pts,
+                            true);
+
+                    if (streamer_rtsp.is_ready())
+                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
+                            true);
+
                     if (ret == 0) {
                         recording_started = true;
                         printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
@@ -196,7 +202,10 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
             }
             else {
                 // After recording started, write all subsequent frames normally
-                streamer_file.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+                if (streamer_file.is_ready())
+                    streamer_file.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+                if (streamer_rtsp.is_ready())
+                    streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
             }
 
             // blink
@@ -288,6 +297,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
     }
 
     streamer_file.stop();
+    streamer_rtsp.stop();
 
     printf("read_fifo finished\n");
 }
@@ -456,9 +466,9 @@ int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
     std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
 
-    std::optional<std::string> bb_path;
+    std::optional<std::string> bb_dir_path;
     bool daemon_mode;
-    int ret = parse_config(argc, argv, bb_path, daemon_mode);
+    int ret = parse_config(argc, argv, bb_dir_path, daemon_mode);
 
     k_u64 datafifo_phy_addr[2] = {0,0};
 
@@ -505,37 +515,19 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if (bb_path.has_value()) {
+    std::optional<std::string> bb_file_path;
+    if (bb_dir_path.has_value()) {
         for (int i = 0; i < 0xFFFF; ++i) {
             char filename[50];
-            sprintf(filename, (*bb_path + "/%d.h265").c_str(), i);
+            sprintf(filename, (*bb_dir_path + "/%d.mp4").c_str(), i);
             FILE *file = fopen(filename, "r");
             if (!file) {
-                sprintf(filename, (*bb_path + "/%d.txt").c_str(), i);
-                file = fopen(filename, "r");
-                if (!file) {
-                    sprintf(filename, (*bb_path + "/%d.h265").c_str(), i);
-                    printf("output_file_video %s\n", filename);
-                    output_file_video = fopen(filename, "wb");
-
-                    sprintf(filename, (*bb_path + "/%d.txt").c_str(), i);
-                    printf("output_file_detections %s\n", filename);
-                    output_file_detections = fopen(filename, "w");
-
-                    break;
-                }
-                fclose(file);
-            } else fclose(file);
-        }
-
-        if (!output_file_video || !output_file_detections) {
-            std::cerr << "Can't open video file!" << std::endl;
-            kd_ipcmsg_disconnect(ipcmsg_handle);
-            return -1;
+                bb_file_path = filename;
+                break;
+            }
+            fclose(file);
         }
     }
-
-
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
@@ -550,7 +542,7 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_file_path);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -569,9 +561,6 @@ int main(int argc, char *argv[]) {
     udp_receiver_thread.join();
 
     datafifo_deinit();
-
-    if (output_file_video) fclose(output_file_video);
-    if (output_file_detections) fclose(output_file_detections);
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
