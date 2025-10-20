@@ -20,6 +20,10 @@
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common.h"
 #include "media_streamer_file.h"
+#include "media_streamer_rtsp.h"
+#include "rapidjson/document.h"
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
 
 // datafifo
 #define READER_INDEX    0
@@ -29,6 +33,10 @@ static k_datafifo_handle hDataFifo[2] = {
 };
 
 std::atomic<bool> send_stop(false);
+
+std::vector<DetectionNormalizedCommon>  pending_detections;
+uint64_t pending_detections_pts = 0;
+std::mutex pending_detections_mutex;
 
 using namespace std::chrono_literals;
 
@@ -128,9 +136,13 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
 
     MediaStreamerFile streamer_file;
     streamer_file.init("/mnt/bb/recording.mp4", 1920, 1080);
+    /*MediaStreamerRtsp streamer_file;
+    streamer_file.init("live", 1920, 1080);*/
 
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
+    uint32_t ttt = 0;
+    bool sent_subtitle = false;
 
     while (!send_stop) {
         readLen = 0;
@@ -279,6 +291,50 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
             if (K_SUCCESS != s32Ret) {
                 printf("read done error:%x\n", s32Ret);
                 break;
+            }
+
+            std::lock_guard lock(pending_detections_mutex);
+
+            if (pending_detections.empty()) {
+                // If we sent subtitles on the prev frame, we need to send empty for valid subtitle duration
+                if (sent_subtitle) {
+                    //streamer_file.write_metadata("{}", frame->pts);
+                    sent_subtitle = false;
+                }
+            }
+            else {
+                // Serialize all detections to JSON using RapidJSON
+                rapidjson::Document doc;
+                doc.SetObject();
+                auto& allocator = doc.GetAllocator();
+
+                // Create detections array
+                rapidjson::Value detections_array(rapidjson::kArrayType);
+                for (const auto& det : pending_detections) {
+                    rapidjson::Value detection_obj(rapidjson::kObjectType);
+
+                    detection_obj.AddMember("class",
+                        rapidjson::Value(detect_classes[det.class_id].c_str(), allocator),
+                        allocator);
+                    detection_obj.AddMember("conf", det.confidence, allocator);
+                    detection_obj.AddMember("x", det.x, allocator);
+                    detection_obj.AddMember("y", det.y, allocator);
+                    detection_obj.AddMember("w", det.w, allocator);
+                    detection_obj.AddMember("h", det.h, allocator);
+
+                    detections_array.PushBack(detection_obj, allocator);
+                }
+
+                doc.AddMember("detections", detections_array, allocator);
+
+                // Convert to JSON string
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                doc.Accept(writer);
+
+                streamer_file.write_metadata(buffer.GetString(), pending_detections_pts);
+                pending_detections.clear();
+                sent_subtitle = true;
             }
         }
         else {
@@ -444,23 +500,32 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
             auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
 
-            // Convert PTS from microseconds to human-readable time format
-            uint64_t microseconds = *pts;
-            uint64_t milliseconds = microseconds / 1000;
-            uint64_t seconds = milliseconds / 1000;
-            uint64_t minutes = seconds / 60;
-            uint64_t hours = minutes / 60;
+            if (count) {
+                // Convert PTS from microseconds to human-readable time format
+                /*uint64_t microseconds = *pts;
+                uint64_t milliseconds = microseconds / 1000;
+                uint64_t seconds = milliseconds / 1000;
+                uint64_t minutes = seconds / 60;
+                uint64_t hours = minutes / 60;
 
-            printf("Detections: %lu, pts: %02lu:%02lu:%02lu.%03lu\n",
-                   count, hours, minutes % 60, seconds % 60, milliseconds % 1000);
-            for (size_t i = 0; i < count; i++) {
-                auto det = &detections_p[i];
-                std::cout << "\t" << (i + 1) << ": "
-                                            << detect_classes[det->class_id]
-                                            << "confidence=" << det->confidence << " "
-                                            << "box=[" << det->x << "," << det->y << ","
-                                            << det->w << "x" << det->h << "]"
-                                            << std::endl;
+                printf("Detections: %lu, pts: %02lu:%02lu:%02lu.%03lu\n", count, hours, minutes % 60, seconds % 60, milliseconds % 1000);*/
+
+                std::lock_guard lock(pending_detections_mutex);
+                pending_detections.clear();
+                pending_detections_pts = *pts;
+                for (size_t i = 0; i < count; i++) {
+                    auto det = &detections_p[i];
+                    pending_detections.push_back(*detections_p);
+                    /*std::cout << "\t" << (i + 1) << ": "
+                                                << detect_classes[det->class_id]
+                                                << "confidence=" << det->confidence << " "
+                                                << "box=[" << det->x << "," << det->y << ","
+                                                << det->w << "x" << det->h << "]"
+                                                << std::endl;*/
+                }
+
+
+
             }
 
         } break;
