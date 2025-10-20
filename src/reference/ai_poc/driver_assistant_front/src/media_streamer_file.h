@@ -34,7 +34,7 @@ public:
                          uint64_t pts_us, bool is_keyframe) override;
 
     /**
-     * Write metadata to separate file (MP4 metadata track not supported by K230 SDK)
+     * Write metadata as text subtitles in MP4 file
      * @param metadata_json JSON string containing metadata
      * @param pts_us Presentation timestamp in microseconds
      * @return 0 on success, negative on error
@@ -55,6 +55,7 @@ private:
     // MP4 file writer handles (using K230 SDK mp4_format API)
     void* mp4_muxer_;
     void* video_track_handle_;
+    void* subtitle_track_handle_;  // Used for metadata storage as text subtitles
     bool mp4_initialized_;
     uint64_t first_frame_time_stamp_;
 };

@@ -9,6 +9,7 @@
 MediaStreamerFile::MediaStreamerFile()
     : mp4_muxer_(nullptr)
     , video_track_handle_(nullptr)
+    , subtitle_track_handle_(nullptr)
     , mp4_initialized_(false)
     , first_frame_time_stamp_(UINT64_MAX)
 {
@@ -56,8 +57,25 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
         return ret;
     }
 
+    // Create subtitle track for metadata storage
+    k_mp4_track_info_s subtitle_track_info;
+    memset(&subtitle_track_info, 0, sizeof(subtitle_track_info));
+    subtitle_track_info.track_type = K_MP4_STREAM_SUBTITLE;
+    subtitle_track_info.time_scale = 1000; // milliseconds
+
+    ret = kd_mp4_create_track((KD_HANDLE)mp4_muxer_,
+                              (KD_HANDLE*)&subtitle_track_handle_,
+                              &subtitle_track_info);
+    if (ret != 0) {
+        printf("MediaStreamerFile: kd_mp4_create_track (subtitle/metadata) failed: %d\n", ret);
+        kd_mp4_destroy((KD_HANDLE)mp4_muxer_);
+        mp4_muxer_ = nullptr;
+        video_track_handle_ = nullptr;
+        return ret;
+    }
+
     mp4_initialized_ = true;
-    printf("MediaStreamerFile: MP4 initialized - %s (%dx%d)\n",
+    printf("MediaStreamerFile: MP4 initialized - %s (%dx%d) with subtitle track\n",
            config, width, height);
 
     return 0;
@@ -95,10 +113,35 @@ int MediaStreamerFile::write_video_frame(const uint8_t* data, size_t data_length
 }
 
 int MediaStreamerFile::write_metadata(const char* metadata_json, uint64_t pts_us) {
-    // Metadata track not supported by K230 SDK mp4_format
-    // Can be logged to a separate file if needed in the future
-    (void)metadata_json;
-    (void)pts_us;
+    if (!mp4_initialized_ || !subtitle_track_handle_) {
+        return -1;
+    }
+
+    if (!metadata_json) {
+        return -1;
+    }
+
+    // Normalize timestamp
+    if (first_frame_time_stamp_ != UINT64_MAX) {
+        pts_us -= first_frame_time_stamp_;
+    }
+
+    // Write JSON as subtitle data
+    k_mp4_frame_data_s frame_data;
+    memset(&frame_data, 0, sizeof(frame_data));
+    frame_data.codec_id = K_MP4_CODEC_ID_BUTT; // Not used for subtitles
+    frame_data.data = (uint8_t*)metadata_json;
+    frame_data.data_length = strlen(metadata_json);
+    frame_data.time_stamp = pts_us; // Already in microseconds, will be converted to ms in mp4_format.c
+
+    k_s32 ret = kd_mp4_write_frame((KD_HANDLE)mp4_muxer_,
+                                   (KD_HANDLE)subtitle_track_handle_,
+                                   &frame_data);
+    if (ret != 0) {
+        printf("MediaStreamerFile: kd_mp4_write_frame (metadata) failed: %d\n", ret);
+        return ret;
+    }
+
     return 0;
 }
 
@@ -109,6 +152,7 @@ void MediaStreamerFile::stop() {
         kd_mp4_destroy((KD_HANDLE)mp4_muxer_);
         mp4_muxer_ = nullptr;
         video_track_handle_ = nullptr;
+        subtitle_track_handle_ = nullptr;
         mp4_initialized_ = false;
         printf("MediaStreamerFile: MP4 closed\n");
     }
