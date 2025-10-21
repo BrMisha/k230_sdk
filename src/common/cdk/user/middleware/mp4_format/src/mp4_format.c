@@ -313,7 +313,8 @@ int kd_mp4_create(KD_HANDLE *mp4_handle, k_mp4_config_s *mp4_cfg) {
             }
 
             // remove "MOV_FLAG_SEGMENT", in order to obtain fmp4-duration.. TODO
-            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, MOV_FLAG_FASTSTART /*| MOV_FLAG_SEGMENT*/);
+            // FIX: Removed MOV_FLAG_FASTSTART to avoid 2-minute finalization delay (MOOV will be at end of file)
+            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, MOV_FLAG_SEGMENT);
             if (!mp4_instance->muxer_instance.mov) {
                 printf("kd_mp4_create: create mp4 writer failed.\n");
                 return -1;
@@ -682,7 +683,9 @@ int kd_mp4_write_frame(KD_HANDLE mp4_handle, KD_HANDLE track_handle, k_mp4_frame
         }
     } else if (track->track_type == K_MP4_STREAM_SUBTITLE) {
         if (track->add_to_mp4 < 0) {
-            track->add_to_mp4 = mp4_writer_add_subtitle(mp4_instance->muxer_instance.mov, MOV_OBJECT_TEXT, NULL, 0);
+            // FIX: Pass empty string instead of NULL to avoid undefined behavior in mov_add_subtitle
+            static const char empty_extra_data[1] = {0};
+            track->add_to_mp4 = mp4_writer_add_subtitle(mp4_instance->muxer_instance.mov, MOV_OBJECT_TEXT, empty_extra_data, 0);
         }
 
         track->pts = frame_data->time_stamp / 1000;

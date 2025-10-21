@@ -31,7 +31,7 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
     mp4_config.config_type = K_MP4_CONFIG_MUXER;
     strncpy(mp4_config.muxer_config.file_name, config,
             sizeof(mp4_config.muxer_config.file_name) - 1);
-    mp4_config.muxer_config.fmp4_flag = 0; // Standard MP4 for file recording
+    mp4_config.muxer_config.fmp4_flag = 1; // Fragmented MP4 for crash-safe recording
 
     ret = kd_mp4_create((KD_HANDLE*)&mp4_muxer_, &mp4_config);
     if (ret != 0) {
