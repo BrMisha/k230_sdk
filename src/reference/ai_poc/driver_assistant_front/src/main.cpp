@@ -451,7 +451,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             pending_detections_pts = *pts;
             for (size_t i = 0; i < count; i++) {
                 auto det = &detections_p[i];
-                pending_detections.push_back(*detections_p);
+                pending_detections.push_back(*det);
             }
         } break;
         default:
