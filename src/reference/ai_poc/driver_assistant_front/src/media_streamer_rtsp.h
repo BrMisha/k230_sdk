@@ -38,12 +38,13 @@ public:
     int write_video_frame(const uint8_t* data, size_t data_length,
                          uint64_t pts_us, bool is_keyframe) override;
 
-    /**
-     * Write metadata (NOT SUPPORTED for RTSP)
-     * RTSP does not support subtitle/metadata tracks in standard implementations
-     * @return 0 (no-op)
-     */
-    int write_metadata(const char* metadata_json, uint64_t pts_us) override;
+    // DISABLED: Metadata not supported
+    // /**
+    //  * Write metadata (NOT SUPPORTED for RTSP)
+    //  * RTSP does not support subtitle/metadata tracks in standard implementations
+    //  * @return 0 (no-op)
+    //  */
+    // int write_metadata(const char* metadata_json, uint64_t pts_us) override;
 
     /**
      * Stop RTSP server and destroy session

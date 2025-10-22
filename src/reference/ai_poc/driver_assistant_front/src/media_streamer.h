@@ -35,16 +35,21 @@ public:
     virtual int write_video_frame(const uint8_t* data, size_t data_length,
                                   uint64_t pts_us, bool is_keyframe) = 0;
 
-    /**
-     * Write metadata (detection results, etc.)
-     * @param metadata_json JSON string containing metadata
-     * @param pts_us Presentation timestamp in microseconds (should match video PTS)
-     * @return 0 on success, negative on error
-     *
-     * Example JSON:
-     * {"detections":[{"class":"traffic_light","x":0.5,"y":0.3,"w":0.1,"h":0.15,"conf":0.95}]}
-     */
-    virtual int write_metadata(const char* metadata_json, uint64_t pts_us) = 0;
+    // DISABLED: Fragmented MP4 doesn't support subtitle tracks properly in K230 SDK
+    // The SDK's fMP4 implementation declares subtitle tracks in MOOV/MVEX but doesn't
+    // write subtitle fragments correctly, causing "could not find corresponding trex" errors.
+    // May be implemented in the future with external JSON metadata files.
+    //
+    // /**
+    //  * Write metadata (detection results, etc.)
+    //  * @param metadata_json JSON string containing metadata
+    //  * @param pts_us Presentation timestamp in microseconds (should match video PTS)
+    //  * @return 0 on success, negative on error
+    //  *
+    //  * Example JSON:
+    //  * {"detections":[{"class":"traffic_light","x":0.5,"y":0.3,"w":0.1,"h":0.15,"conf":0.95}]}
+    //  */
+    // virtual int write_metadata(const char* metadata_json, uint64_t pts_us) = 0;
 
     /**
      * Stop streaming and close all outputs

@@ -33,13 +33,14 @@ public:
     int write_video_frame(const uint8_t* data, size_t data_length,
                          uint64_t pts_us, bool is_keyframe) override;
 
-    /**
-     * Write metadata as text subtitles in MP4 file
-     * @param metadata_json JSON string containing metadata
-     * @param pts_us Presentation timestamp in microseconds
-     * @return 0 on success, negative on error
-     */
-    int write_metadata(const char* metadata_json, uint64_t pts_us) override;
+    // DISABLED: Subtitle track not supported in fragmented MP4
+    // /**
+    //  * Write metadata as text subtitles in MP4 file
+    //  * @param metadata_json JSON string containing metadata
+    //  * @param pts_us Presentation timestamp in microseconds
+    //  * @return 0 on success, negative on error
+    //  */
+    // int write_metadata(const char* metadata_json, uint64_t pts_us) override;
 
     /**
      * Stop recording and close MP4 file
@@ -55,9 +56,8 @@ private:
     // MP4 file writer handles (using K230 SDK mp4_format API)
     void* mp4_muxer_;
     void* video_track_handle_;
-    void* subtitle_track_handle_;  // Used for metadata storage as text subtitles
+    // void* subtitle_track_handle_;  // DISABLED: Not supported in fragmented MP4
     bool mp4_initialized_;
-    uint64_t first_frame_time_stamp_;
 };
 
 #endif // MEDIA_STREAMER_FILE_H

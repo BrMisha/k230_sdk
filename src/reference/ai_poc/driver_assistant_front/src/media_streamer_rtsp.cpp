@@ -77,14 +77,15 @@ int MediaStreamerRtsp::write_video_frame(const uint8_t* data, size_t data_length
     return 0;
 }
 
-int MediaStreamerRtsp::write_metadata(const char* metadata_json, uint64_t pts_us) {
-    // RTSP does not support subtitle/metadata tracks in standard implementations
-    // Metadata would require custom RTSP extensions or separate channel
-    // For now, this is a no-op
-    (void)metadata_json;
-    (void)pts_us;
-    return 0;
-}
+// DISABLED: Metadata not supported
+// int MediaStreamerRtsp::write_metadata(const char* metadata_json, uint64_t pts_us) {
+//     // RTSP does not support subtitle/metadata tracks in standard implementations
+//     // Metadata would require custom RTSP extensions or separate channel
+//     // For now, this is a no-op
+//     (void)metadata_json;
+//     (void)pts_us;
+//     return 0;
+// }
 
 void MediaStreamerRtsp::stop() {
     if (rtsp_initialized_) {
