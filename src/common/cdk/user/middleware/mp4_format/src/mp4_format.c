@@ -312,9 +312,12 @@ int kd_mp4_create(KD_HANDLE *mp4_handle, k_mp4_config_s *mp4_cfg) {
                 return -1;
             }
 
-            // remove "MOV_FLAG_SEGMENT", in order to obtain fmp4-duration.. TODO
-            // FIX: Removed MOV_FLAG_FASTSTART to avoid 2-minute finalization delay (MOOV will be at end of file)
-            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, MOV_FLAG_SEGMENT);
+            // FIXED: Removed MOV_FLAG_SEGMENT to enable MFRA writing for correct duration tracking
+            // - MOV_FLAG_SEGMENT is for DASH streaming (separate media segments)
+            // - Without it, MFRA box is written on close with duration and seeking info
+            // - File remains fragmented (crash-safe) but uses standard fMP4 format
+            // - MOOV will be at end of file (MOV_FLAG_FASTSTART was removed earlier)
+            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, 0);
             if (!mp4_instance->muxer_instance.mov) {
                 printf("kd_mp4_create: create mp4 writer failed.\n");
                 return -1;
