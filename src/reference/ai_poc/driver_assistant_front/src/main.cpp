@@ -21,9 +21,6 @@
 #include "../../driver_assistant_detector/common.h"
 #include "media_streamer_file.h"
 #include "media_streamer_rtsp.h"
-#include "rapidjson/document.h"
-#include "rapidjson/writer.h"
-#include "rapidjson/stringbuffer.h"
 
 // datafifo
 #define READER_INDEX    0
