@@ -35,13 +35,18 @@ static k_datafifo_handle hDataFifo[2] = {
 std::atomic<bool> send_stop(false);
 
 std::vector<DetectionNormalizedCommon>  pending_detections;
-uint64_t pending_detections_pts = 0;
+uint64_t pending_detections_pts = UINT64_MAX;
 std::mutex pending_detections_mutex;
 
 using namespace std::chrono_literals;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
+
+struct BbFiles_t {
+    std::string video;
+    std::string log;
+};
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
@@ -125,20 +130,26 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_file_path) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
 
     MediaStreamerFile streamer_file;
-    if (bb_file_path.has_value())
-        streamer_file.init(bb_file_path.value().c_str(), 1920, 1080);
+    FILE *output_file_detections = nullptr;
+    if (bb_files_path.has_value()) {
+        streamer_file.init(bb_files_path.value().video.c_str(), 1920, 1080);
+        output_file_detections = fopen(bb_files_path.value().log.c_str(), "w");
+    }
+
     MediaStreamerRtsp streamer_rtsp;
     streamer_rtsp.init("live", 1920, 1080);
 
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
-    bool sent_subtitle = false;
+    uint64_t first_frame_time_stamp = UINT64_MAX;
+
+    char common_buf[1024*10];
 
     while (!send_stop) {
         readLen = 0;
@@ -158,13 +169,20 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
 
-            uint64_t microseconds = frame->pts;
+            // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
+            // Header is generated at init time, but first video frame comes much later
+            if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
+                first_frame_time_stamp = frame->pts;
+            }
+            const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
+
+            uint64_t microseconds = pts;
             uint64_t milliseconds = microseconds / 1000;
             uint64_t seconds = milliseconds / 1000;
             uint64_t minutes = seconds / 60;
             uint64_t hours = minutes / 60;
-            //printf("Read frame. pts: %02lu:%02lu:%02lu.%03lu, type %d, len %u\n",
-            //       hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
+            printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
+                   hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
 
             if (!recording_started) {
                 if (frame->type == 3) {
@@ -182,11 +200,11 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                     int ret = -1;
 
                     if (streamer_file.is_ready())
-                        ret = streamer_file.write_video_frame(combined.data(), combined.size(), frame->pts,
+                        ret = streamer_file.write_video_frame(combined.data(), combined.size(), pts,
                             true);
 
                     if (streamer_rtsp.is_ready())
-                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
+                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), pts,
                             true);
 
                     if (ret == 0) {
@@ -203,14 +221,19 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             else {
                 // After recording started, write all subsequent frames normally
                 if (streamer_file.is_ready())
-                    streamer_file.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+                    streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
                 if (streamer_rtsp.is_ready())
-                    streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+                    streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
             }
 
             // blink
             if (counter++ > 100) {
                 counter = 0;
+
+                if (output_file_detections) {
+                    fflush(output_file_detections);
+                    fsync(fileno(output_file_detections));
+                }
 
                 std::thread([ipcmsg_handle]() {
                     uint8_t state = 1;
@@ -237,58 +260,36 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             uint64_t _pending_detections_pts;
             {
                 std::lock_guard lock(pending_detections_mutex);
-                _pending_detections = std::move(pending_detections);
-                _pending_detections_pts = pending_detections_pts;
-            }
 
-            if (_pending_detections.empty()) {
-                // If we sent subtitles on the prev frame, we need to send empty for valid subtitle duration
-                if (sent_subtitle) {
-                    //streamer_file.write_metadata("{}", frame->pts);
-                    sent_subtitle = false;
+                if (pending_detections_pts == UINT64_MAX    // No pending detections
+                    || first_frame_time_stamp == UINT64_MAX) // Did not initialize fist pts
+                    _pending_detections_pts = UINT64_MAX;
+                else {
+                    // If we have the first pts and pending_detections_pts is valid, then we got a detection result.
+                    // In this case take these values to process it
+                    _pending_detections_pts = pending_detections_pts - first_frame_time_stamp;
+                    _pending_detections = std::move(pending_detections);
+                    pending_detections_pts = UINT64_MAX;
                 }
             }
-            else {
-                // Serialize all detections to JSON using RapidJSON
-                rapidjson::Document doc;
-                doc.SetObject();
-                auto& allocator = doc.GetAllocator();
 
-                // Create detections array
-                rapidjson::Value detections_array(rapidjson::kArrayType);
-                for (const auto& det : _pending_detections) {
-                    rapidjson::Value detection_obj(rapidjson::kObjectType);
-
-                    detection_obj.AddMember("class",
-                        rapidjson::Value(detect_classes[det.class_id].c_str(), allocator),
-                        allocator);
-                    detection_obj.AddMember("conf", det.confidence, allocator);
-                    detection_obj.AddMember("x", det.x, allocator);
-                    detection_obj.AddMember("y", det.y, allocator);
-                    detection_obj.AddMember("w", det.w, allocator);
-                    detection_obj.AddMember("h", det.h, allocator);
-
-                    detections_array.PushBack(detection_obj, allocator);
+            if (_pending_detections_pts != UINT64_MAX) {
+                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;", _pending_detections_pts/1000);
+                for (auto &it: _pending_detections) {
+                    auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
+                        detect_classes[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
+                    if (l >= 0)
+                        len += l;
                 }
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, "\n");
 
-                doc.AddMember("detections", detections_array, allocator);
-                doc.AddMember("pts", _pending_detections_pts/1000, allocator);
-
-                // Convert to JSON string
-                rapidjson::StringBuffer buffer;
-                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-                doc.Accept(writer);
-
-                streamer_file.write_metadata(buffer.GetString(), _pending_detections_pts);
+                if (output_file_detections)
+                    fwrite(common_buf, 1, len, output_file_detections);
 
                 std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                 if (stream_endpoint_detections.port() != 0) {
-                    udp_socket->send_to(
-                        asio::buffer(buffer.GetString(), buffer.GetSize()),
-                        stream_endpoint_detections);
+                    udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
                 }
-
-                sent_subtitle = true;
             }
         }
         else {
@@ -297,7 +298,9 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
     }
 
     streamer_file.stop();
-    streamer_rtsp.stop();
+    if (output_file_detections) fclose(output_file_detections);
+    // Do dot stop rtsp beause of to long
+    //streamer_rtsp.stop();
 
     printf("read_fifo finished\n");
 }
@@ -446,16 +449,13 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
             auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
 
-            if (count) {
-                std::lock_guard lock(pending_detections_mutex);
-                pending_detections.clear();
-                pending_detections_pts = *pts;
-                for (size_t i = 0; i < count; i++) {
-                    auto det = &detections_p[i];
-                    pending_detections.push_back(*detections_p);
-                }
+            std::lock_guard lock(pending_detections_mutex);
+            pending_detections.clear();
+            pending_detections_pts = *pts;
+            for (size_t i = 0; i < count; i++) {
+                auto det = &detections_p[i];
+                pending_detections.push_back(*detections_p);
             }
-
         } break;
         default:
             break;
@@ -515,17 +515,27 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    std::optional<std::string> bb_file_path;
+    std::optional<BbFiles_t> bb_files_path;
     if (bb_dir_path.has_value()) {
         for (int i = 0; i < 0xFFFF; ++i) {
-            char filename[50];
-            sprintf(filename, (*bb_dir_path + "/%d.mp4").c_str(), i);
-            FILE *file = fopen(filename, "r");
+            char bb_file_buf[64];
+            char bb_log_buf[64];
+            snprintf(bb_file_buf, sizeof(bb_file_buf), "%s/%d.mp4", bb_dir_path->c_str(), i);
+            snprintf(bb_log_buf, sizeof(bb_log_buf), "%s/%d.txt", bb_dir_path->c_str(), i);
+
+            FILE *file = fopen(bb_file_buf, "r");
             if (!file) {
-                bb_file_path = filename;
-                break;
+                file = fopen(bb_log_buf, "r");
+                if (!file) {
+                    bb_files_path = BbFiles_t {
+                        .video = bb_file_buf,
+                        .log = bb_log_buf
+                    };
+                    break;
+                }
+                fclose(file);
             }
-            fclose(file);
+            else fclose(file);
         }
     }
 
@@ -542,7 +552,7 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_file_path);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
