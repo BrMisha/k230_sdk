@@ -166,17 +166,18 @@ def draw_detections(frame, detections):
     height, width = frame.shape[:2]
 
     for det in detections:
-        # Convert normalized coordinates to pixel coordinates
-        x_center = det['x'] * width
-        y_center = det['y'] * height
-        box_width = det['w'] * width
-        box_height = det['h'] * height
+        # Convert normalized coordinates [-1, 1] to pixel coordinates
+        # x, y are TOP-LEFT corner coordinates (not center!)
+        # x=-1 is left edge, x=1 is right edge
+        # y=-1 is top edge, y=1 is bottom edge
+        x1 = int((det['x'] + 1) * width / 2)
+        y1 = int((det['y'] + 1) * height / 2)
+        box_width = int(det['w'] * width / 2)
+        box_height = int(det['h'] * height / 2)
 
-        # Calculate top-left and bottom-right corners
-        x1 = int(x_center - box_width / 2)
-        y1 = int(y_center - box_height / 2)
-        x2 = int(x_center + box_width / 2)
-        y2 = int(y_center + box_height / 2)
+        # Calculate bottom-right corner
+        x2 = x1 + box_width
+        y2 = y1 + box_height
 
         # Draw bounding box
         color = (0, 255, 0)  # Green
@@ -226,8 +227,19 @@ def main():
     print(f"\nParsing detections...")
     detections = parse_detections(txt_file, args.pts)
     print(f"Found {len(detections)} detections")
+
+    # Print detections with both normalized and absolute coordinates
+    height, width = frame.shape[:2]
     for i, det in enumerate(detections):
-        print(f"  [{i}] {det['class']} conf={det['confidence']:.2f} x={det['x']:.4f} y={det['y']:.4f} w={det['w']:.4f} h={det['h']:.4f}")
+        # Calculate absolute pixel coordinates (top-left corner)
+        x1_px = int((det['x'] + 1) * width / 2)
+        y1_px = int((det['y'] + 1) * height / 2)
+        w_px = int(det['w'] * width / 2)
+        h_px = int(det['h'] * height / 2)
+
+        print(f"  [{i}] {det['class']} conf={det['confidence']:.2f}")
+        print(f"      Normalized: x={det['x']:.4f} y={det['y']:.4f} w={det['w']:.4f} h={det['h']:.4f}")
+        print(f"      Absolute:   x1={x1_px}px y1={y1_px}px w={w_px}px h={h_px}px (top-left corner)")
 
     # Draw detections
     if detections:
