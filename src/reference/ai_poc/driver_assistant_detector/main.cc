@@ -252,7 +252,7 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
 void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
-    uint64_t results_to_push_pts;
+    uint64_t results_to_push_pts = UINT64_MAX;
     std::mutex results_to_push_mutex;
     std::condition_variable results_to_push_cv;
 
@@ -261,7 +261,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
         auto *buf = static_cast<uint8_t *>(malloc(  sizeof(DetectionNormalizedCommon) * MAX_COUNT + sizeof(results_to_push_pts)));
         while (ipcmsg_handle && running) {
             std::unique_lock<std::mutex> lock(results_to_push_mutex);
-            if (results_to_push.empty()) {
+            if (results_to_push_pts == UINT64_MAX) {
                 if (running)
                     results_to_push_cv.wait(lock);
             }
@@ -293,7 +293,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
                 auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
                 kd_ipcmsg_destroy_message(pReq);
 
-                results_to_push.clear();
+                results_to_push_pts = UINT64_MAX;
             }
         }
         free(buf);
