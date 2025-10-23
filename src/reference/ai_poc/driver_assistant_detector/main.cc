@@ -376,12 +376,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         break;
                     }
 
-                    static void *rgb_buffer = nullptr;
-                    if (rgb_buffer == nullptr) {
-                        rgb_buffer = malloc(2592 * 2048 * 3);
-                    }
-
-                    cv::Mat rgb_frame = Utils::nv12ToRGBHWC(pBuf, data->width, data->height, reinterpret_cast<uint8_t*>(rgb_buffer));
+                    cv::Mat rgb_frame(data->height, data->width, CV_8UC3, pBuf);
 
                     s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
                     if (K_SUCCESS != s32Ret) {
@@ -389,28 +384,28 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         break;
                     }
 
-                    std::lock_guard<std::mutex> lock(obDet_mutex);
+                    std::lock_guard lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
                     auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
-                    static_cast<uint8_t*>(rgb_buffer)[0] = static_cast<uint8_t>(results.size());
+                    pBuf[0] = static_cast<uint8_t>(results.size());
 
                     for (size_t i = 0; i < results.size(); ++i) {
-                        auto d = Detection::from_normalized(results[i], data->width, data->height);
+                        auto &d = results[i];
 
-                        DetectionCommon dc;
-                        memset(&dc, 0, sizeof(DetectionCommon));
+                        DetectionNormalizedCommon dc;
+                        memset(&dc, 0, sizeof(DetectionNormalizedCommon));
                         dc.class_id = d.class_id;
                         dc.confidence = d.confidence;
 
-                        dc.x = static_cast<uint16_t>(d.box.x);
-                        dc.y = static_cast<uint16_t>(d.box.y);
-                        dc.w = static_cast<uint16_t>(d.box.width);
-                        dc.h = static_cast<uint16_t>(d.box.height);
+                        dc.x = d.box.x;
+                        dc.y = d.box.y;
+                        dc.w = d.box.width;
+                        dc.h = d.box.height;
 
-                        memcpy( static_cast<uint8_t*>(rgb_buffer) + sizeof(uint8_t) + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
+                        memcpy( pBuf + sizeof(uint8_t) + (i * sizeof(DetectionNormalizedCommon)), &dc, sizeof(DetectionNormalizedCommon));
                     }
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, sizeof(uint8_t) + results.size() * sizeof(DetectionCommon));
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, pBuf, sizeof(uint8_t) + results.size() * sizeof(DetectionNormalizedCommon));
 
                 }
                 else {

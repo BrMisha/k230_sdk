@@ -178,8 +178,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             uint64_t seconds = milliseconds / 1000;
             uint64_t minutes = seconds / 60;
             uint64_t hours = minutes / 60;
-            printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
-                   hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
+            //printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
+            //       hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
 
             if (!recording_started) {
                 if (frame->type == 3) {
@@ -357,7 +357,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                         }
 
                         auto msg = reinterpret_cast<MSG_CMD_DETECT_RGB_struct *>(buf);
-                        const size_t image_data_len = (static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height) * 3) / 2;
+                        const size_t image_data_len = static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height) * 3;
                         printf("Image size: %dx%d\n", msg->width, msg->height);
 
                         if (image_data_len + sizeof(MSG_CMD_DETECT_RGB_struct) == buff_len) {
@@ -402,7 +402,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionCommon);
+                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionNormalizedCommon);
                                     uint16_t count = static_cast<uint8_t*>(responce->pBody)[0];
                                     if (count != est_count) {
                                         printf("Wrong esimated count! %hu %lu\n", count, est_count);
@@ -439,7 +439,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
-    printf("ipcmsg_recv %lu\n", msg->u32CMD);
+    //printf("ipcmsg_recv %lu\n", msg->u32CMD);
     switch (msg->u32CMD) {
         case MSG_CMD_DETECTIONS: {
             auto pts = static_cast<uint64_t*>(msg->pBody);
