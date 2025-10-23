@@ -396,7 +396,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, msg,
                                                                      sizeof(MSG_CMD_DETECT_RGB_struct));
                                 k_ipcmsg_message_t *responce = nullptr;
-                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
+                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 10000);
                                 if (ret != K_SUCCESS) {
                                     printf("kd_ipcmsg_send_sync failed: %d\n", ret);
                                     break;
