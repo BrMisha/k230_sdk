@@ -7,8 +7,15 @@ Finally you need to have locally:
 2. Directory with images to calibrate
 
 # Convert model to kmodel
-Open the start_docker.sh and edit 3 variables
-Do
-`./convert_model.sh`
 
-Now you can use *.kmodel from $MODELS
+1. Edit `convert_model.sh` and set 3 variables:
+   - `MODELS` - directory with your .pt file
+   - `DATASET` - directory with calibration images
+   - `MODEL_FILE_NAME` - name of your .pt file
+
+2. Run conversion:
+   ```bash
+   ./convert_model.sh
+   ```
+
+Your `.kmodel` file will be created in `$MODELS` directory

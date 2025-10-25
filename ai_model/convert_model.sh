@@ -1,9 +1,31 @@
 #!/bin/bash
 
-MODELS=/home/misha/projects/ai_driver_assistant/tmp
 DATASET=/home/misha/projects/ai_driver_assistant/tmp/images
+MODELS=/home/misha/projects/ai_driver_assistant/tmp
 MODEL_FILE_NAME=best.pt
 
-docker build -t nncase-image .
-docker run  -v ${MODELS}:/app/models -v ${DATASET}:/app/dataset -e MODEL_FILE_NAME=${MODEL_FILE_NAME} --rm -it nncase-image
+docker build -t k230-converter .
 
+docker run --rm \
+    -v ${MODELS}:/models \
+    -v ${DATASET}:/calib_images \
+    k230-converter \
+    python convert.py \
+        --model /models/${MODEL_FILE_NAME} \
+        --imgsz 320 \
+        --calib-samples 10 \
+        --calib-dir /calib_images \
+        --ptq-option 4
+
+# Parameters:
+# --calib-samples: Number of calibration images to use for quantization
+#   -1 = use all available images (default)
+#   N  = use exactly N images (error if not enough images available)
+#
+# --ptq-option: Post-Training Quantization preset
+#   0: uint8/uint8
+#   1: int16/uint8 (recommended, default)
+#   2: uint8/int16
+#   3: uint8/uint8 + Kld calibration
+#   4: int16/uint8 + Kld calibration
+#   5: uint8/int16 + Kld calibration
