@@ -6,7 +6,7 @@ FROM ghcr.io/kendryte/k230_sdk
 # Switch to root user for installation
 USER root
 
-# Install system dependencies for OpenCV
+# Install system dependencies for OpenCV and SSH
 RUN apt-get update && \
     apt-get install -y \
     libgl1-mesa-glx \
@@ -14,6 +14,7 @@ RUN apt-get update && \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages for model conversion

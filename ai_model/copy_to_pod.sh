@@ -13,4 +13,4 @@ SSH_DEST="$1"
 shift  # Remove first argument
 
 echo "Copying to ${SSH_DEST}:/workspace/yolo_train/"
-scp "$@" convert_model_step_1.sh init_dataset.py train_model_step_2.sh train_model.py Dockerfile "${SSH_DEST}:/workspace/yolo_train/"
+scp "$@" convert_model_step_1.sh init_dataset.py train_model_step_2.sh train_model.py "${SSH_DEST}:/workspace/yolo_train/"

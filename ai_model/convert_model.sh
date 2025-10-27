@@ -1,7 +1,7 @@
 #!/bin/bash
 
-DATASET=/home/misha/projects/ai_driver_assistant/tmp/images
-MODELS=/home/misha/projects/ai_driver_assistant/tmp
+DATASET=/home/misha/projects/ai_driver_assistant/tmp/yolo_dataset/train
+MODELS=/home/misha/projects/ai_driver_assistant/tmp/runs/detect/tl_detector/weights
 MODEL_FILE_NAME=best.pt
 
 docker build -t k230-converter .
@@ -13,9 +13,9 @@ docker run --rm \
     python convert.py \
         --model /models/${MODEL_FILE_NAME} \
         --imgsz 320 \
-        --calib-samples 10 \
+        --calib-samples -1 \
         --calib-dir /calib_images \
-        --ptq-option 4
+        --ptq-option 1
 
 # Parameters:
 # --calib-samples: Number of calibration images to use for quantization

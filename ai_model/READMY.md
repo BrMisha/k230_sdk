@@ -28,7 +28,7 @@ This method is faster but has more difficult setup.
 All action will do here: https://console.runpod.io/
 ### 1. Create Network Storage
 About 10GB per 1000 images of dataset + 20GB for temp files
-### 2. Create CPU Runpod
+### 2. Prepare dataset with CPU Runpod
 On this step you need to select your `Network volume` and select `ubuntu-2404` as a template.
 More CPU performance == faster processing.
 When pod is created, you will see the section `SSH over exposed TCP`.
@@ -44,11 +44,16 @@ cd /workspace/yolo_train/
 Finally, you will get a directory with yolo dataset for training.
 `/workspace/yolo_train/yolo_dataset`
 Now you can to remove the CPU pod to save your money.
-### 3. Create GPU Runpod
+### 3. Train model with GPU Runpod
 This step similar to CPU, but you need to select `GPU`. Script is optimized for RTX 5090 x2.
-### 4. Train YOLO model
+#### 3.1. Train YOLO model
 Open terminal and
 ```bash
 cd /workspace/yolo_train/
 ./train_model_step_2.sh
 ```
+Finally you will get a directory with yolo dataset (`/workspace/yolo_train/yolo_dataset/`) 
+and model (`/workspace/yolo_train/runs/detect/tl_detector/`).
+Download these 2 directories to your computer to convert mode.
+#### 3.2. Convert model
+Open `ai_model/convert_model.sh`, edit the `DATASET` and the `MODELS` then run this script
