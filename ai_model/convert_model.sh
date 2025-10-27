@@ -1,8 +1,8 @@
 #!/bin/bash
 
 DATASET=/home/misha/projects/ai_driver_assistant/tmp/yolo_dataset/train
-MODELS=/home/misha/projects/ai_driver_assistant/tmp/runs/detect/tl_detector/weights
-MODEL_FILE_NAME=best.pt
+MODELS=/home/misha/projects/ai_driver_assistant/tmp/runs/detect/tl_detector3/weights
+MODEL_FILE_NAME=best.onnx
 
 docker build -t k230-converter .
 

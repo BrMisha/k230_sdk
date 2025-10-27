@@ -19,11 +19,12 @@ RUN apt-get update && \
 
 # Install Python packages for model conversion
 RUN pip install --upgrade pip && \
-    pip install \
+    pip install -v \
     ultralytics \
     nncase \
     nncase-kpu \
-    onnx>=1.12.0 \
+    "numpy<2.0" \
+    onnx>=1.15.0 \
     onnxslim>=0.1.71 \
     onnxsim \
     opencv-python-headless \

@@ -14,34 +14,6 @@ import glob
 import cv2
 
 
-def export_to_onnx(model_path, imgsz):
-    """Export PyTorch model to ONNX format"""
-    print(f"[1/3] Exporting {model_path} to ONNX...")
-
-    from ultralytics import YOLO
-    import shutil
-
-    model = YOLO(model_path)
-
-    # Export to same directory as model first (Ultralytics requirement)
-    temp_onnx_path = model_path.replace('.pt', '.onnx')
-
-    model.export(
-        format='onnx',
-        imgsz=imgsz,
-        simplify=True,
-        opset=11
-    )
-
-    # Move to /tmp to avoid cluttering workspace
-    onnx_filename = os.path.basename(temp_onnx_path)
-    onnx_path = os.path.join('/tmp', onnx_filename)
-    shutil.move(temp_onnx_path, onnx_path)
-
-    print(f"  ✓ ONNX exported: {onnx_path}")
-    return onnx_path
-
-
 def simplify_onnx(onnx_path):
     """Simplify ONNX model (optional but recommended)"""
     print(f"[2/3] Simplifying ONNX model...")
@@ -56,12 +28,14 @@ def simplify_onnx(onnx_path):
     model_simplified, check = simplify(model)
 
     if check:
-        onnx.save(model_simplified, onnx_path)
-        print(f"  ✓ ONNX simplified")
+        # Save to /tmp instead of overwriting original
+        simplified_path = os.path.join('/tmp', os.path.basename(onnx_path).replace('.onnx', '_simplified.onnx'))
+        onnx.save(model_simplified, simplified_path)
+        print(f"  ✓ ONNX simplified (saved to {simplified_path})")
+        return simplified_path
     else:
         print(f"  ⚠ Simplification failed, using original ONNX")
-
-    return onnx_path
+        return onnx_path
 
 
 def load_calibration_images(calib_dir, imgsz, calib_samples):
@@ -204,12 +178,11 @@ def convert_to_kmodel(onnx_path, imgsz, calib_samples, calib_dir=None, w_quant_t
     # Save kmodel
     kmodel = compiler.gencode_tobytes()
 
-    # Save kmodel in same directory as original .pt model
-    if model_path:
-        kmodel_path = model_path.replace('.pt', '.kmodel')
-    else:
-        # Fallback: use same directory as ONNX
-        kmodel_path = onnx_path.replace('.onnx', '.kmodel')
+    # Save kmodel in same directory as original ONNX (from args.model)
+    # This ensures it's saved to the mounted /models directory, not /tmp
+    original_dir = os.path.dirname(model_path) if model_path else os.path.dirname(onnx_path)
+    original_name = os.path.basename(model_path if model_path else onnx_path).replace('.onnx', '.kmodel')
+    kmodel_path = os.path.join(original_dir, original_name)
 
     with open(kmodel_path, 'wb') as f:
         f.write(kmodel)
@@ -279,8 +252,8 @@ Examples:
         print(f"Error: Model file '{args.model}' not found!")
         sys.exit(1)
 
-    if not args.model.endswith('.pt'):
-        print(f"Error: Model file must be a .pt file!")
+    if not args.model.endswith('.onnx'):
+        print(f"Error: Model file must be a .onnx file!")
         sys.exit(1)
 
     # Print header
@@ -293,8 +266,9 @@ Examples:
     print("=" * 70)
 
     try:
-        # Step 1: Export to ONNX
-        onnx_path = export_to_onnx(args.model, args.imgsz)
+        # Step 1: ONNX is already provided by training
+        print(f"[1/3] Using ONNX from training: {args.model}")
+        onnx_path = args.model
 
         # Step 2: Simplify ONNX (optional)
         if not args.skip_simplify:
