@@ -14,10 +14,13 @@
 #include <pthread.h>
 #include <vector>
 #include <asio.hpp>
+#include <optional>
 
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common.h"
+#include "media_streamer_file.h"
+#include "media_streamer_rtsp.h"
 
 // datafifo
 #define READER_INDEX    0
@@ -28,17 +31,22 @@ static k_datafifo_handle hDataFifo[2] = {
 
 std::atomic<bool> send_stop(false);
 
+std::vector<DetectionNormalizedCommon>  pending_detections;
+uint64_t pending_detections_pts = UINT64_MAX;
+std::mutex pending_detections_mutex;
+
 using namespace std::chrono_literals;
 
-FILE *output_file_video = NULL;
-FILE *output_file_detections = NULL;
-
 std::mutex stream_endpoint_mutex;
-asio::ip::udp::endpoint stream_endpoint_video;
 asio::ip::udp::endpoint stream_endpoint_detections;
 
+struct BbFiles_t {
+    std::string video;
+    std::string log;
+};
+
 static void release(void *pStream) {
-    printf("release %p\n", pStream);
+    //printf("release %p\n", pStream);
 }
 
 int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
@@ -93,7 +101,7 @@ static void Usage() {
     exit(-1);
 }
 
-int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
+int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &daemon_mode) {
     daemon_mode = false;
 
     int result;
@@ -105,7 +113,7 @@ int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
                 break;
             }
             case 'b': {
-                bb = optarg;
+                bb = std::make_optional(optarg);
                 break;
             }
             case 'd': {
@@ -119,11 +127,26 @@ int parse_config(int argc, char *argv[], std::string &bb, bool &daemon_mode) {
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path) {
     k_u32 readLen = 0;
-    k_char *pBuf;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
+
+    MediaStreamerFile streamer_file;
+    FILE *output_file_detections = nullptr;
+    if (bb_files_path.has_value()) {
+        streamer_file.init(bb_files_path.value().video.c_str(), 1920, 1080);
+        output_file_detections = fopen(bb_files_path.value().log.c_str(), "w");
+    }
+
+    MediaStreamerRtsp streamer_rtsp;
+    streamer_rtsp.init("live", 1920, 1080);
+
+    bool recording_started = false;
+    std::vector<uint8_t> header_buffer;
+    uint64_t first_frame_time_stamp = UINT64_MAX;
+
+    char common_buf[1024*10];
 
     while (!send_stop) {
         readLen = 0;
@@ -134,50 +157,78 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
         }
 
         if (readLen > 0) {
-            s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], (void **) &pBuf);
+            k_char *pBuf;
+            s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], reinterpret_cast<void **>(&pBuf));
             if (K_SUCCESS != s32Ret) {
                 printf("read error:%x\n", s32Ret);
                 break;
             }
-            auto pBuf_ = pBuf;
 
-            auto detections_count = ((uint16_t *) pBuf)[0];
-            k_char *detections_buffer = pBuf;
-            pBuf += 2;
-            std::vector<DetectionCommon> detections;
-            if (detections_count != UINT16_MAX) {
-                for (uint16_t i = 0; i < detections_count; i++) {
-                    DetectionCommon d;
-                    memcpy(&d, pBuf, sizeof(DetectionCommon));
-                    pBuf += sizeof(DetectionCommon);
-                    detections.push_back(d);
-                }
+            auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
+
+            // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
+            // Header is generated at init time, but first video frame comes much later
+            if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
+                first_frame_time_stamp = frame->pts;
             }
+            const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
 
-            unsigned long pts = ((unsigned long *) pBuf)[0];
-            unsigned int len = ((unsigned int *) pBuf)[2];
-            k_char *data = pBuf + sizeof(unsigned long) + sizeof(unsigned int);
+            uint64_t microseconds = pts;
+            uint64_t milliseconds = microseconds / 1000;
+            uint64_t seconds = milliseconds / 1000;
+            uint64_t minutes = seconds / 60;
+            uint64_t hours = minutes / 60;
+            //printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
+            //       hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
 
-            if (output_file_video && output_file_detections) {
-                fwrite(data, 1, len, output_file_video);
+            if (!recording_started) {
+                if (frame->type == 3) {
+                    // Buffer Type 3 (VPS/SPS/PPS) - don't write yet
+                    header_buffer.assign(frame->data, frame->data + frame->data_len);
+                    printf("Header buffered, size=%zu bytes\n", header_buffer.size());
+                }
+                else if (frame->type == 2 && !header_buffer.empty()) {
+                    // Combine header + IDR and write together
+                    std::vector<uint8_t> combined;
+                    combined.reserve(header_buffer.size() + frame->data_len);
+                    combined.insert(combined.end(), header_buffer.begin(), header_buffer.end());
+                    combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
 
-                if (detections_count != UINT16_MAX) {
-                    fprintf(output_file_detections, "%lu;", pts);
-                    for (auto &it: detections) {
-                        fprintf(output_file_detections, "%s %.2f %d %d %d %d;", detect_classes[it.class_id].c_str(),
-                                it.confidence, it.x, it.y, it.w, it.h);
+                    int ret = -1;
+
+                    if (streamer_file.is_ready())
+                        ret = streamer_file.write_video_frame(combined.data(), combined.size(), pts,
+                            true);
+
+                    if (streamer_rtsp.is_ready())
+                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), pts,
+                            true);
+
+                    if (ret == 0) {
+                        recording_started = true;
+                        printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
+                               combined.size());
+                    } else {
+                        printf("Failed to write first frame (header+IDR): error %d\n", ret);
                     }
-                    fprintf(output_file_detections, "\n");
+                    header_buffer.clear();
                 }
+                // Discard Type 1 (P-frames) until we have header+IDR written
+            }
+            else {
+                // After recording started, write all subsequent frames normally
+                if (streamer_file.is_ready())
+                    streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+                if (streamer_rtsp.is_ready())
+                    streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
             }
 
-            if (counter++ > 10) {
+            // blink
+            if (counter++ > 100) {
                 counter = 0;
 
-                if (output_file_video && output_file_detections) {
-                    fflush(output_file_video);
+                if (output_file_detections) {
                     fflush(output_file_detections);
-                    fsync(fileno(output_file_video));
                     fsync(fileno(output_file_detections));
                 }
 
@@ -196,44 +247,57 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle) {
                 }).detach();
             }
 
-            {
-                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
-                if (stream_endpoint_detections.port() != 0 && detections_count != UINT16_MAX) {
-                    udp_socket->send_to(
-                        asio::buffer(detections_buffer, 2 + (detections.size() * sizeof(DetectionCommon))),
-                        stream_endpoint_detections);
-                }
-                if (stream_endpoint_video.port() != 0) {
-                    const unsigned int MAX = 50000;
-                    for (unsigned int i = 0; i < len;) {
-                        auto sent = std::min(MAX, len - i);
-                        udp_socket->send_to(asio::buffer(data + static_cast<size_t>(i), sent), stream_endpoint_video);
-                        i += sent;
-                    }
-                }
-            }
-
-            printf("Timestamp: %lu, len: %d\n", pts, len);
-            if (detections.size() > 0) {
-                printf("    Received %zu detections:\n", detections.size());
-                for (size_t i = 0; i < detections.size(); i++) {
-                    const auto &det = detections[i];
-                    printf("      Detection %zu: %s (conf=%.1f) at (%d,%d) size %dx%d\n",
-                           i + 1, detect_classes[det.class_id].c_str(), det.confidence,
-                           det.x, det.y, det.w, det.h);
-                }
-            }
-
-            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf_);
+            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
             if (K_SUCCESS != s32Ret) {
                 printf("read done error:%x\n", s32Ret);
                 break;
+            }
+
+            std::vector<DetectionNormalizedCommon>  _pending_detections;
+            uint64_t _pending_detections_pts;
+            {
+                std::lock_guard lock(pending_detections_mutex);
+
+                if (pending_detections_pts == UINT64_MAX    // No pending detections
+                    || first_frame_time_stamp == UINT64_MAX) // Did not initialize fist pts
+                    _pending_detections_pts = UINT64_MAX;
+                else {
+                    // If we have the first pts and pending_detections_pts is valid, then we got a detection result.
+                    // In this case take these values to process it
+                    _pending_detections_pts = pending_detections_pts - first_frame_time_stamp;
+                    _pending_detections = std::move(pending_detections);
+                    pending_detections_pts = UINT64_MAX;
+                }
+            }
+
+            if (_pending_detections_pts != UINT64_MAX) {
+                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;", _pending_detections_pts/1000);
+                for (auto &it: _pending_detections) {
+                    auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
+                        detect_classes[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
+                    if (l >= 0)
+                        len += l;
+                }
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, "\n");
+
+                if (output_file_detections)
+                    fwrite(common_buf, 1, len, output_file_detections);
+
+                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                if (stream_endpoint_detections.port() != 0) {
+                    udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
+                }
             }
         }
         else {
             usleep(10000);
         }
     }
+
+    streamer_file.stop();
+    if (output_file_detections) fclose(output_file_detections);
+    // Do dot stop rtsp beause of to long
+    //streamer_rtsp.stop();
 
     printf("read_fifo finished\n");
 }
@@ -249,15 +313,6 @@ void udp_receiver(asio::ip::udp::socket *socket) {
 
         if (!error && len > 0) {
             switch (recv_buf[0]) {
-                case 'v': {
-                    std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
-                    if (stream_endpoint_video != sender_endpoint) {
-                        stream_endpoint_video = sender_endpoint;
-                        std::cout << "Stream received video: " << stream_endpoint_video.address().to_string()
-                                << ":" << stream_endpoint_video.port() << std::endl;
-                    }
-                }
-                break;
                 case 'd': {
                     std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                     if (stream_endpoint_detections != sender_endpoint) {
@@ -302,7 +357,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                         }
 
                         auto msg = reinterpret_cast<MSG_CMD_DETECT_RGB_struct *>(buf);
-                        const size_t image_data_len = (static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height) * 3) / 2;
+                        const size_t image_data_len = static_cast<size_t>(msg->width) * static_cast<size_t>(msg->height) * 3;
                         printf("Image size: %dx%d\n", msg->width, msg->height);
 
                         if (image_data_len + sizeof(MSG_CMD_DETECT_RGB_struct) == buff_len) {
@@ -341,13 +396,13 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, msg,
                                                                      sizeof(MSG_CMD_DETECT_RGB_struct));
                                 k_ipcmsg_message_t *responce = nullptr;
-                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 2000);
+                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 10000);
                                 if (ret != K_SUCCESS) {
                                     printf("kd_ipcmsg_send_sync failed: %d\n", ret);
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionCommon);
+                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionNormalizedCommon);
                                     uint16_t count = static_cast<uint8_t*>(responce->pBody)[0];
                                     if (count != est_count) {
                                         printf("Wrong esimated count! %hu %lu\n", count, est_count);
@@ -384,16 +439,33 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 {
-    printf("ipcmsg_recv %lu\n", msg->u32CMD);
+    //printf("ipcmsg_recv %lu\n", msg->u32CMD);
+    switch (msg->u32CMD) {
+        case MSG_CMD_DETECTIONS: {
+            auto pts = static_cast<uint64_t*>(msg->pBody);
+            size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
+            auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
+
+            std::lock_guard lock(pending_detections_mutex);
+            pending_detections.clear();
+            pending_detections_pts = *pts;
+            for (size_t i = 0; i < count; i++) {
+                auto det = &detections_p[i];
+                pending_detections.push_back(*det);
+            }
+        } break;
+        default:
+            break;
+    }
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
     std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
 
-    std::string bb_path;
+    std::optional<std::string> bb_dir_path;
     bool daemon_mode;
-    int ret = parse_config(argc, argv, bb_path, daemon_mode);
+    int ret = parse_config(argc, argv, bb_dir_path, daemon_mode);
 
     k_u64 datafifo_phy_addr[2] = {0,0};
 
@@ -440,32 +512,28 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    for (int i = 0; i < 0xFFFF; ++i) {
-        char filename[50];
-        sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
-        FILE *file = fopen(filename, "r");
-        if (!file) {
-            sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
-            file = fopen(filename, "r");
+    std::optional<BbFiles_t> bb_files_path;
+    if (bb_dir_path.has_value()) {
+        for (int i = 0; i < 0xFFFF; ++i) {
+            char bb_file_buf[64];
+            char bb_log_buf[64];
+            snprintf(bb_file_buf, sizeof(bb_file_buf), "%s/%d.mp4", bb_dir_path->c_str(), i);
+            snprintf(bb_log_buf, sizeof(bb_log_buf), "%s/%d.txt", bb_dir_path->c_str(), i);
+
+            FILE *file = fopen(bb_file_buf, "r");
             if (!file) {
-                sprintf(filename, (bb_path + "/%d.h265").c_str(), i);
-                printf("output_file_video %s\n", filename);
-                output_file_video = fopen(filename, "wb");
-
-                sprintf(filename, (bb_path + "/%d.txt").c_str(), i);
-                printf("output_file_detections %s\n", filename);
-                output_file_detections = fopen(filename, "w");
-
-                break;
+                file = fopen(bb_log_buf, "r");
+                if (!file) {
+                    bb_files_path = BbFiles_t {
+                        .video = bb_file_buf,
+                        .log = bb_log_buf
+                    };
+                    break;
+                }
+                fclose(file);
             }
-            fclose(file);
-        } else fclose(file);
-    }
-
-    if (!output_file_video || !output_file_detections) {
-        std::cerr << "Can't open video file!" << std::endl;
-        kd_ipcmsg_disconnect(ipcmsg_handle);
-        return -1;
+            else fclose(file);
+        }
     }
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
@@ -481,7 +549,7 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -500,9 +568,6 @@ int main(int argc, char *argv[]) {
     udp_receiver_thread.join();
 
     datafifo_deinit();
-
-    fclose(output_file_video);
-    fclose(output_file_detections);
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);

@@ -85,7 +85,7 @@ static inline void CHECK_RET(k_s32 ret, const char *func, const int line) {
 // datafifo
 
 static void release(void *pStream) {
-    printf("release %p\n", pStream);
+    //printf("release %p\n", pStream);
 }
 
 static int datafifo_init(void) {
@@ -160,7 +160,6 @@ static void venc_output(k_u32 venc_ch) {
     k_s32 ret;
     int i;
 
-
     printf("venc_output... started\n");
 
     while (running) {
@@ -176,7 +175,6 @@ static void venc_output(k_u32 venc_ch) {
             printf("venc_output...get available write len error:%x\n", ret);
             break;
         }
-
 
         k_venc_chn_status status;
         ret = kd_mpi_venc_query_status(venc_ch, &status);
@@ -199,54 +197,22 @@ static void venc_output(k_u32 venc_ch) {
         // Get encoded stream
         ret = kd_mpi_venc_get_stream(venc_ch, &output, -1);
         CHECK_RET(ret, __func__, __LINE__);
-        // Write stream to h265 file
 
         for (i = 0; i < output.pack_cnt; i++) {
             k_u8 *pData;
             pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
-            printf("venc_output... size %lu, availWriteLen %lu\n", output.pack[i].len, availWriteLen);
+            //printf("venc_output... size %lu, type %d, pts %lu\n", output.pack[i].len, output.pack[i].type, output.pack[i].pts);
 
             if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
-                size_t total_size = 0;
-
-                if (output.pack[i].type != K_VENC_HEADER) {
-                    std::vector<DetectionCommon> detections;
-                    {
-                        std::lock_guard<std::mutex> lock(last_detections_mutex);
-
-                        if (last_detections.size() != 0) {
-                            auto item = std::move(last_detections.front());
-                            last_detections.pop();
-
-                            if (item.pts == output.pack[i].pts) {
-                                detections = std::move(item.detections);
-                                //printf("last_detections_pts valid\n");
-                            } else {
-                                printf("last_detections_pts IS INVALID!!!!!!!!!!!!!!!!!!!! %lu %lu\n", item.pts,
-                                       output.pack[i].pts);
-                            }
-                        }
-                    }
-
-                    uint16_t s = detections.size();
-                    memcpy(datafifo_buf, &s, sizeof(s));
-                    total_size = sizeof(s);
-                    for (auto &it: detections) {
-                        memcpy(datafifo_buf + total_size, &it, sizeof(DetectionCommon));
-                        total_size += sizeof(DetectionCommon);
-                    }
+                auto dff = reinterpret_cast<DataFifoFrame_t *>(datafifo_buf);
+                dff->type = output.pack[i].type;
+                dff->pts = output.pack[i].pts;
+                dff->data_len = output.pack[i].len;
+                if (DATAFIFO_DETECTOR_BLOCK_LEN >= sizeof(DataFifoFrame_t) + dff->data_len) {
+                    memcpy(dff->data, static_cast<void *>(pData), dff->data_len);
                 } else {
-                    uint16_t s = UINT16_MAX;
-                    memcpy(datafifo_buf, &s, sizeof(s));
-                    total_size = sizeof(s);
+                    printf("data fifo size IS INVALID %lu !!!!!!!!!!!!!!!!!!!\n", sizeof(DataFifoFrame_t) + dff->data_len);
                 }
-
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].pts), sizeof(k_u64));
-                total_size += sizeof(k_u64);
-                memcpy(datafifo_buf + total_size, (void *) &(output.pack[i].len), sizeof(k_u32));
-                total_size += sizeof(k_u32);
-                memcpy(datafifo_buf + total_size, (void *) pData, output.pack[i].len);
-                total_size += output.pack[i].len;
 
                 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
                 if (K_SUCCESS != ret) {
@@ -272,19 +238,8 @@ static void venc_output(k_u32 venc_ch) {
     free(datafifo_buf);
 }
 
-std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int detection_max_width) {
+std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
     std::vector<DetectionNormalized> results;
-
-    if (rgb_frame.cols > detection_max_width) {
-        ScopedTiming st("Image resize", 1);
-        float scale = static_cast<float>(detection_max_width) / rgb_frame.cols;
-        int new_width = detection_max_width;
-        int new_height = static_cast<int>(rgb_frame.rows * scale);
-        cv::resize(rgb_frame, rgb_frame, cv::Size(new_width, new_height));
-        rgb_frame.cols = new_width;
-        rgb_frame.rows = new_height;
-        std::cout << "Resized image to: " << rgb_frame.cols << "x" << rgb_frame.rows << std::endl;
-    }
 
     auto r = sahi.detect(rgb_frame);
     for (auto it = r.cbegin(); it != r.cend(); ++it) {
@@ -294,96 +249,78 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, int dete
     return results;
 }
 
-void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float facedet_obj_thresh, float facedet_nms_thresh,
-                     float overlap_ratio, int detection_max_width) {
+void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ipcmsg_handle) {
 
-    struct Buffer {
-        uint8_t *rgb;
-        //uint8_t *argb;
-        k_u32   width{};
-        k_u32   height{};
-        std::mutex mutex;
-        std::condition_variable cv;
+    std::vector<DetectionNormalized> results_to_push;
+    uint64_t results_to_push_pts = UINT64_MAX;
+    std::mutex results_to_push_mutex;
+    std::condition_variable results_to_push_cv;
 
-        Buffer(size_t _width, size_t _height) {
-            width = _width;
-            height = _height;
+    std::thread push_thread([&]() {
+        static const size_t MAX_COUNT = 50;
+        auto *buf = static_cast<uint8_t *>(malloc(  sizeof(DetectionNormalizedCommon) * MAX_COUNT + sizeof(results_to_push_pts)));
+        while (ipcmsg_handle && running) {
+            std::unique_lock<std::mutex> lock(results_to_push_mutex);
+            if (results_to_push_pts == UINT64_MAX) {
+                if (running)
+                    results_to_push_cv.wait(lock);
+            }
+            else {
+                printf("Detections count: %lu, pts: %lu\n", results_to_push.size(), results_to_push_pts);
+                for (int i = 0; i < results_to_push.size(); ++i) {
+                    const auto &det = results_to_push[i];
+                    //auto d = Detection::from_normalized(det, rgb_frame->cols, rgb_frame->rows);
+                    std::cout << "Object " << (i + 1) << ": "
+                            << detect_classes[det.class_id] << " (ID:" << det.class_id << ") "
+                            << "confidence=" << det.confidence << " "
+                            << "box=[" << det.box.x << "," << det.box.y << ","
+                            << det.box.width << "x" << det.box.height << "]"
+                            << std::endl;
+                }
 
-            rgb = static_cast<uint8_t *>(malloc(width * height * 3));
+                *reinterpret_cast<uint64_t*>(buf) = results_to_push_pts;
+                for (size_t i = 0; i < results_to_push.size() && i < MAX_COUNT;  ++i) {
+                    auto dnc = &reinterpret_cast<DetectionNormalizedCommon*>(buf + sizeof(results_to_push_pts))[i];
+                    dnc->class_id = results_to_push[i].class_id;
+                    dnc->confidence = results_to_push[i].confidence;
+                    dnc->x = results_to_push[i].box.x;
+                    dnc->y = results_to_push[i].box.y;
+                    dnc->w = results_to_push[i].box.width;
+                    dnc->h = results_to_push[i].box.height;
+                }
+                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECTIONS, buf,
+                    sizeof(results_to_push_pts) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
+                auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
+                kd_ipcmsg_destroy_message(pReq);
+
+                results_to_push_pts = UINT64_MAX;
+            }
         }
-        ~Buffer() {
-            free(rgb);
-        }
-    };
+        free(buf);
+    });
 
-    k_u64 time_pts = 0;
+    std::unique_ptr<cv::Mat> rgb_frame;
+    while (running) {
+        ScopedTiming st("----------------Total time--------------- ", 1);
 
-    printf("start loop\n");
-
-    Buffer buffer = Buffer(media->input_config()->sensor_width, media->input_config()->sensor_height);
-
-    std::thread camera_receiver_thread([&]() {
-        while (running) {
-            k_video_frame_info dump_info;
-            int ret;
-            auto picture = media->isp_dump(dump_info);
+        k_video_frame_info dump_info;
+        int ret;
+        {
+            ScopedTiming st_isp_dump_rgb888("isp_dump_rgb888", debug_mode);
+            auto picture = media->isp_dump_rgb888(dump_info, 1);
             if (!picture) {
                 printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
                 break;
             }
 
-            auto vbvaddr = picture.value()->vbvaddr();
+            if (!rgb_frame)
+                rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
 
-            std::unique_lock<std::mutex> lock(buffer.mutex, std::try_to_lock);
-            // if unable to lock, this frame will droped (we need only last frame for minimal latency)
-            if (lock.owns_lock()) {
-                buffer.width = dump_info.v_frame.width;
-                buffer.height = dump_info.v_frame.height;
-
-                // convert to rgb and save to buffer.rgb
-                Utils::nv12ToRGBHWC(reinterpret_cast<uint8_t*>(vbvaddr),
-                    media->input_config()->sensor_width, media->input_config()->sensor_height, buffer.rgb);
-
-                buffer.cv.notify_one();
-            }
+            // Copy camera RGB data to buffer. We can not use vbvaddr directly for detection because it is to low
+            memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
         }
 
-        buffer.cv.notify_one();
-    });
-
-    while (running) {
-        ScopedTiming st("----------------Total time--------------- " + std::to_string(time_pts), 1);
-
-        std::unique_lock<std::mutex> lock(buffer.mutex);
-        buffer.cv.wait(lock);
-        cv::Mat rgb_frame(buffer.height, buffer.width, CV_8UC3, buffer.rgb);
-        if (buffer.width == 0 || buffer.height == 0) continue;
-
-        // Copy to encoder because the rgb_frame may resized on next step
-        {
-            ScopedTiming st("RGB to ARGB", debug_mode);
-
-            // Convert RGB image to ARGB image, send to encoder
-            uint8_t *src = rgb_frame.data;
-            uint8_t *dst = (uint8_t *) media->venc_get_pic_vaddr();
-
-            for (int y = 0; y < rgb_frame.rows; y++) {
-                for (int x = 0; x < rgb_frame.cols; x++) {
-                    int src_idx = (y * rgb_frame.cols + x) * 3;
-                    int dst_idx = (y * rgb_frame.cols + x) * 4;
-
-                    // Copy RGB values and add alpha channel (255 = fully opaque)
-                    dst[dst_idx + 0] = 255; // Alpha
-                    dst[dst_idx + 1] = src[src_idx + 2]; // B
-                    dst[dst_idx + 2] = src[src_idx + 1]; // G
-                    dst[dst_idx + 3] = src[src_idx + 0]; // R
-                }
-            }
-        }
-
-
-
-        //cv::Mat rgb_frame = Utils::nv12ToRGBHWC((uint8_t *) vbvaddr, media->input_config()->sensor_width, media->input_config()->sensor_height, rgb_buffer);
+        if (!rgb_frame) continue;
 
         std::vector<DetectionNormalized> results;
 
@@ -391,56 +328,18 @@ void isp_ai_detector(Media *media, int debug_mode, char *fd_kmodel_path, float f
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
             SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
-            results = detect(sahi, rgb_frame, detection_max_width);
+            results = detect(sahi, *rgb_frame);
+            printf("Detections count: %lu\n", results.size());
         }
 
-        {
-            ScopedTiming st("osd draw", debug_mode);
-
-            for (int i = 0; i < results.size(); ++i) {
-                const auto &det = results[i];
-                auto d = Detection::from_normalized(det, buffer.width, buffer.height);
-                std::cout << "Object " << (i + 1) << ": "
-                        << detect_classes[d.class_id] << " (ID:" << d.class_id << ") "
-                        << "confidence=" << d.confidence << " "
-                        << "box=[" << d.box.x << "," << d.box.y << ","
-                        << d.box.width << "x" << d.box.height << "]"
-                        << std::endl;
-            }
-        }
-
-        {
-            ScopedTiming st("venc_send_frame", debug_mode);
-
-            {
-                last_detection_t ld;
-                ld.pts = time_pts;
-
-                for (auto it = results.cbegin(); it != results.cend(); ++it) {
-                    auto d = Detection::from_normalized(*it, buffer.width, buffer.height);
-
-                    DetectionCommon dc;
-                    memset(&dc, 0, sizeof(DetectionCommon));
-                    dc.class_id = d.class_id;
-                    dc.confidence = d.confidence;
-
-                    dc.x = static_cast<uint16_t>(d.box.x);
-                    dc.y = static_cast<uint16_t>(d.box.y);
-                    dc.w = static_cast<uint16_t>(d.box.width);
-                    dc.h = static_cast<uint16_t>(d.box.height);
-
-                    ld.detections.push_back(dc);
-                }
-
-                std::lock_guard<std::mutex> lock(last_detections_mutex);
-                last_detections.push(ld);
-            }
-
-            media->venc_push(time_pts++);
-        }
+        std::lock_guard<std::mutex> lock(results_to_push_mutex);
+        results_to_push_pts = dump_info.v_frame.pts;
+        results_to_push = std::move(results);
+        results_to_push_cv.notify_all();
     }
 
-    camera_receiver_thread.join();
+    results_to_push_cv.notify_all();
+    push_thread.join();
 }
 
 static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
@@ -477,12 +376,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         break;
                     }
 
-                    static void *rgb_buffer = nullptr;
-                    if (rgb_buffer == nullptr) {
-                        rgb_buffer = malloc(2592 * 2048 * 3);
-                    }
-
-                    cv::Mat rgb_frame = Utils::nv12ToRGBHWC(pBuf, data->width, data->height, reinterpret_cast<uint8_t*>(rgb_buffer));
+                    // We need to clone because detection works to slow if image in DATAFIFO.
+                    // To slow - it is an additional 500 ms
+                    auto rgb_frame = cv::Mat(data->height, data->width, CV_8UC3, pBuf).clone();
 
                     s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
                     if (K_SUCCESS != s32Ret) {
@@ -490,28 +386,31 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         break;
                     }
 
-                    std::lock_guard<std::mutex> lock(obDet_mutex);
+                    std::lock_guard lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
-                    auto results = detect(sahi, rgb_frame, 5000);
+                    auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
-                    static_cast<uint8_t*>(rgb_buffer)[0] = static_cast<uint8_t>(results.size());
 
+                    // We don't need the rgb_frame anymore and will use allocated memory just as buffer for responce
+                    uint8_t *response_buf = rgb_frame.data;
+
+                    response_buf[0] = static_cast<uint8_t>(results.size());
                     for (size_t i = 0; i < results.size(); ++i) {
-                        auto d = Detection::from_normalized(results[i], data->width, data->height);
+                        auto &d = results[i];
 
-                        DetectionCommon dc;
-                        memset(&dc, 0, sizeof(DetectionCommon));
+                        DetectionNormalizedCommon dc;
+                        memset(&dc, 0, sizeof(DetectionNormalizedCommon));
                         dc.class_id = d.class_id;
                         dc.confidence = d.confidence;
 
-                        dc.x = static_cast<uint16_t>(d.box.x);
-                        dc.y = static_cast<uint16_t>(d.box.y);
-                        dc.w = static_cast<uint16_t>(d.box.width);
-                        dc.h = static_cast<uint16_t>(d.box.height);
+                        dc.x = d.box.x;
+                        dc.y = d.box.y;
+                        dc.w = d.box.width;
+                        dc.h = d.box.height;
 
-                        memcpy(rgb_buffer + sizeof(uint8_t) + (i * sizeof(DetectionCommon)), &dc, sizeof(DetectionCommon));
+                        memcpy( response_buf + sizeof(uint8_t) + (i * sizeof(DetectionNormalizedCommon)), &dc, sizeof(DetectionNormalizedCommon));
                     }
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, rgb_buffer, sizeof(uint8_t) + results.size() * sizeof(DetectionCommon));
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, response_buf, sizeof(uint8_t) + results.size() * sizeof(DetectionNormalizedCommon));
 
                 }
                 else {
@@ -542,9 +441,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 }
 
 void print_usage(const char *name) {
-    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio> <detection_max_width>" << endl
+    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio>" << endl
             << "For example: " << endl
-            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2 1920" << endl
+            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2" << endl
             << "Options:" << endl
             << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
             << " 2> image_input_mode     Image input mode\n"
@@ -552,14 +451,13 @@ void print_usage(const char *name) {
             << " 4> obj_thresh           Object detection threshold\n"
             << " 5> nms_thresh           NMS threshold\n"
             << " 6> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
-            << " 7> detection_max_width  Maximum width for detection (image will be resized if larger)\n"
             << "\n"
             << endl;
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 8) {
+    if (argc != 7) {
         print_usage(argv[0]);
         return -1;
     }
@@ -570,7 +468,6 @@ int main(int argc, char *argv[]) {
     float facedet_obj_thresh = atof(argv[4]);
     float facedet_nms_thresh = atof(argv[5]);
     overlap_ratio = atof(argv[6]);
-    int detection_max_width = atoi(argv[7]);
 
     gpio_led_fd = open("/dev/gpio", O_RDWR);
     pin_mode_t mode;
@@ -586,7 +483,7 @@ int main(int argc, char *argv[]) {
         std::cout << "====== datafifo init failed ======";
     }
 
-    k_s32 ipcmsg_handle;
+    k_s32 ipcmsg_handle = 0;
     {
         k_ipcmsg_connect_t stConnectAtt{
             .u32RemoteId = 0,
@@ -606,7 +503,7 @@ int main(int argc, char *argv[]) {
         }
     }
     std::thread ipcmsg_thread([ipcmsg_handle] {
-        kd_ipcmsg_run(ipcmsg_handle);
+        if (ipcmsg_handle) kd_ipcmsg_run(ipcmsg_handle);
     });
 
     if (image_input_mode) {
@@ -619,13 +516,14 @@ int main(int argc, char *argv[]) {
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
+            .rgb888_2_width = 768,
+            .rgb888_2_height = 432,
             .bitrate_kbps = 4000
         };
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, fd_kmodel_path, facedet_obj_thresh,
-                                           facedet_nms_thresh, overlap_ratio, detection_max_width);
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, overlap_ratio, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 

@@ -62,6 +62,7 @@ typedef struct ktrack_ctx {
     struct mpeg4_hevc_t hevc;
     k_mp4_audio_info_s audio_info;
     k_mp4_video_info_s video_info;
+    k_mp4_subtitle_info_s subtitle_info;
 } k_track_ctx;
 
 typedef struct kmuxer_instance {
@@ -311,8 +312,12 @@ int kd_mp4_create(KD_HANDLE *mp4_handle, k_mp4_config_s *mp4_cfg) {
                 return -1;
             }
 
-            // remove "MOV_FLAG_SEGMENT", in order to obtain fmp4-duration.. TODO
-            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, MOV_FLAG_FASTSTART /*| MOV_FLAG_SEGMENT*/);
+            // FIXED: Removed MOV_FLAG_SEGMENT to enable MFRA writing for correct duration tracking
+            // - MOV_FLAG_SEGMENT is for DASH streaming (separate media segments)
+            // - Without it, MFRA box is written on close with duration and seeking info
+            // - File remains fragmented (crash-safe) but uses standard fMP4 format
+            // - MOOV will be at end of file (MOV_FLAG_FASTSTART was removed earlier)
+            mp4_instance->muxer_instance.mov = mp4_writer_create(mp4_cfg->muxer_config.fmp4_flag, mov_file_buffer(), fp, 0);
             if (!mp4_instance->muxer_instance.mov) {
                 printf("kd_mp4_create: create mp4 writer failed.\n");
                 return -1;
@@ -447,6 +452,19 @@ int kd_mp4_create_track(KD_HANDLE mp4_handle, KD_HANDLE *track_handle, k_mp4_tra
         track->track_flag = 1;
         track->add_to_mp4 = -1;
         memcpy(&track->audio_info, &(mp4_track_info->audio_info), sizeof(k_mp4_audio_info_s));
+    } else if (mp4_track_info->track_type == K_MP4_STREAM_SUBTITLE) {
+        track = (k_track_ctx *)calloc(1, sizeof(k_track_ctx));
+        if (!track) {
+            printf("kd_mp4_create_track: create track failed.\n");
+            return -1;
+        }
+
+        track->track_type = K_MP4_STREAM_SUBTITLE;
+        track->pts = 0;
+        track->dts = 0;
+        track->track_flag = 1;
+        track->add_to_mp4 = -1;
+        memcpy(&track->subtitle_info, &(mp4_track_info->subtitle_info), sizeof(k_mp4_subtitle_info_s));
     } else {
         printf("kd_mp4_create_track: the track type is invalid.\n");
         return -1;
@@ -666,6 +684,15 @@ int kd_mp4_write_frame(KD_HANDLE mp4_handle, KD_HANDLE track_handle, k_mp4_frame
             track->pts = frame_data->time_stamp / 1000;
             mp4_writer_write(mp4_instance->muxer_instance.mov, track->add_to_mp4, frame_data->data, frame_data->data_length, track->pts, track->pts, 0);
         }
+    } else if (track->track_type == K_MP4_STREAM_SUBTITLE) {
+        if (track->add_to_mp4 < 0) {
+            // FIX: Pass empty string instead of NULL to avoid undefined behavior in mov_add_subtitle
+            static const char empty_extra_data[1] = {0};
+            track->add_to_mp4 = mp4_writer_add_subtitle(mp4_instance->muxer_instance.mov, MOV_OBJECT_TEXT, empty_extra_data, 0);
+        }
+
+        track->pts = frame_data->time_stamp / 1000;
+        mp4_writer_write(mp4_instance->muxer_instance.mov, track->add_to_mp4, frame_data->data, frame_data->data_length, track->pts, track->pts, 0);
     }
 
     return 0;
