@@ -21,7 +21,7 @@ struct DetectionNormalizedCommon {
 static_assert(sizeof(DetectionNormalizedCommon) == 24);
 
 const std::vector<std::string> detect_classes{"objects-5YaV", "arrow_right", "color_green", "color_red",
-          "tl_arrow_forward", "tl_arrow_left", "traffic_light", "traffic_light_back",
+          "tl_arrow_forward", "tl_arrow_left", "traffic_light",
           "traffic_light_green", "traffic_light_red", "traffic_light_red_yellow", "traffic_light_yellow"};
 
 typedef enum
@@ -40,7 +40,7 @@ static_assert(sizeof(MSG_CMD_DETECT_RGB_struct) == 4);
 static const char *IPCMSG_NAME = "driver_assistant";
 
 static const size_t DATAFIFO_DETECTOR_BLOCK_LEN = 1024*500;
-static const size_t DATAFIFO_FRONT_BLOCK_LEN = 1024*1024*12;
+static const size_t DATAFIFO_FRONT_BLOCK_LEN = 1024*1024*20;
 
 struct DataFifoFrame_t {
     uint64_t pts;
