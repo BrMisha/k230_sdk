@@ -12,6 +12,7 @@
 #include <opencv2/opencv.hpp>
 #include <mutex>
 #include <memory>
+#include <iomanip>
 
 #include "k_ipcmsg.h"
 #include "k_module.h"
@@ -469,8 +470,19 @@ int main(int argc, char *argv[]) {
     char *fd_kmodel_path = argv[3];
     float obj_det_thresh = atof(argv[4]);
     float obj_det_nms_thresh = atof(argv[5]);
-    sahi_overlap_ratio = atof(argv[6]);
-    sahi_nms_threshold = atof(argv[7]);
+    sahi_nms_threshold = atof(argv[6]);
+    sahi_overlap_ratio = atof(argv[7]);
+
+    // Print parsed parameters
+    std::cout << "=== Parsed Parameters ===" << std::endl;
+    std::cout << "  debug_mode:          " << (debug_mode ? "yes" : "no") << std::endl;
+    std::cout << "  image_input_mode:    " << (image_input_mode ? "yes" : "no") << std::endl;
+    std::cout << "  kmodel:              " << fd_kmodel_path << std::endl;
+    std::cout << "  obj_det_thresh:      " << std::fixed << std::setprecision(2) << obj_det_thresh << std::endl;
+    std::cout << "  obj_det_nms_thresh:  " << std::fixed << std::setprecision(2) << obj_det_nms_thresh << std::endl;
+    std::cout << "  sahi_nms_threshold:  " << std::fixed << std::setprecision(2) << sahi_nms_threshold << std::endl;
+    std::cout << "  sahi_overlap_ratio:  " << std::fixed << std::setprecision(2) << sahi_overlap_ratio << std::endl;
+    std::cout << "=========================" << std::endl;
 
     gpio_led_fd = open("/dev/gpio", O_RDWR);
     pin_mode_t mode;
