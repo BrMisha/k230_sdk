@@ -68,7 +68,8 @@ struct last_detection_t {
 std::mutex last_detections_mutex;
 std::queue<last_detection_t> last_detections;
 
-float overlap_ratio = 0;
+float sahi_overlap_ratio = 0;
+float sahi_nms_threshold = 0;
 std::mutex obDet_mutex;
 OBDet *obDet;
 
@@ -327,7 +328,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
         {
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
-            SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
+            SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio, sahi_nms_threshold);
             results = detect(sahi, *rgb_frame);
             printf("Detections count: %lu\n", results.size());
         }
@@ -387,7 +388,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     }
 
                     std::lock_guard lock(obDet_mutex);
-                    SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
+                    SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
                     auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
 
@@ -441,23 +442,24 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 }
 
 void print_usage(const char *name) {
-    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio>" << endl
+    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <sahi_nms_thresh> <overlap_ratio>" << endl
             << "For example: " << endl
-            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2" << endl
+            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.35 0.2" << endl
             << "Options:" << endl
             << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
             << " 2> image_input_mode     Image input mode\n"
             << " 3> kmodel               Object detection kmodel file path\n"
             << " 4> obj_thresh           Object detection threshold\n"
-            << " 5> nms_thresh           NMS threshold\n"
-            << " 6> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
+            << " 5> nms_thresh           Per-tile NMS threshold (e.g., 0.45)\n"
+            << " 6> sahi_nms_thresh      SAHI global NMS threshold (e.g., 0.35)\n"
+            << " 7> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
             << "\n"
             << endl;
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 7) {
+    if (argc != 8) {
         print_usage(argv[0]);
         return -1;
     }
@@ -465,9 +467,10 @@ int main(int argc, char *argv[]) {
     int debug_mode = atoi(argv[1]);
     int image_input_mode = atoi(argv[2]);
     char *fd_kmodel_path = argv[3];
-    float facedet_obj_thresh = atof(argv[4]);
-    float facedet_nms_thresh = atof(argv[5]);
-    overlap_ratio = atof(argv[6]);
+    float obj_det_thresh = atof(argv[4]);
+    float obj_det_nms_thresh = atof(argv[5]);
+    sahi_overlap_ratio = atof(argv[6]);
+    sahi_nms_threshold = atof(argv[7]);
 
     gpio_led_fd = open("/dev/gpio", O_RDWR);
     pin_mode_t mode;
@@ -475,7 +478,7 @@ int main(int argc, char *argv[]) {
     ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
     ioctl(gpio_led_fd, GPIO_WRITE_LOW, &mode);
 
-    obDet = new OBDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
+    obDet = new OBDet(fd_kmodel_path, obj_det_thresh, obj_det_nms_thresh, 0);
 
     // datafifo
     k_s32 ret = datafifo_init();
@@ -523,7 +526,7 @@ int main(int argc, char *argv[]) {
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, overlap_ratio, ipcmsg_handle);
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, sahi_overlap_ratio, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 

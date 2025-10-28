@@ -26,11 +26,13 @@ float calculate_iou(const cv::Rect& box1, const cv::Rect& box2) {
 SAHI::SAHI(
     OBDet* detector,
     cv::Size model_input_size,
-    float overlap_ratio)
+    float overlap_ratio,
+    float nms_threshold
+    )
     : detector_(detector),
       model_input_size_(model_input_size),
       overlap_ratio_(overlap_ratio),
-      nms_threshold_(0.45f)
+      nms_threshold_(nms_threshold)
 {
     if (!detector_) {
         throw std::invalid_argument("Detector cannot be null");
