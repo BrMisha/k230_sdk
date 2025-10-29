@@ -23,18 +23,21 @@ print(f"Detected {gpu_count} GPU(s): {device_list}")
 print(f"Using {workers} workers for data loading")
 
 try:
-    model = YOLO('yolov8n.pt')
+    model = YOLO('yolo11n.pt')  # Note: no 'v' in yolo11
     results = model.train(
         data=f"{yolo_dataset}/data.yml",
-        epochs=150,
+        name='tl_detector_11n',
         imgsz=320,
+
+        epochs=150,
         rect=False,
         multi_scale=False,
         batch=len(device_list)*512,        # 512 per GPU - safe for 32GB VRAM
         workers=workers,  # Auto-calculated: GPU_count * 3
         device=device_list,  # Auto-detect and use all available GPUs
         cache='ram',
-        name='tl_detector',
+        patience=40,    # finish when 40 epoches without improvement
+
         augment=True,  # включаем ручной контроль над аугментацией
         hsv_h=0.0,
         hsv_s=0.0,
