@@ -9,7 +9,7 @@ from sahi.utils.coco import Coco, export_coco_as_yolo
 
 rf = Roboflow(api_key="mz3cNkxiO8av9JAjZbS3")
 project = rf.workspace("my-ws-lwkgs").project("tl_detector-coivv")
-version = project.version(32)
+version = project.version(33)
 dataset = version.download("coco")
 
 
@@ -28,9 +28,9 @@ coco_dict, coco_path = slice_coco(
     output_dir=f"{sliced_dir}",
     slice_height=512,
     slice_width=512,
-    overlap_height_ratio=0.2,
-    overlap_width_ratio=0.2,
-    min_area_ratio=0.1,  # Add this
+    overlap_height_ratio=0.3,
+    overlap_width_ratio=0.3,
+    min_area_ratio=0.7,
     ignore_negative_samples=False,
 )
 

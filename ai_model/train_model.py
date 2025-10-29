@@ -18,7 +18,7 @@ yolo_dataset="yolo_dataset"
 # Auto-detect available GPUs
 gpu_count = torch.cuda.device_count()
 device_list = list(range(gpu_count)) if gpu_count > 0 else 'cpu'
-workers = len(device_list) * 4 if isinstance(device_list, list) else 4
+workers = len(device_list) * 4
 print(f"Detected {gpu_count} GPU(s): {device_list}")
 print(f"Using {workers} workers for data loading")
 
@@ -32,10 +32,12 @@ try:
         epochs=150,
         rect=False,
         multi_scale=False,
+        #batch=len(device_list)*512*1.5,        # 512 per GPU - safe for 32GB VRAM
         batch=len(device_list)*512,        # 512 per GPU - safe for 32GB VRAM
         workers=workers,  # Auto-calculated: GPU_count * 3
         device=device_list,  # Auto-detect and use all available GPUs
-        cache='ram',
+        #cache='ram',
+        cache=True, # Try it
         patience=40,    # finish when 40 epoches without improvement
 
         augment=True,  # включаем ручной контроль над аугментацией
