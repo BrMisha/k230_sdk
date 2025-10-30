@@ -274,7 +274,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 auto len = snprintf(common_buf, sizeof(common_buf), "%lu;", _pending_detections_pts/1000);
                 for (auto &it: _pending_detections) {
                     auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
-                        detect_classes[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
+                        detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
                     if (l >= 0)
                         len += l;
                 }

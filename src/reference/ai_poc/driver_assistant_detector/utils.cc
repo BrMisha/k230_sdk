@@ -413,7 +413,7 @@ void Utils::draw_detection(cv::Mat& frame, const Detection& detection)
     cv::rectangle(frame, box, color, 2);
 
     // Detection box text
-    std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
+    std::string classString = detect_classes_str[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
     cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
     cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -449,7 +449,7 @@ void Utils::draw_detections(cv::Mat& frame, vector<Detection>& results, FrameSiz
         cv::rectangle(frame, box, color, 2);
 
         // Detection box text
-        std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
+        std::string classString = detect_classes_str[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
         cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
         cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -470,7 +470,7 @@ DetectionNormalized Detection::normalize(int width, int height) const
     DetectionNormalized normalized;
     normalized.class_id = this->class_id;
     normalized.confidence = this->confidence;
-    normalized.color = this->color;
+    //normalized.color = this->color;
 
     float cof_x = 1.0 / static_cast<float>(width / 2);
     float cof_y = 1.0 / static_cast<float>(height / 2);
@@ -490,7 +490,6 @@ Detection Detection::from_normalized(const DetectionNormalized &n, int width, in
     Detection detection;
     detection.class_id = n.class_id;
     detection.confidence = n.confidence;
-    detection.color = n.color;
 
     float cof_x = 1.0 / static_cast<float>(width / 2);
     float cof_y = 1.0 / static_cast<float>(height / 2);

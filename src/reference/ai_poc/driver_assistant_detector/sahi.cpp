@@ -40,7 +40,7 @@ SAHI::SAHI(
     set_overlap_ratio(overlap_ratio); // Apply clamping
 }
 
-std::vector<Detection> SAHI::detect(const cv::Mat& image) {
+std::vector<Detection> SAHI::detect(const cv::Mat& image, uint max_rows) {
     // Get slice size from stored model input size
     cv::Size slice_size = model_input_size_;
     
@@ -64,10 +64,11 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
     int stride_y = slice_size.height - overlap_height;
 
     auto duration_sum = std::chrono::steady_clock::duration::zero();
-    
+
     // Process slices immediately without storing them
-    int slice_counter = 1;
-    for (int y = 0; y < image.rows; y += stride_y) {
+    for (int y = 0; y < image.rows && max_rows != 0; y += stride_y) {
+        --max_rows;
+
         for (int x = 0; x < image.cols; x += stride_x) {
             // Calculate slice boundaries and scale factors upfront
             int x_end = std::min(x + slice_size.width, image.cols);

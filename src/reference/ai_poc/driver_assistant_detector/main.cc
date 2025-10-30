@@ -61,14 +61,6 @@ k_u64 datafifo_phy_addr[2] = {0,0};
 
 std::atomic<bool> running(true);
 
-struct last_detection_t {
-    std::vector<DetectionCommon> detections;
-    k_u64 pts;
-};
-
-std::mutex last_detections_mutex;
-std::queue<last_detection_t> last_detections;
-
 float sahi_overlap_ratio = 0;
 float sahi_nms_threshold = 0;
 std::mutex obDet_mutex;
@@ -273,7 +265,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
                     const auto &det = results_to_push[i];
                     //auto d = Detection::from_normalized(det, rgb_frame->cols, rgb_frame->rows);
                     std::cout << "Object " << (i + 1) << ": "
-                            << detect_classes[det.class_id] << " (ID:" << det.class_id << ") "
+                            << detect_classes_str[det.class_id] << " (ID:" << det.class_id << ") "
                             << "confidence=" << det.confidence << " "
                             << "box=[" << det.box.x << "," << det.box.y << ","
                             << det.box.width << "x" << det.box.height << "]"
