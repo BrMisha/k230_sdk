@@ -243,7 +243,7 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
     return results;
 }
 
-void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ipcmsg_handle) {
+void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
     uint64_t results_to_push_pts = UINT64_MAX;
@@ -321,7 +321,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
         {
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
-            SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio, sahi_nms_threshold);
+            SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
             results = detect(sahi, *rgb_frame);
             printf("Detections count: %lu\n", results.size());
         }
@@ -530,7 +530,7 @@ int main(int argc, char *argv[]) {
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, sahi_overlap_ratio, ipcmsg_handle);
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
