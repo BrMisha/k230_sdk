@@ -79,7 +79,7 @@ void OBDet::pre_process(cv::Mat ori_img)
     ScopedTiming st(model_name_ + " pre_process image", debug_mode_);
     std::vector<uint8_t> chw_vec;
 	Utils::hwc_to_chw(ori_img, chw_vec);
-    Utils::resize({ori_img.channels(), ori_img.rows, ori_img.cols}, chw_vec, ai2d_out_tensor_);
+    Utils::resize({static_cast<size_t>(ori_img.channels()), static_cast<size_t>(ori_img.rows), static_cast<size_t>(ori_img.cols)}, chw_vec, ai2d_out_tensor_);
 
     // auto vaddr_out_buf = ai2d_out_tensor_.impl()->to_host().unwrap()->buffer().as_host().unwrap().map(map_access_::map_read).unwrap().buffer();
     // unsigned char *output = reinterpret_cast<unsigned char *>(vaddr_out_buf.data());
