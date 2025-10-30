@@ -18,9 +18,12 @@
 
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
-#include "../../driver_assistant_detector/common.h"
+#include "../../driver_assistant_detector/common_ipc.h"
 #include "media_streamer_file.h"
 #include "media_streamer_rtsp.h"
+
+using namespace std::chrono_literals;
+using namespace driver_assistant_detector;
 
 // datafifo
 #define READER_INDEX    0
@@ -34,8 +37,6 @@ std::atomic<bool> send_stop(false);
 std::vector<DetectionNormalizedCommon>  pending_detections;
 uint64_t pending_detections_pts = UINT64_MAX;
 std::mutex pending_detections_mutex;
-
-using namespace std::chrono_literals;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;

@@ -42,13 +42,13 @@
 #include <string>
 #include <random>
 
-#include "common.h"
+#include "common_ipc.h"
 
 using namespace nncase;
 using namespace nncase::runtime;
 using namespace nncase::runtime::k230;
 using namespace nncase::F::k230;
-
+using namespace driver_assistant_detector;
 
 using namespace std;
 using namespace cv;

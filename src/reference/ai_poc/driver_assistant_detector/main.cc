@@ -34,7 +34,7 @@
 #include "media.h"
 #include "image_decoder.h"
 
-#include "common.h"
+using namespace driver_assistant_detector;
 
 // GPIO userspace definitions (from sample_gpio.c)
 #define GPIO_DM_OUTPUT           _IOW('G', 0, int)
