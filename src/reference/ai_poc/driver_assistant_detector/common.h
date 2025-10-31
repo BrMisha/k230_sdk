@@ -18,7 +18,14 @@ namespace driver_assistant_detector {
         "traffic_light_green",
         "traffic_light_red",
         "traffic_light_red_yellow",
-        "traffic_light_yellow"
+        "traffic_light_yellow",
+
+        "",  // LAST placeholder
+
+        "approved_green",
+        "approved_red",
+        "approved_yellow",
+        "approved_red_yellow"
     };
 
     enum detect_classes_t {
@@ -34,8 +41,15 @@ namespace driver_assistant_detector {
         TRAFFIC_LIGHT_RED_YELLOW,
         TRAFFIC_LIGHT_YELLOW,
 
-        LAST
+        LAST,
+
+        APPROVED_GREEN,
+        APPROVED_RED,
+        APPROVED_YELLOW,
+        APPROVED_RED_YELLOW,
     };
+
+    constexpr int DETECTOR_CLASSES_SIZE = detect_classes_t::LAST;
 
     struct DetectionNormalizedCommon {
         detect_classes_t class_id;
@@ -43,6 +57,11 @@ namespace driver_assistant_detector {
         float x, y, w, h;
     } __attribute__((packed));
     static_assert(sizeof(DetectionNormalizedCommon) == 24);
+
+    struct MSG_CMD_DETECT_RGB_struct {
+        uint16_t width, height;
+    } __attribute__((packed));
+    static_assert(sizeof(MSG_CMD_DETECT_RGB_struct) == 4);
 }
 
 #endif //DETECTORMODULE_COMMON_H

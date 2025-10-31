@@ -14,6 +14,7 @@
 #include <memory>
 #include <iomanip>
 
+#include "detector_post_processing.h"
 #include "k_ipcmsg.h"
 #include "k_module.h"
 #include "k_type.h"
@@ -239,6 +240,8 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
     for (auto it = r.cbegin(); it != r.cend(); ++it) {
         results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
     }
+
+    results = detector_post_processing::post_process(std::move(results));
 
     return results;
 }

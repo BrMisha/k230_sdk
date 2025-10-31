@@ -37,7 +37,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, const 
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = detect_classes_str.size() + 4;
+    dimensions_det = DETECTOR_CLASSES_SIZE + 4;
 
     output_det = new float[rows_det * dimensions_det];
 }
@@ -52,7 +52,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, FrameC
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = detect_classes_str.size() + 4;
+    dimensions_det = DETECTOR_CLASSES_SIZE + 4;
 
     output_det = new float[rows_det * dimensions_det];
 
@@ -132,7 +132,7 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
     {
         float *classes_scores = data+4;
 
-        cv::Mat scores(1, detect_classes_str.size(), CV_32FC1, classes_scores);
+        cv::Mat scores(1, DETECTOR_CLASSES_SIZE, CV_32FC1, classes_scores);
         cv::Point class_id;
         double maxClassScore;
 
