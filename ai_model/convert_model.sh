@@ -1,7 +1,7 @@
 #!/bin/bash
 
-DATASET=/home/misha/projects/ai_driver_assistant/tmp/yolo_dataset/train
-MODELS=/home/misha/projects/ai_driver_assistant/tmp/runs/detect/tl_detector3/weights
+DATASET=/home/misha/projects/ai_driver_assistant/tmp/sliced/
+MODELS=/home/misha/projects/ai_driver_assistant/tmp/runs/detect/tl_detector_11n_full/weights
 MODEL_FILE_NAME=best.onnx
 
 docker build -t k230-converter .
@@ -13,7 +13,7 @@ docker run --rm \
     python convert.py \
         --model /models/${MODEL_FILE_NAME} \
         --imgsz 320 \
-        --calib-samples -1 \
+        --calib-samples 1000 \
         --calib-dir /calib_images \
         --ptq-option 1
 

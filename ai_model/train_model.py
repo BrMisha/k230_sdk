@@ -13,7 +13,7 @@ def notify(text):
         "text": text
     })
 
-yolo_dataset="yolo_dataset"
+#yolo_dataset="yolo_dataset"
 
 # Auto-detect available GPUs
 gpu_count = torch.cuda.device_count()
@@ -22,14 +22,13 @@ workers = len(device_list) * 4
 print(f"Detected {gpu_count} GPU(s): {device_list}")
 print(f"Using {workers} workers for data loading")
 
-try:
-    model = YOLO('yolo11n.pt')  # Note: no 'v' in yolo11
+def train_model(model, name, yolo_dataset, epochs):
     results = model.train(
         data=f"{yolo_dataset}/data.yml",
-        name='tl_detector_11n',
+        name=name,
         imgsz=320,
 
-        epochs=150,
+        epochs=epochs,
         rect=False,
         multi_scale=False,
         #batch=len(device_list)*512*1.5,        # 512 per GPU - safe for 32GB VRAM
@@ -54,13 +53,18 @@ try:
         erasing=0.0
     )
 
-    # Export trained model to ONNX
-    print("\n" + "="*70)
-    print("Exporting model to ONNX...")
-    print("="*70)
     model.export(format='onnx', imgsz=320, simplify=True, opset=11)
 
-    save_dir = model.trainer.save_dir
+    return model.trainer.save_dir
+
+try:
+    model = YOLO('yolo11n.pt')  # Note: no 'v' in yolo11
+    save_dir = train_model(model, "tl_detector_11n", "yolo_dataset", 150)
+
+    save_dir = "/workspace/yolo_train/runs/detect/tl_detector_11n2"
+    model = YOLO(f"{save_dir}/weights/best.pt")
+    #save_dir = train_model(model, "tl_detector_11n_full", "yolo_dataset_big", 70)
+
     print(f"\nTraining completed! Results saved to: {save_dir}")
     notify(f'✅ Training completed successfully!\nResults: {save_dir}')
 
