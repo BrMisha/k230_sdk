@@ -12,7 +12,7 @@ docker run --rm \
     k230-converter \
     python convert.py \
         --model /models/${MODEL_FILE_NAME} \
-        --imgsz 320 \
+        --imgsz 640 \
         --calib-samples -1 \
         --calib-dir /calib_images \
         --ptq-option 1

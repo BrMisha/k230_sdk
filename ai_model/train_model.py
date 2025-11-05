@@ -27,7 +27,7 @@ try:
     results = model.train(
         data=f"{yolo_dataset}/data.yml",
         name='tl_detector_11n',
-        imgsz=320,
+        imgsz=640,
 
         epochs=150,
         rect=False,
@@ -58,7 +58,7 @@ try:
     print("\n" + "="*70)
     print("Exporting model to ONNX...")
     print("="*70)
-    model.export(format='onnx', imgsz=320, simplify=True, opset=11)
+    model.export(format='onnx', imgsz=640, simplify=True, opset=11)
 
     save_dir = model.trainer.save_dir
     print(f"\nTraining completed! Results saved to: {save_dir}")

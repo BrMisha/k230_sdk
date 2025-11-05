@@ -384,7 +384,8 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     }
 
                     std::lock_guard lock(obDet_mutex);
-                    SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
+                    printf("Input image size: %dx%d\n", rgb_frame.cols, rgb_frame.rows);
+                    SAHI sahi(obDet, cv::Size(640, 640), sahi_overlap_ratio, sahi_nms_threshold);
                     auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
 

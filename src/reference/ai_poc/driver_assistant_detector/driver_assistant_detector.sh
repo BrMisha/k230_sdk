@@ -1,1 +1,1 @@
-./sharefs/driver_assistant_detector/driver_assistant_detector.elf 1 1 /sharefs/driver_assistant_detector/best.kmodel 0.5 0.7 0.3 0.2
+./sharefs/driver_assistant_detector/driver_assistant_detector.elf 1 0 /sharefs/driver_assistant_detector/best.kmodel 0.5 0.7 0.3 0

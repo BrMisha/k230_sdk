@@ -9,7 +9,7 @@ from sahi.utils.coco import Coco, export_coco_as_yolo
 
 rf = Roboflow(api_key="mz3cNkxiO8av9JAjZbS3")
 project = rf.workspace("my-ws-lwkgs").project("tl_detector-coivv")
-version = project.version(33)
+version = project.version(35)
 dataset = version.download("coco")
 
 
@@ -26,18 +26,18 @@ coco_dict, coco_path = slice_coco(
     image_dir=f"{dataset.location}/train",
     output_coco_annotation_file_name="annotations",
     output_dir=f"{sliced_dir}",
-    slice_height=512,
-    slice_width=512,
+    slice_height=1080,
+    slice_width=1080,
     overlap_height_ratio=0.3,
     overlap_width_ratio=0.3,
-    min_area_ratio=0.7,
+    min_area_ratio=0.4,
     ignore_negative_samples=False,
 )
 
 # Remove the original dataset directory after slicing
-if os.path.exists(dataset.location):
+'''if os.path.exists(dataset.location):
     shutil.rmtree(dataset.location)
-    print(f"Removed original dataset: {dataset.location}")
+    print(f"Removed original dataset: {dataset.location}")'''
 
 # create a dictionary for yolo dataset
 coco = Coco.from_coco_dict_or_path(coco_dict, image_dir=f"{sliced_dir}")
