@@ -42,11 +42,13 @@
 #include <string>
 #include <random>
 
+#include "common_ipc.h"
+
 using namespace nncase;
 using namespace nncase::runtime;
 using namespace nncase::runtime::k230;
 using namespace nncase::F::k230;
-
+using namespace driver_assistant_detector;
 
 using namespace std;
 using namespace cv;
@@ -104,9 +106,8 @@ const std::vector<cv::Scalar> color_four = {cv::Scalar(255, 220, 20, 60), cv::Sc
 
 struct DetectionNormalized
 {
-    int class_id{0};
+    detect_classes_t class_id{OBJECTS_5YaV};
     float confidence{0.0};
-    cv::Scalar color{};
     cv::Rect2f box{};
 };
 
@@ -115,12 +116,11 @@ struct DetectionNormalized
  */
 struct Detection
 {
-    int class_id{0};
+    detect_classes_t class_id{OBJECTS_5YaV};
     float confidence{0.0};
-    cv::Scalar color{};
     cv::Rect box{};
 
-    DetectionNormalized normalize(int width, int height) const;
+    [[nodiscard]] DetectionNormalized normalize(int width, int height) const;
     static Detection from_normalized(const DetectionNormalized &n, int width, int height);
 };
 

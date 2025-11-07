@@ -12,7 +12,8 @@ public:
     explicit SAHI(
         OBDet* detector,
         cv::Size model_input_size,
-        float overlap_ratio = 0.2f
+        float overlap_ratio = 0.2f,
+        float nms_threshold = 0.45f
     );
     
     ~SAHI() = default;

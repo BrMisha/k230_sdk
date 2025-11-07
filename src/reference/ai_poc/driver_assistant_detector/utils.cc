@@ -153,7 +153,7 @@ void Utils::resize(FrameCHWSize ori_shape, std::vector<uint8_t> &chw_vec, runtim
 
     dims_t out_shape = ai2d_out_tensor.shape();
     ai2d_builder builder { in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param };
-    builder.build_schedule();
+    builder.build_schedule().expect("error in build_schedule");
     builder.invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -170,7 +170,7 @@ void Utils::resize(std::unique_ptr<ai2d_builder> &builder, runtime_tensor &ai2d_
     dims_t in_shape = ai2d_in_tensor.shape();
     dims_t out_shape = ai2d_out_tensor.shape();
     builder.reset(new ai2d_builder(in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param));
-    builder->build_schedule();
+    builder->build_schedule().expect("error in build_schedule");
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -186,7 +186,7 @@ void Utils::crop_resize(FrameCHWSize ori_shape, std::vector<uint8_t> &chw_vec, B
 
     // run ai2d
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
-    ai2d_crop_param_t crop_param{true, crop_info.x, crop_info.y, crop_info.w, crop_info.h};
+    ai2d_crop_param_t crop_param{true, static_cast<int>(crop_info.x), static_cast<int>(crop_info.y), static_cast<int>(crop_info.w), static_cast<int>(crop_info.h)};
     ai2d_shift_param_t shift_param{false, 0};
     ai2d_pad_param_t pad_param{false, {{0, 0}, {0, 0}, {0, 0}, {0, 0}}, ai2d_pad_mode::constant, {114, 114, 114}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
@@ -194,7 +194,7 @@ void Utils::crop_resize(FrameCHWSize ori_shape, std::vector<uint8_t> &chw_vec, B
 
     dims_t out_shape = ai2d_out_tensor.shape();
     ai2d_builder builder { in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param };
-    builder.build_schedule();
+    builder.build_schedule().expect("error in build_schedule");
     builder.invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -202,7 +202,7 @@ void Utils::crop_resize(Bbox &crop_info, std::unique_ptr<ai2d_builder> &builder,
 {
     // run ai2d
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
-    ai2d_crop_param_t crop_param{true, crop_info.x, crop_info.y, crop_info.w, crop_info.h};
+    ai2d_crop_param_t crop_param{true, static_cast<int>(crop_info.x), static_cast<int>(crop_info.y), static_cast<int>(crop_info.w), static_cast<int>(crop_info.h)};
     ai2d_shift_param_t shift_param{false, 0};
     ai2d_pad_param_t pad_param{false, {{0, 0}, {0, 0}, {0, 0}, {0, 0}}, ai2d_pad_mode::constant, {114, 114, 114}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
@@ -211,7 +211,7 @@ void Utils::crop_resize(Bbox &crop_info, std::unique_ptr<ai2d_builder> &builder,
     dims_t in_shape = ai2d_in_tensor.shape();
     dims_t out_shape = ai2d_out_tensor.shape();
     builder.reset(new ai2d_builder(in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param));
-    builder->build_schedule();
+    builder->build_schedule().expect("error in build_schedule");
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -234,7 +234,7 @@ void Utils::padding_resize(FrameCHWSize ori_shape, std::vector<uint8_t> &chw_vec
     int right = (int)(roundf(dw - 0.1));
 
     // create input
-    dims_t in_shape{1, ori_shape.channel, ori_h, ori_w};
+    dims_t in_shape{1, ori_shape.channel, static_cast<size_t>(ori_h), static_cast<size_t>(ori_w)};
     auto ai2d_in_tensor = host_runtime_tensor::create(typecode_t::dt_uint8, in_shape, hrt::pool_shared).expect("cannot create input tensor");
     auto input_buf = ai2d_in_tensor.impl()->to_host().unwrap()->buffer().as_host().unwrap().map(map_access_::map_write).unwrap().buffer();
     memcpy(reinterpret_cast<char *>(input_buf.data()), chw_vec.data(), chw_vec.size());
@@ -244,13 +244,13 @@ void Utils::padding_resize(FrameCHWSize ori_shape, std::vector<uint8_t> &chw_vec
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
     ai2d_crop_param_t crop_param{false, 0, 0, 0, 0};
     ai2d_shift_param_t shift_param{false, 0};
-    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {padding[0], padding[1], padding[2]}};
+    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {static_cast<int>(padding[0]), static_cast<int>(padding[1]), static_cast<int>(padding[2])}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
     ai2d_affine_param_t affine_param{false, ai2d_interp_method::cv2_bilinear, 0, 0, 127, 1, {0.5, 0.1, 0.0, 0.1, 0.5, 0.0}};
 
     dims_t out_shape = ai2d_out_tensor.shape();
     ai2d_builder builder { in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param };
-    builder.build_schedule();
+    builder.build_schedule().expect("error in build_schedule");
     builder.invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -273,7 +273,7 @@ void Utils::padding_resize_one_side(FrameCHWSize ori_shape, std::vector<uint8_t>
     int right = (int)(roundf(dw * 2 - 0.1));
 
     // create input
-    dims_t in_shape{1, ori_shape.channel, ori_h, ori_w};
+    dims_t in_shape{1, ori_shape.channel, static_cast<size_t>(ori_h), static_cast<size_t>(ori_w)};
     auto ai2d_in_tensor = host_runtime_tensor::create(typecode_t::dt_uint8, in_shape, hrt::pool_shared).expect("cannot create input tensor");
     auto input_buf = ai2d_in_tensor.impl()->to_host().unwrap()->buffer().as_host().unwrap().map(map_access_::map_write).unwrap().buffer();
     memcpy(reinterpret_cast<char *>(input_buf.data()), chw_vec.data(), chw_vec.size());
@@ -283,13 +283,13 @@ void Utils::padding_resize_one_side(FrameCHWSize ori_shape, std::vector<uint8_t>
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
     ai2d_crop_param_t crop_param{false, 0, 0, 0, 0};
     ai2d_shift_param_t shift_param{false, 0};
-    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {padding[0], padding[1], padding[2]}};
+    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {static_cast<int>(padding[0]), static_cast<int>(padding[1]), static_cast<int>(padding[2])}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
     ai2d_affine_param_t affine_param{false, ai2d_interp_method::cv2_bilinear, 0, 0, 127, 1, {0.5, 0.1, 0.0, 0.1, 0.5, 0.0}};
 
     dims_t out_shape = ai2d_out_tensor.shape();
     ai2d_builder builder { in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param };
-    builder.build_schedule();
+    builder.build_schedule().expect("error in build_schedule");
     builder.invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -315,14 +315,14 @@ void Utils::padding_resize(FrameCHWSize ori_shape, FrameSize resize_shape, std::
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
     ai2d_crop_param_t crop_param{false, 0, 0, 0, 0};
     ai2d_shift_param_t shift_param{false, 0};
-    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {padding[0], padding[1], padding[2]}};
+    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {static_cast<int>(padding[0]), static_cast<int>(padding[1]), static_cast<int>(padding[2])}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
     ai2d_affine_param_t affine_param{false, ai2d_interp_method::cv2_bilinear, 0, 0, 127, 1, {0.5, 0.1, 0.0, 0.1, 0.5, 0.0}};
 
     dims_t in_shape = ai2d_in_tensor.shape();
     dims_t out_shape = ai2d_out_tensor.shape();
     builder.reset(new ai2d_builder(in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param));
-    builder->build_schedule();
+    builder->build_schedule().expect("error in build_schedule");
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -348,14 +348,14 @@ void Utils::padding_resize_one_side(FrameCHWSize ori_shape, FrameSize resize_sha
     ai2d_datatype_t ai2d_dtype{ai2d_format::NCHW_FMT, ai2d_format::NCHW_FMT, ai2d_in_tensor.datatype(), ai2d_out_tensor.datatype()};
     ai2d_crop_param_t crop_param{false, 0, 0, 0, 0};
     ai2d_shift_param_t shift_param{false, 0};
-    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {padding[0], padding[1], padding[2]}};
+    ai2d_pad_param_t pad_param{true, {{0, 0}, {0, 0}, {top, bottom}, {left, right}}, ai2d_pad_mode::constant, {static_cast<int>(padding[0]), static_cast<int>(padding[1]), static_cast<int>(padding[2])}};
     ai2d_resize_param_t resize_param{true, ai2d_interp_method::tf_bilinear, ai2d_interp_mode::half_pixel};
     ai2d_affine_param_t affine_param{false, ai2d_interp_method::cv2_bilinear, 0, 0, 127, 1, {0.5, 0.1, 0.0, 0.1, 0.5, 0.0}};
 
     dims_t in_shape = ai2d_in_tensor.shape();
     dims_t out_shape = ai2d_out_tensor.shape();
     builder.reset(new ai2d_builder(in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param));
-    builder->build_schedule();
+    builder->build_schedule().expect("error in build_schedule");
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -382,7 +382,7 @@ void Utils::affine(FrameCHWSize ori_shape, std::vector<uint8_t> &ori_data, float
 
     dims_t out_shape = ai2d_out_tensor.shape();
     ai2d_builder builder { in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param };
-    builder.build_schedule();
+    builder.build_schedule().expect("error in build_schedule");
     builder.invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -400,7 +400,7 @@ void Utils::affine(float *affine_matrix, std::unique_ptr<ai2d_builder> &builder,
     dims_t in_shape = ai2d_in_tensor.shape();
     dims_t out_shape = ai2d_out_tensor.shape();
     builder.reset(new ai2d_builder(in_shape, out_shape, ai2d_dtype, crop_param, shift_param, pad_param, resize_param, affine_param));
-    builder->build_schedule();
+    builder->build_schedule().expect("error in build_schedule");
     builder->invoke(ai2d_in_tensor,ai2d_out_tensor).expect("error occurred in ai2d running");
 }
 
@@ -413,7 +413,7 @@ void Utils::draw_detection(cv::Mat& frame, const Detection& detection)
     cv::rectangle(frame, box, color, 2);
 
     // Detection box text
-    std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
+    std::string classString = detect_classes_str[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
     cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
     cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -449,7 +449,7 @@ void Utils::draw_detections(cv::Mat& frame, vector<Detection>& results, FrameSiz
         cv::rectangle(frame, box, color, 2);
 
         // Detection box text
-        std::string classString = detect_classes[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
+        std::string classString = detect_classes_str[detection.class_id] + ' ' + std::to_string(detection.confidence).substr(0, 4);
         cv::Size textSize = cv::getTextSize(classString, cv::FONT_HERSHEY_DUPLEX, 1, 2, 0);
         cv::Rect textBox(box.x, box.y - 40, textSize.width + 10, textSize.height + 20);
 
@@ -470,7 +470,7 @@ DetectionNormalized Detection::normalize(int width, int height) const
     DetectionNormalized normalized;
     normalized.class_id = this->class_id;
     normalized.confidence = this->confidence;
-    normalized.color = this->color;
+    //normalized.color = this->color;
 
     float cof_x = 1.0 / static_cast<float>(width / 2);
     float cof_y = 1.0 / static_cast<float>(height / 2);
@@ -490,7 +490,6 @@ Detection Detection::from_normalized(const DetectionNormalized &n, int width, in
     Detection detection;
     detection.class_id = n.class_id;
     detection.confidence = n.confidence;
-    detection.color = n.color;
 
     float cof_x = 1.0 / static_cast<float>(width / 2);
     float cof_y = 1.0 / static_cast<float>(height / 2);

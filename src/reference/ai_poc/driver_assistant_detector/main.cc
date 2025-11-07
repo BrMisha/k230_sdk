@@ -12,7 +12,9 @@
 #include <opencv2/opencv.hpp>
 #include <mutex>
 #include <memory>
+#include <iomanip>
 
+#include "detector_post_processing.h"
 #include "k_ipcmsg.h"
 #include "k_module.h"
 #include "k_type.h"
@@ -33,7 +35,7 @@
 #include "media.h"
 #include "image_decoder.h"
 
-#include "common.h"
+using namespace driver_assistant_detector;
 
 // GPIO userspace definitions (from sample_gpio.c)
 #define GPIO_DM_OUTPUT           _IOW('G', 0, int)
@@ -60,15 +62,8 @@ k_u64 datafifo_phy_addr[2] = {0,0};
 
 std::atomic<bool> running(true);
 
-struct last_detection_t {
-    std::vector<DetectionCommon> detections;
-    k_u64 pts;
-};
-
-std::mutex last_detections_mutex;
-std::queue<last_detection_t> last_detections;
-
-float overlap_ratio = 0;
+float sahi_overlap_ratio = 0;
+float sahi_nms_threshold = 0;
 std::mutex obDet_mutex;
 OBDet *obDet;
 
@@ -246,10 +241,12 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
         results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
     }
 
+    results = detector_post_processing::post_process(std::move(results));
+
     return results;
 }
 
-void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ipcmsg_handle) {
+void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
     uint64_t results_to_push_pts = UINT64_MAX;
@@ -271,7 +268,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
                     const auto &det = results_to_push[i];
                     //auto d = Detection::from_normalized(det, rgb_frame->cols, rgb_frame->rows);
                     std::cout << "Object " << (i + 1) << ": "
-                            << detect_classes[det.class_id] << " (ID:" << det.class_id << ") "
+                            << detect_classes_str[det.class_id] << " (ID:" << det.class_id << ") "
                             << "confidence=" << det.confidence << " "
                             << "box=[" << det.box.x << "," << det.box.y << ","
                             << det.box.width << "x" << det.box.height << "]"
@@ -327,7 +324,7 @@ void isp_ai_detector(Media *media, int debug_mode, float overlap_ratio, k_s32 ip
         {
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
-            SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
+            SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
             results = detect(sahi, *rgb_frame);
             printf("Detections count: %lu\n", results.size());
         }
@@ -387,7 +384,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     }
 
                     std::lock_guard lock(obDet_mutex);
-                    SAHI sahi(obDet, cv::Size(320, 320), overlap_ratio);
+                    SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
                     auto results = detect(sahi, rgb_frame);
                     printf("Detected count: %lu\n", results.size());
 
@@ -441,23 +438,24 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
 }
 
 void print_usage(const char *name) {
-    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <overlap_ratio>" << endl
+    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <sahi_nms_thresh> <overlap_ratio>" << endl
             << "For example: " << endl
-            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.2" << endl
+            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.35 0.2" << endl
             << "Options:" << endl
             << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
             << " 2> image_input_mode     Image input mode\n"
             << " 3> kmodel               Object detection kmodel file path\n"
             << " 4> obj_thresh           Object detection threshold\n"
-            << " 5> nms_thresh           NMS threshold\n"
-            << " 6> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
+            << " 5> nms_thresh           Per-tile NMS threshold (e.g., 0.45)\n"
+            << " 6> sahi_nms_thresh      SAHI global NMS threshold (e.g., 0.35)\n"
+            << " 7> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
             << "\n"
             << endl;
 }
 
 int main(int argc, char *argv[]) {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 7) {
+    if (argc != 8) {
         print_usage(argv[0]);
         return -1;
     }
@@ -465,9 +463,21 @@ int main(int argc, char *argv[]) {
     int debug_mode = atoi(argv[1]);
     int image_input_mode = atoi(argv[2]);
     char *fd_kmodel_path = argv[3];
-    float facedet_obj_thresh = atof(argv[4]);
-    float facedet_nms_thresh = atof(argv[5]);
-    overlap_ratio = atof(argv[6]);
+    float obj_det_thresh = atof(argv[4]);
+    float obj_det_nms_thresh = atof(argv[5]);
+    sahi_nms_threshold = atof(argv[6]);
+    sahi_overlap_ratio = atof(argv[7]);
+
+    // Print parsed parameters
+    std::cout << "=== Parsed Parameters ===" << std::endl;
+    std::cout << "  debug_mode:          " << (debug_mode ? "yes" : "no") << std::endl;
+    std::cout << "  image_input_mode:    " << (image_input_mode ? "yes" : "no") << std::endl;
+    std::cout << "  kmodel:              " << fd_kmodel_path << std::endl;
+    std::cout << "  obj_det_thresh:      " << std::fixed << std::setprecision(2) << obj_det_thresh << std::endl;
+    std::cout << "  obj_det_nms_thresh:  " << std::fixed << std::setprecision(2) << obj_det_nms_thresh << std::endl;
+    std::cout << "  sahi_nms_threshold:  " << std::fixed << std::setprecision(2) << sahi_nms_threshold << std::endl;
+    std::cout << "  sahi_overlap_ratio:  " << std::fixed << std::setprecision(2) << sahi_overlap_ratio << std::endl;
+    std::cout << "=========================" << std::endl;
 
     gpio_led_fd = open("/dev/gpio", O_RDWR);
     pin_mode_t mode;
@@ -475,7 +485,7 @@ int main(int argc, char *argv[]) {
     ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
     ioctl(gpio_led_fd, GPIO_WRITE_LOW, &mode);
 
-    obDet = new OBDet(fd_kmodel_path, facedet_obj_thresh, facedet_nms_thresh, 0);
+    obDet = new OBDet(fd_kmodel_path, obj_det_thresh, obj_det_nms_thresh, 0);
 
     // datafifo
     k_s32 ret = datafifo_init();
@@ -523,7 +533,7 @@ int main(int argc, char *argv[]) {
         Media media(config);
         media.init();
 
-        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, overlap_ratio, ipcmsg_handle);
+        std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 

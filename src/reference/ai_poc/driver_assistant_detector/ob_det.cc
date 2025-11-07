@@ -37,7 +37,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, const 
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = detect_classes.size() + 4;
+    dimensions_det = DETECTOR_CLASSES_SIZE + 4;
 
     output_det = new float[rows_det * dimensions_det];
 }
@@ -52,7 +52,7 @@ OBDet::OBDet(const char *kmodel_file, float score_thres, float nms_thres, FrameC
     int count_2 = (input_shapes_[0][3]/32) * (input_shapes_[0][2]/32);
     rows_det = count_0 + count_1 + count_2;
 
-    dimensions_det = detect_classes.size() + 4;
+    dimensions_det = DETECTOR_CLASSES_SIZE + 4;
 
     output_det = new float[rows_det * dimensions_det];
 
@@ -79,7 +79,7 @@ void OBDet::pre_process(cv::Mat ori_img)
     ScopedTiming st(model_name_ + " pre_process image", debug_mode_);
     std::vector<uint8_t> chw_vec;
 	Utils::hwc_to_chw(ori_img, chw_vec);
-    Utils::resize({ori_img.channels(), ori_img.rows, ori_img.cols}, chw_vec, ai2d_out_tensor_);
+    Utils::resize({static_cast<size_t>(ori_img.channels()), static_cast<size_t>(ori_img.rows), static_cast<size_t>(ori_img.cols)}, chw_vec, ai2d_out_tensor_);
 
     // auto vaddr_out_buf = ai2d_out_tensor_.impl()->to_host().unwrap()->buffer().as_host().unwrap().map(map_access_::map_read).unwrap().buffer();
     // unsigned char *output = reinterpret_cast<unsigned char *>(vaddr_out_buf.data());
@@ -124,7 +124,7 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
     }
 
 
-    std::vector<int> class_ids;
+    std::vector<detect_classes_t> class_ids;
     std::vector<float> confidences;
     std::vector<cv::Rect> boxes;
 
@@ -132,7 +132,7 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
     {
         float *classes_scores = data+4;
 
-        cv::Mat scores(1, detect_classes.size(), CV_32FC1, classes_scores);
+        cv::Mat scores(1, DETECTOR_CLASSES_SIZE, CV_32FC1, classes_scores);
         cv::Point class_id;
         double maxClassScore;
 
@@ -141,7 +141,7 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
         if (maxClassScore > score_thres)
         {
             confidences.push_back(maxClassScore);
-            class_ids.push_back(class_id.x);
+            class_ids.push_back(static_cast<detect_classes_t>(class_id.x));
 
             float x = data[0];
             float y = data[1];
@@ -172,12 +172,12 @@ void OBDet::post_process(FrameSize frame_size, vector<Detection> &detections)
         result.class_id = class_ids[idx];
         result.confidence = confidences[idx];
 
-        std::random_device rd;
+        /*std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<int> dis(100, 255);
         result.color = cv::Scalar(dis(gen),
                                   dis(gen),
-                                  dis(gen));
+                                  dis(gen));*/
 
         result.box = boxes[idx];
 

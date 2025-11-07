@@ -26,11 +26,13 @@ float calculate_iou(const cv::Rect& box1, const cv::Rect& box2) {
 SAHI::SAHI(
     OBDet* detector,
     cv::Size model_input_size,
-    float overlap_ratio)
+    float overlap_ratio,
+    float nms_threshold
+    )
     : detector_(detector),
       model_input_size_(model_input_size),
       overlap_ratio_(overlap_ratio),
-      nms_threshold_(0.45f)
+      nms_threshold_(nms_threshold)
 {
     if (!detector_) {
         throw std::invalid_argument("Detector cannot be null");
@@ -62,25 +64,36 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
     int stride_y = slice_size.height - overlap_height;
 
     auto duration_sum = std::chrono::steady_clock::duration::zero();
-    
+
     // Process slices immediately without storing them
-    int slice_counter = 1;
+    // Following original SAHI logic: iterate through the image with overlapping slices
     for (int y = 0; y < image.rows; y += stride_y) {
         for (int x = 0; x < image.cols; x += stride_x) {
-            // Calculate slice boundaries and scale factors upfront
-            int x_end = std::min(x + slice_size.width, image.cols);
-            int y_end = std::min(y + slice_size.height, image.rows);
-            
-            // Calculate original region size
-            int original_width = x_end - x;
-            int original_height = y_end - y;
-            
-            // Calculate scale factors
-            float scale_x = static_cast<float>(original_width) / slice_size.width;
-            float scale_y = static_cast<float>(original_height) / slice_size.height;
-            
-            // Create region that will be extracted at the exact slice_size
-            cv::Rect region(x, y, original_width, original_height);
+            // Calculate slice boundaries following SAHI's approach
+            int x_min = x;
+            int y_min = y;
+            int x_max = x + slice_size.width;
+            int y_max = y + slice_size.height;
+
+            // SAHI boundary handling: if slice extends beyond image,
+            // shift it backward to maintain full slice_size when possible
+            if (y_max > image.rows || x_max > image.cols) {
+                x_max = std::min(image.cols, x_max);
+                y_max = std::min(image.rows, y_max);
+                x_min = std::max(0, x_max - slice_size.width);
+                y_min = std::max(0, y_max - slice_size.height);
+            }
+
+            // Calculate actual region dimensions
+            int region_width = x_max - x_min;
+            int region_height = y_max - y_min;
+
+            // Calculate scale factors (will be 1.0 for full-size slices)
+            float scale_x = static_cast<float>(region_width) / slice_size.width;
+            float scale_y = static_cast<float>(region_height) / slice_size.height;
+
+            // Create region
+            cv::Rect region(x_min, y_min, region_width, region_height);
             cv::Mat slice = image(region);
             
             // Only resize if the slice is not already the correct size
@@ -99,10 +112,10 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
             detector_->inference();
             
             std::vector<Detection> slice_results;
-            detector_->post_process({static_cast<size_t>(slice_size.width), static_cast<size_t>(slice_size.height)}, slice_results);
+            detector_->post_process({static_cast<size_t>(slice.cols), static_cast<size_t>(slice.rows)}, slice_results);
             auto duration = std::chrono::steady_clock::now() - m_start;
             duration_sum += duration;
-            
+
             // Transform coordinates to original image space
             for (auto& det : slice_results) {
                 // Update the bounding box coordinates
@@ -110,7 +123,7 @@ std::vector<Detection> SAHI::detect(const cv::Mat& image) {
                 det.box.y = region.y + static_cast<int>(det.box.y * scale_y);
                 det.box.width = static_cast<int>(det.box.width * scale_x);
                 det.box.height = static_cast<int>(det.box.height * scale_y);
-                
+
                 all_detections.push_back(det);
             }
             
