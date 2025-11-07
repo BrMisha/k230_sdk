@@ -19,7 +19,7 @@ public:
     ~SAHI() = default;
     
     // Main detection method with SAHI
-    std::vector<Detection> detect(const cv::Mat& image, uint max_rows = 100);
+    std::vector<Detection> detect(const cv::Mat& image);
     
     // Configuration methods
     void set_overlap_ratio(float ratio);
