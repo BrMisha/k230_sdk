@@ -1,0 +1,46 @@
+#!/bin/sh
+
+case "$1" in
+  start)
+    echo "Loading WiFi driver..."
+    modprobe aic8800_fdrv
+
+    # Wait a moment for driver to initialize
+    sleep 1
+
+    echo "Bringing up wlan0..."
+    ip link set wlan0 up
+
+    # Check if wpa_supplicant config exists
+    if [ -f /etc/wpa_supplicant.conf ]; then
+      echo "Starting wpa_supplicant..."
+      wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+
+      # Wait for connection
+      sleep 3
+
+      echo "Getting IP address..."
+      # Send hostname to DHCP server
+      HOSTNAME=$(cat /etc/hostname 2>/dev/null || hostname)
+      udhcpc -i wlan0 -h "$HOSTNAME"
+    else
+      echo "Warning: /etc/wpa_supplicant.conf not found, skipping WiFi connection"
+    fi
+    ;;
+  stop)
+    echo "Stopping WiFi..."
+    killall udhcpc 2>/dev/null
+    killall wpa_supplicant 2>/dev/null
+    ip link set wlan0 down 2>/dev/null
+    rmmod aic8800_fdrv 2>/dev/null
+    ;;
+  restart|reload)
+    "$0" stop
+    "$0" start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+esac
+
+exit $?
