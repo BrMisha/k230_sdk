@@ -13,6 +13,9 @@ set(RTSMART_SRC_DIR ${k230_sdk}/src/big/rt-smart)
 set(IPCMSG_ROOT ${CDK_SRC_DIR}/user/component/ipcmsg)
 set(THIRDPARTY_PATH ${CDK_SRC_DIR}/user/thirdparty)
 
+# Buildroot sysroot for libwebsockets
+set(BUILDROOT_SYSROOT "${k230_sdk}/output/k230_canmv_01studio_defconfig/little/buildroot-ext/host/riscv64-buildroot-linux-gnu/sysroot")
+
 set(src_root "${PROJECT_SOURCE_DIR}/src")
 
 set(CMAKE_INSTALL_PREFIX "../")
@@ -41,6 +44,9 @@ include_directories(${LIVE555_ROOT}/groupsock/include)
 include_directories(${LIVE555_ROOT}/liveMedia/include)
 include_directories(${LIVE555_ROOT}/UsageEnvironment/include)
 
+# libwebsockets from buildroot
+include_directories(${BUILDROOT_SYSROOT}/usr/include)
+
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
 link_directories(${CDK_SRC_DIR}/user/middleware/mp4_format/lib)
@@ -54,8 +60,12 @@ link_directories(${LIVE555_ROOT}/groupsock)
 link_directories(${LIVE555_ROOT}/liveMedia)
 link_directories(${LIVE555_ROOT}/UsageEnvironment)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix")
+# libwebsockets library from buildroot
+link_directories(${BUILDROOT_SYSROOT}/usr/lib)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --sysroot=${BUILDROOT_SYSROOT}")
 
 add_executable(${BIN} ${APP_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
@@ -69,6 +79,7 @@ target_link_libraries(${BIN} -Wl,--start-group
     UsageEnvironment
     BasicUsageEnvironment
     groupsock
+    websockets
     -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)

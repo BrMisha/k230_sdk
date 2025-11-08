@@ -21,6 +21,7 @@
 #include "../../driver_assistant_detector/common_ipc.h"
 #include "media_streamer_file.h"
 #include "media_streamer_rtsp.h"
+#include "websocket_server.h"
 
 using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
@@ -129,7 +130,7 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path, websocket_server::WebSocketServer *ws_server = nullptr) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
@@ -297,6 +298,11 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (output_file_detections)
                     fwrite(common_buf, 1, len, output_file_detections);
 
+                // Broadcast via WebSocket
+                if (ws_server) {
+                    ws_server->broadcast_detections(_pending_detections_pts, pending_detections_situation, _pending_detections);
+                }
+
                 std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                 if (stream_endpoint_detections.port() != 0) {
                     udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
@@ -344,11 +350,11 @@ void udp_receiver(asio::ip::udp::socket *socket) {
     printf("udp_receiver finished\n");
 }
 
-void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
-    acceptor->async_accept([acceptor, ipcmsg_handle](asio::error_code ec, asio::ip::tcp::socket peer) {
+void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, websocket_server::WebSocketServer *ws_server = nullptr) {
+    acceptor->async_accept([acceptor, ipcmsg_handle, ws_server](asio::error_code ec, asio::ip::tcp::socket peer) {
         if (!ec) {
             // Handle client in separate thread
-            std::thread([peer = std::move(peer), ipcmsg_handle]() mutable {
+            std::thread([peer = std::move(peer), ipcmsg_handle, ws_server]() mutable {
                 printf("Client connected\n");
 
                 static k_char *buf = nullptr;
@@ -426,6 +432,14 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
 
                                         peer.write_some(asio::buffer(static_cast<uint8_t*>(responce->pBody), responce->u32BodyLen));
                                         peer.wait(asio::ip::tcp::socket::wait_write);
+
+                                        if (ws_server) {
+                                            std::vector<DetectionNormalizedCommon> detections;
+                                            for (int i = 0; i < responce_struct->detections_count; i++)
+                                                detections.push_back(responce_struct->detections[i]);
+
+                                            ws_server->broadcast_detections(0, responce_struct->situation, detections);
+                                        }
                                     }
 
                                     asio::error_code shutdown_ec;
@@ -446,7 +460,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
         }
 
         // Accept next connection (RECURSIVE CALL)
-        tcp_server_accept(acceptor, ipcmsg_handle);
+        tcp_server_accept(acceptor, ipcmsg_handle, ws_server);
     });
 }
 
@@ -549,18 +563,24 @@ int main(int argc, char *argv[]) {
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
+    // WebSocket Server
+    websocket_server::WebSocketServer ws_server(8080, "/www");
+    std::thread websocket_thread([&ws_server]() {
+        ws_server.run();
+    });
+
     asio::io_context io_context;
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
-    tcp_server_accept(&acceptor, ipcmsg_handle);
+    tcp_server_accept(&acceptor, ipcmsg_handle, &ws_server);
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path, &ws_server);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -572,6 +592,9 @@ int main(int argc, char *argv[]) {
     }
 
     read_fifo_thread.join();
+
+    ws_server.stop();
+    websocket_thread.join();
 
     socket.close();
     acceptor.close();

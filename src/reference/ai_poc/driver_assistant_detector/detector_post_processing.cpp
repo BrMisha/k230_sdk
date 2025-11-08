@@ -153,6 +153,10 @@ namespace detector_post_processing {
                 case detect_classes_t::TRAFFIC_LIGHT_YELLOW:
                 case detect_classes_t::COLOR_GREEN:
                 case detect_classes_t::COLOR_RED:
+                case detect_classes_t::APPROVED_GREEN:
+                case detect_classes_t::APPROVED_RED:
+                case detect_classes_t::APPROVED_YELLOW:
+                case detect_classes_t::APPROVED_RED_YELLOW:
                     filtered_indices.push_back(i);
                     break;
                 default:
@@ -177,20 +181,21 @@ namespace detector_post_processing {
 
         switch (first.class_id) {
             case detect_classes_t::TRAFFIC_LIGHT_GREEN:
-            case detect_classes_t::COLOR_GREEN: {
+            case detect_classes_t::COLOR_GREEN:
+            case detect_classes_t::APPROVED_GREEN:
                 situation.color = DetectedSituationColor::GREEN;
                 break;
-            }
             case detect_classes_t::TRAFFIC_LIGHT_RED:
-            case detect_classes_t::COLOR_RED: {
+            case detect_classes_t::COLOR_RED:
+            case detect_classes_t::APPROVED_RED:
                 situation.color = DetectedSituationColor::RED;
                 break;
-            }
             case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
-            case detect_classes_t::TRAFFIC_LIGHT_YELLOW: {
+            case detect_classes_t::TRAFFIC_LIGHT_YELLOW:
+            case detect_classes_t::APPROVED_RED_YELLOW:
                 situation.color = DetectedSituationColor::YELLOW;
                 break;
-            }
+
             default: ;
         }
 
