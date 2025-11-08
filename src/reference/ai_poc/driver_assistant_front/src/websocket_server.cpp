@@ -86,7 +86,6 @@ void WebSocketServer::broadcast_detections(
     const std::vector<driver_assistant_detector::DetectionNormalizedCommon>& detections)
 {
     std::lock_guard<std::mutex> lock(broadcast_mutex_);
-    printf("WebSocket: Detected %d %lu\n", situation.color, context_);
 
     broadcast_buffer_ = create_json_message(pts, situation, detections);
     has_pending_broadcast_ = true;
