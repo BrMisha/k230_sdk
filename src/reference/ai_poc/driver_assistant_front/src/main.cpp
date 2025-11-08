@@ -403,16 +403,15 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionNormalizedCommon);
-                                    uint16_t count = static_cast<uint8_t*>(responce->pBody)[0];
-                                    if (count != est_count) {
-                                        printf("Wrong esimated count! %hu %lu\n", count, est_count);
+                                    auto responce_struct = reinterpret_cast<MSG_CMD_DETECT_RGB_responce_struct*>(responce->pBody);
+                                    const size_t est_count = sizeof(MSG_CMD_DETECT_RGB_responce_struct) + (sizeof(DetectionNormalizedCommon) * responce_struct->detections_count);
+                                    if (responce->u32BodyLen != est_count) {
+                                        printf("Wrong esimated count! %hu %lu\n", responce_struct->detections_count, est_count);
                                     }
                                     else {
-                                        printf("MSG_CMD_DETECT_RGB success, %d\n", count);
+                                        printf("MSG_CMD_DETECT_RGB success, %d %d\n", responce_struct->detections_count, responce_struct->situation.color);
 
-                                        peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
-                                        peer.write_some(asio::buffer( static_cast<uint8_t*>(responce->pBody) + 1, responce->u32BodyLen-1));
+                                        peer.write_some(asio::buffer(static_cast<uint8_t*>(responce->pBody), responce->u32BodyLen));
                                         peer.wait(asio::ip::tcp::socket::wait_write);
                                     }
 

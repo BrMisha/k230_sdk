@@ -58,10 +58,32 @@ namespace driver_assistant_detector {
     } __attribute__((packed));
     static_assert(sizeof(DetectionNormalizedCommon) == 24);
 
+    enum DetectedSituationColor : uint8_t {
+        NONE,
+        RED,
+        GREEN,
+        YELLOW,
+    };
+
+    struct DetectedSituation {
+        DetectedSituationColor  color;
+        bool arrow_left, arrow_right, arrow_forward;
+
+        DetectedSituation() : color(DetectedSituationColor::NONE), arrow_left(false), arrow_right(false), arrow_forward(false) {}
+    } __attribute__((packed));
+    static_assert(sizeof(DetectedSituation) == 4);
+
     struct MSG_CMD_DETECT_RGB_struct {
         uint16_t width, height;
     } __attribute__((packed));
     static_assert(sizeof(MSG_CMD_DETECT_RGB_struct) == 4);
+
+    struct MSG_CMD_DETECT_RGB_responce_struct {
+        DetectedSituation   situation;
+        uint8_t detections_count;
+        DetectionNormalizedCommon   detections[];
+    } __attribute__((packed));
+    static_assert(sizeof(MSG_CMD_DETECT_RGB_responce_struct) == 5);
 }
 
 #endif //DETECTORMODULE_COMMON_H

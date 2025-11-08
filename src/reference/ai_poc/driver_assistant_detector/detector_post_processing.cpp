@@ -1,6 +1,7 @@
 #include "detector_post_processing.h"
 #include <algorithm>
 #include <numeric>
+#include <vector>
 
 namespace detector_post_processing {
     bool is_traffic_light(const detect_classes_t type) {
@@ -139,5 +140,60 @@ namespace detector_post_processing {
         return detections;
     }
 
+    DetectedSituation define_situation(const std::vector<DetectionNormalized> &detections) {
+        DetectedSituation situation;
 
+        // Collect indices of items matching filter condition
+        std::vector<size_t> filtered_indices;
+        for (size_t i = 0; i < detections.size(); i++) {
+            switch (detections[i].class_id) {
+                case detect_classes_t::TRAFFIC_LIGHT_GREEN:
+                case detect_classes_t::TRAFFIC_LIGHT_RED:
+                case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
+                case detect_classes_t::TRAFFIC_LIGHT_YELLOW:
+                case detect_classes_t::COLOR_GREEN:
+                case detect_classes_t::COLOR_RED:
+                    filtered_indices.push_back(i);
+                    break;
+                default:
+                    break;
+            }
+        }
+
+        if (filtered_indices.empty()) return situation;
+
+        auto min_idx_it = std::min_element(filtered_indices.begin(), filtered_indices.end(),
+                                           [&detections](size_t idx_a, size_t idx_b) {
+                                               const auto &a = detections[idx_a];
+                                               const auto &b = detections[idx_b];
+
+                                               cv::Point2f center_a = (a.box.br() + a.box.tl()) * 0.5f;
+                                               cv::Point2f center_b = (b.box.br() + b.box.tl()) * 0.5f;
+
+                                               return cv::norm(center_a) < cv::norm(center_b);
+                                           });
+
+        const auto &first = detections[*min_idx_it];
+
+        switch (first.class_id) {
+            case detect_classes_t::TRAFFIC_LIGHT_GREEN:
+            case detect_classes_t::COLOR_GREEN: {
+                situation.color = DetectedSituationColor::GREEN;
+                break;
+            }
+            case detect_classes_t::TRAFFIC_LIGHT_RED:
+            case detect_classes_t::COLOR_RED: {
+                situation.color = DetectedSituationColor::RED;
+                break;
+            }
+            case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
+            case detect_classes_t::TRAFFIC_LIGHT_YELLOW: {
+                situation.color = DetectedSituationColor::YELLOW;
+                break;
+            }
+            default: ;
+        }
+
+        return situation;
+    }
 } // namespace detector_post_processing

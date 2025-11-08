@@ -386,12 +386,14 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     std::lock_guard lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
                     auto results = detect(sahi, rgb_frame);
-                    printf("Detected count: %lu\n", results.size());
+                    auto situation = detector_post_processing::define_situation(results);
+                    printf("Detected count: %lu, situation: %d\n", results.size(), situation.color);
 
                     // We don't need the rgb_frame anymore and will use allocated memory just as buffer for responce
-                    uint8_t *response_buf = rgb_frame.data;
+                    auto response_buf = reinterpret_cast<MSG_CMD_DETECT_RGB_responce_struct*>(rgb_frame.data);
+                    response_buf->situation = situation;
 
-                    response_buf[0] = static_cast<uint8_t>(results.size());
+                    response_buf->detections_count = static_cast<uint8_t>(results.size());
                     for (size_t i = 0; i < results.size(); ++i) {
                         auto &d = results[i];
 
@@ -405,9 +407,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         dc.w = d.box.width;
                         dc.h = d.box.height;
 
-                        memcpy( response_buf + sizeof(uint8_t) + (i * sizeof(DetectionNormalizedCommon)), &dc, sizeof(DetectionNormalizedCommon));
+                        memcpy( &response_buf->detections[i], &dc, sizeof(DetectionNormalizedCommon));
                     }
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, response_buf, sizeof(uint8_t) + results.size() * sizeof(DetectionNormalizedCommon));
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, response_buf, sizeof(MSG_CMD_DETECT_RGB_responce_struct) + results.size() * sizeof(DetectionNormalizedCommon));
 
                 }
                 else {
