@@ -192,6 +192,7 @@ namespace detector_post_processing {
                 break;
             case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
             case detect_classes_t::TRAFFIC_LIGHT_YELLOW:
+            case detect_classes_t::APPROVED_YELLOW:
             case detect_classes_t::APPROVED_RED_YELLOW:
                 situation.color = DetectedSituationColor::YELLOW;
                 break;

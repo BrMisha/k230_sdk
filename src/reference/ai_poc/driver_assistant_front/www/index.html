@@ -59,29 +59,31 @@
         }
 
         .situation .color {
-            font-size: 3em;
-            font-weight: bold;
-            margin-bottom: 10px;
-            text-transform: uppercase;
+            width: 100%;
+            height: 200px;
+            margin-bottom: 20px;
+            border-radius: 10px;
+            transition: background-color 0.3s, box-shadow 0.3s;
         }
 
         .situation .color.GREEN {
-            color: #00ff88;
-            text-shadow: 0 0 20px rgba(0, 255, 136, 0.8);
+            background-color: #00ff88;
+            box-shadow: 0 0 40px rgba(0, 255, 136, 0.8);
         }
 
         .situation .color.RED {
-            color: #ff4444;
-            text-shadow: 0 0 20px rgba(255, 68, 68, 0.8);
+            background-color: #ff4444;
+            box-shadow: 0 0 40px rgba(255, 68, 68, 0.8);
         }
 
         .situation .color.YELLOW {
-            color: #ffee00;
-            text-shadow: 0 0 20px rgba(255, 238, 0, 0.8);
+            background-color: #ffee00;
+            box-shadow: 0 0 40px rgba(255, 238, 0, 0.8);
         }
 
         .situation .color.NONE {
-            color: #666;
+            background-color: #000000;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
         }
 
         .arrows {
@@ -104,14 +106,6 @@
             background: #00d9ff;
             color: #000;
             font-weight: bold;
-        }
-
-        .detections {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            max-height: 500px;
-            overflow-y: auto;
         }
 
         .detections h2 {
@@ -154,14 +148,11 @@
             border-radius: 5px;
             text-align: center;
             color: #00d9ff;
-            margin-bottom: 15px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Driver Assistant Detector</h1>
-
         <div class="status disconnected" id="status">
             Connecting to server...
         </div>
@@ -171,7 +162,7 @@
         </div>
 
         <div class="situation">
-            <div class="color NONE" id="color">NONE</div>
+            <div class="color NONE" id="color"></div>
             <div class="arrows">
                 <div class="arrow" id="arrow-left">← Left</div>
                 <div class="arrow" id="arrow-forward">↑ Forward</div>
@@ -180,7 +171,6 @@
         </div>
 
         <div class="detections">
-            <h2>Detections (<span id="detection-count">0</span>)</h2>
             <div id="detection-list"></div>
         </div>
     </div>
@@ -228,19 +218,10 @@
                 arrowForwardEl.className = data.situation.arrow_forward ? 'arrow active' : 'arrow';
                 arrowRightEl.className = data.situation.arrow_right ? 'arrow active' : 'arrow';
 
-                // Update detections
-                detectionCountEl.textContent = data.detections.length;
-
                 detectionListEl.innerHTML = data.detections.map(det => `
                     <div class="detection-item">
-                        <div class="detection-header">
                             <span class="class-name">${det.class_name}</span>
                             <span class="confidence">${(det.confidence * 100).toFixed(1)}%</span>
-                        </div>
-                        <div class="bbox">
-                            x: ${det.x.toFixed(4)}, y: ${det.y.toFixed(4)},
-                            w: ${det.w.toFixed(4)}, h: ${det.h.toFixed(4)}
-                        </div>
                     </div>
                 `).join('');
 
