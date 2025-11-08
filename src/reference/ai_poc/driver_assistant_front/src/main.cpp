@@ -36,6 +36,7 @@ std::atomic<bool> send_stop(false);
 
 std::vector<DetectionNormalizedCommon>  pending_detections;
 uint64_t pending_detections_pts = UINT64_MAX;
+DetectedSituation pending_detections_situation;
 std::mutex pending_detections_mutex;
 
 std::mutex stream_endpoint_mutex;
@@ -272,7 +273,19 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             }
 
             if (_pending_detections_pts != UINT64_MAX) {
-                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;", _pending_detections_pts/1000);
+                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;:", _pending_detections_pts/1000);
+
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, "%s",
+                    DetectedSituationColor_str[pending_detections_situation.color].c_str());
+                if (pending_detections_situation.arrow_left)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_left");
+                if (pending_detections_situation.arrow_right)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_right");
+                if (pending_detections_situation.arrow_forward)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_forward");
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
+
+
                 for (auto &it: _pending_detections) {
                     auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
                         detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
@@ -442,16 +455,14 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
     //printf("ipcmsg_recv %lu\n", msg->u32CMD);
     switch (msg->u32CMD) {
         case MSG_CMD_DETECTIONS: {
-            auto pts = static_cast<uint64_t*>(msg->pBody);
-            size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
-            auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
+            auto data = reinterpret_cast<MSG_CMD_DETECTIONS_struct*>(msg->pBody);
 
             std::lock_guard lock(pending_detections_mutex);
             pending_detections.clear();
-            pending_detections_pts = *pts;
-            for (size_t i = 0; i < count; i++) {
-                auto det = &detections_p[i];
-                pending_detections.push_back(*det);
+            pending_detections_pts = data->pts;
+            pending_detections_situation = data->situation;
+            for (size_t i = 0; i < data->detections_count; i++) {
+                pending_detections.push_back(data->detections[i]);
             }
         } break;
         default:

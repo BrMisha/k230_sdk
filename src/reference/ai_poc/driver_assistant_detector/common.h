@@ -60,9 +60,16 @@ namespace driver_assistant_detector {
 
     enum DetectedSituationColor : uint8_t {
         NONE,
-        RED,
         GREEN,
+        RED,
         YELLOW,
+    };
+
+    const std::vector<std::string> DetectedSituationColor_str{
+        "NONE",
+        "GREEN",
+        "RED",
+        "YELLOW",
     };
 
     struct DetectedSituation {

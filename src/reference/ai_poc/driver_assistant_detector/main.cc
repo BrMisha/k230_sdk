@@ -255,7 +255,7 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
     std::thread push_thread([&]() {
         static const size_t MAX_COUNT = 50;
-        auto *buf = static_cast<uint8_t *>(malloc(  sizeof(DetectionNormalizedCommon) * MAX_COUNT + sizeof(results_to_push_pts)));
+        auto buf = static_cast<MSG_CMD_DETECTIONS_struct *>(malloc(  sizeof(MSG_CMD_DETECTIONS_struct) + sizeof(DetectionNormalizedCommon) * MAX_COUNT));
         while (ipcmsg_handle && running) {
             std::unique_lock<std::mutex> lock(results_to_push_mutex);
             if (results_to_push_pts == UINT64_MAX) {
@@ -275,9 +275,11 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
                             << std::endl;
                 }
 
-                *reinterpret_cast<uint64_t*>(buf) = results_to_push_pts;
+                buf->pts = results_to_push_pts;
+                buf->detections_count = results_to_push.size();
+                buf->situation = detector_post_processing::define_situation(results_to_push);
                 for (size_t i = 0; i < results_to_push.size() && i < MAX_COUNT;  ++i) {
-                    auto dnc = &reinterpret_cast<DetectionNormalizedCommon*>(buf + sizeof(results_to_push_pts))[i];
+                    auto dnc = &buf->detections[i];
                     dnc->class_id = results_to_push[i].class_id;
                     dnc->confidence = results_to_push[i].confidence;
                     dnc->x = results_to_push[i].box.x;
@@ -286,7 +288,7 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
                     dnc->h = results_to_push[i].box.height;
                 }
                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECTIONS, buf,
-                    sizeof(results_to_push_pts) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
+                    sizeof(MSG_CMD_DETECTIONS_struct) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
                 auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
                 kd_ipcmsg_destroy_message(pReq);
 
