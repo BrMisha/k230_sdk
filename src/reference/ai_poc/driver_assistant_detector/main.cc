@@ -255,7 +255,7 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
     std::thread push_thread([&]() {
         static const size_t MAX_COUNT = 50;
-        auto *buf = static_cast<uint8_t *>(malloc(  sizeof(DetectionNormalizedCommon) * MAX_COUNT + sizeof(results_to_push_pts)));
+        auto buf = static_cast<MSG_CMD_DETECTIONS_struct *>(malloc(  sizeof(MSG_CMD_DETECTIONS_struct) + sizeof(DetectionNormalizedCommon) * MAX_COUNT));
         while (ipcmsg_handle && running) {
             std::unique_lock<std::mutex> lock(results_to_push_mutex);
             if (results_to_push_pts == UINT64_MAX) {
@@ -275,9 +275,11 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
                             << std::endl;
                 }
 
-                *reinterpret_cast<uint64_t*>(buf) = results_to_push_pts;
+                buf->pts = results_to_push_pts;
+                buf->detections_count = results_to_push.size();
+                buf->situation = detector_post_processing::define_situation(results_to_push);
                 for (size_t i = 0; i < results_to_push.size() && i < MAX_COUNT;  ++i) {
-                    auto dnc = &reinterpret_cast<DetectionNormalizedCommon*>(buf + sizeof(results_to_push_pts))[i];
+                    auto dnc = &buf->detections[i];
                     dnc->class_id = results_to_push[i].class_id;
                     dnc->confidence = results_to_push[i].confidence;
                     dnc->x = results_to_push[i].box.x;
@@ -286,7 +288,7 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
                     dnc->h = results_to_push[i].box.height;
                 }
                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECTIONS, buf,
-                    sizeof(results_to_push_pts) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
+                    sizeof(MSG_CMD_DETECTIONS_struct) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
                 auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
                 kd_ipcmsg_destroy_message(pReq);
 
@@ -386,12 +388,14 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                     std::lock_guard lock(obDet_mutex);
                     SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
                     auto results = detect(sahi, rgb_frame);
-                    printf("Detected count: %lu\n", results.size());
+                    auto situation = detector_post_processing::define_situation(results);
+                    printf("Detected count: %lu, situation: %d\n", results.size(), situation.color);
 
                     // We don't need the rgb_frame anymore and will use allocated memory just as buffer for responce
-                    uint8_t *response_buf = rgb_frame.data;
+                    auto response_buf = reinterpret_cast<MSG_CMD_DETECT_RGB_responce_struct*>(rgb_frame.data);
+                    response_buf->situation = situation;
 
-                    response_buf[0] = static_cast<uint8_t>(results.size());
+                    response_buf->detections_count = static_cast<uint8_t>(results.size());
                     for (size_t i = 0; i < results.size(); ++i) {
                         auto &d = results[i];
 
@@ -405,9 +409,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                         dc.w = d.box.width;
                         dc.h = d.box.height;
 
-                        memcpy( response_buf + sizeof(uint8_t) + (i * sizeof(DetectionNormalizedCommon)), &dc, sizeof(DetectionNormalizedCommon));
+                        memcpy( &response_buf->detections[i], &dc, sizeof(DetectionNormalizedCommon));
                     }
-                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, response_buf, sizeof(uint8_t) + results.size() * sizeof(DetectionNormalizedCommon));
+                    pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, response_buf, sizeof(MSG_CMD_DETECT_RGB_responce_struct) + results.size() * sizeof(DetectionNormalizedCommon));
 
                 }
                 else {

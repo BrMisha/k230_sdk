@@ -8,4 +8,6 @@ namespace detector_post_processing {
 
     std::vector<DetectionNormalized> post_process(std::vector<DetectionNormalized> detections);
 
+    DetectedSituation define_situation(const std::vector<DetectionNormalized> &detections);
+
 } // namespace detector_post_processing

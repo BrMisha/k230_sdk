@@ -21,6 +21,7 @@
 #include "../../driver_assistant_detector/common_ipc.h"
 #include "media_streamer_file.h"
 #include "media_streamer_rtsp.h"
+#include "websocket_server.h"
 
 using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
@@ -36,6 +37,7 @@ std::atomic<bool> send_stop(false);
 
 std::vector<DetectionNormalizedCommon>  pending_detections;
 uint64_t pending_detections_pts = UINT64_MAX;
+DetectedSituation pending_detections_situation;
 std::mutex pending_detections_mutex;
 
 std::mutex stream_endpoint_mutex;
@@ -128,7 +130,7 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path, websocket_server::WebSocketServer *ws_server = nullptr) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
@@ -272,7 +274,19 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             }
 
             if (_pending_detections_pts != UINT64_MAX) {
-                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;", _pending_detections_pts/1000);
+                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;:", _pending_detections_pts/1000);
+
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, "%s",
+                    DetectedSituationColor_str[pending_detections_situation.color].c_str());
+                if (pending_detections_situation.arrow_left)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_left");
+                if (pending_detections_situation.arrow_right)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_right");
+                if (pending_detections_situation.arrow_forward)
+                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_forward");
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
+
+
                 for (auto &it: _pending_detections) {
                     auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
                         detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
@@ -283,6 +297,11 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
                 if (output_file_detections)
                     fwrite(common_buf, 1, len, output_file_detections);
+
+                // Broadcast via WebSocket
+                if (ws_server) {
+                    ws_server->broadcast_detections(_pending_detections_pts, pending_detections_situation, _pending_detections);
+                }
 
                 std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                 if (stream_endpoint_detections.port() != 0) {
@@ -331,11 +350,11 @@ void udp_receiver(asio::ip::udp::socket *socket) {
     printf("udp_receiver finished\n");
 }
 
-void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
-    acceptor->async_accept([acceptor, ipcmsg_handle](asio::error_code ec, asio::ip::tcp::socket peer) {
+void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, websocket_server::WebSocketServer *ws_server = nullptr) {
+    acceptor->async_accept([acceptor, ipcmsg_handle, ws_server](asio::error_code ec, asio::ip::tcp::socket peer) {
         if (!ec) {
             // Handle client in separate thread
-            std::thread([peer = std::move(peer), ipcmsg_handle]() mutable {
+            std::thread([peer = std::move(peer), ipcmsg_handle, ws_server]() mutable {
                 printf("Client connected\n");
 
                 static k_char *buf = nullptr;
@@ -403,17 +422,24 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
                                     break;
                                 }
                                 if (responce->u32CMD == MSG_CMD_DETECT_RGB && responce->s32RetVal == K_SUCCESS) {
-                                    const size_t est_count = (responce->u32BodyLen - 1) / sizeof(DetectionNormalizedCommon);
-                                    uint16_t count = static_cast<uint8_t*>(responce->pBody)[0];
-                                    if (count != est_count) {
-                                        printf("Wrong esimated count! %hu %lu\n", count, est_count);
+                                    auto responce_struct = reinterpret_cast<MSG_CMD_DETECT_RGB_responce_struct*>(responce->pBody);
+                                    const size_t est_count = sizeof(MSG_CMD_DETECT_RGB_responce_struct) + (sizeof(DetectionNormalizedCommon) * responce_struct->detections_count);
+                                    if (responce->u32BodyLen != est_count) {
+                                        printf("Wrong esimated count! %hu %lu\n", responce_struct->detections_count, est_count);
                                     }
                                     else {
-                                        printf("MSG_CMD_DETECT_RGB success, %d\n", count);
+                                        printf("MSG_CMD_DETECT_RGB success, %d %d\n", responce_struct->detections_count, responce_struct->situation.color);
 
-                                        peer.write_some(asio::buffer(&count, sizeof(uint16_t)));
-                                        peer.write_some(asio::buffer( static_cast<uint8_t*>(responce->pBody) + 1, responce->u32BodyLen-1));
+                                        peer.write_some(asio::buffer(static_cast<uint8_t*>(responce->pBody), responce->u32BodyLen));
                                         peer.wait(asio::ip::tcp::socket::wait_write);
+
+                                        if (ws_server) {
+                                            std::vector<DetectionNormalizedCommon> detections;
+                                            for (int i = 0; i < responce_struct->detections_count; i++)
+                                                detections.push_back(responce_struct->detections[i]);
+
+                                            ws_server->broadcast_detections(0, responce_struct->situation, detections);
+                                        }
                                     }
 
                                     asio::error_code shutdown_ec;
@@ -434,7 +460,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle) {
         }
 
         // Accept next connection (RECURSIVE CALL)
-        tcp_server_accept(acceptor, ipcmsg_handle);
+        tcp_server_accept(acceptor, ipcmsg_handle, ws_server);
     });
 }
 
@@ -443,16 +469,14 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
     //printf("ipcmsg_recv %lu\n", msg->u32CMD);
     switch (msg->u32CMD) {
         case MSG_CMD_DETECTIONS: {
-            auto pts = static_cast<uint64_t*>(msg->pBody);
-            size_t count = (msg->u32BodyLen - sizeof(uint64_t)) / sizeof(DetectionNormalizedCommon);
-            auto detections_p = reinterpret_cast<DetectionNormalizedCommon*>(static_cast<uint8_t*>(msg->pBody) + sizeof(uint64_t));
+            auto data = reinterpret_cast<MSG_CMD_DETECTIONS_struct*>(msg->pBody);
 
             std::lock_guard lock(pending_detections_mutex);
             pending_detections.clear();
-            pending_detections_pts = *pts;
-            for (size_t i = 0; i < count; i++) {
-                auto det = &detections_p[i];
-                pending_detections.push_back(*det);
+            pending_detections_pts = data->pts;
+            pending_detections_situation = data->situation;
+            for (size_t i = 0; i < data->detections_count; i++) {
+                pending_detections.push_back(data->detections[i]);
             }
         } break;
         default:
@@ -539,18 +563,24 @@ int main(int argc, char *argv[]) {
 
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
+    // WebSocket Server
+    websocket_server::WebSocketServer ws_server(8080, "/www");
+    std::thread websocket_thread([&ws_server]() {
+        ws_server.run();
+    });
+
     asio::io_context io_context;
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
-    tcp_server_accept(&acceptor, ipcmsg_handle);
+    tcp_server_accept(&acceptor, ipcmsg_handle, &ws_server);
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path, &ws_server);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -562,6 +592,9 @@ int main(int argc, char *argv[]) {
     }
 
     read_fifo_thread.join();
+
+    ws_server.stop();
+    websocket_thread.join();
 
     socket.close();
     acceptor.close();
