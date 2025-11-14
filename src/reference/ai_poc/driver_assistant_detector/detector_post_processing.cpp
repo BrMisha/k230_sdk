@@ -134,7 +134,134 @@ namespace detector_post_processing {
                 } break;
                 default: ;
             }
+        }
 
+        enum CHECK_FOR_OBJECT_ON { LEFT = 0b1, RIGHT = 0b10, TOP = 0b100, BOTTOM = 0b1000};
+        auto check_for_object_on = [&detections](const cv::Rect2f &box, int sides, float max_distance,
+            float min_confidence, std::initializer_list<detect_classes_t> classes) -> DetectionNormalized* {
+
+            // Iterate through all detections
+            for (auto &detection : detections) {
+                // Check if detection class is in the requested classes list
+                bool class_matches = false;
+                for (auto cls : classes) {
+                    if (detection.class_id == cls) {
+                        class_matches = true;
+                        break;
+                    }
+                }
+                if (!class_matches) continue;
+
+                // Check if confidence meets minimum threshold
+                if (detection.confidence < min_confidence) continue;
+
+                const auto &obj_box = detection.box;
+
+                // Check proximity on requested sides
+                bool is_near = false;
+
+                // First, reject if object extends beyond non-requested sides
+                // If RIGHT is not requested, object should not extend beyond box's right edge
+                if (!(sides & RIGHT) && obj_box.x > box.x + box.width) {
+                    continue; // Object is to the right, skip it
+                }
+                // If LEFT is not requested, object should not extend beyond box's left edge
+                if (!(sides & LEFT) && obj_box.x + obj_box.width < box.x) {
+                    continue; // Object is to the left, skip it
+                }
+                // If BOTTOM is not requested, object should not extend beyond box's bottom edge
+                if (!(sides & BOTTOM) && obj_box.y > box.y + box.height) {
+                    continue; // Object is below, skip it
+                }
+                // If TOP is not requested, object should not extend beyond box's top edge
+                if (!(sides & TOP) && obj_box.y + obj_box.height < box.y) {
+                    continue; // Object is above, skip it
+                }
+
+                // Now check if object is near/overlapping on requested sides
+                // Check LEFT side: object is to the left OR overlaps from left
+                if (sides & LEFT) {
+                    // Object's right edge is at or before box's left edge (with max_distance tolerance)
+                    bool near_left = (obj_box.x + obj_box.width <= box.x + max_distance) &&
+                                     (obj_box.y < box.y + box.height) &&
+                                     (obj_box.y + obj_box.height > box.y);
+                    if (near_left) is_near = true;
+                }
+
+                // Check RIGHT side: object is to the right OR overlaps from right
+                if (sides & RIGHT) {
+                    // Object's left edge is at or after box's right edge (with max_distance tolerance)
+                    bool near_right = (obj_box.x >= box.x + box.width - max_distance) &&
+                                      (obj_box.y < box.y + box.height) &&
+                                      (obj_box.y + obj_box.height > box.y);
+                    if (near_right) is_near = true;
+                }
+
+                // Check TOP side: object is above OR overlaps from top
+                if (sides & TOP) {
+                    // Object's bottom edge is at or before box's top edge (with max_distance tolerance)
+                    bool near_top = (obj_box.y + obj_box.height <= box.y + max_distance) &&
+                                    (obj_box.x < box.x + box.width) &&
+                                    (obj_box.x + obj_box.width > box.x);
+                    if (near_top) is_near = true;
+                }
+
+                // Check BOTTOM side: object is below OR overlaps from bottom
+                if (sides & BOTTOM) {
+                    // Object's top edge is at or after box's bottom edge (with max_distance tolerance)
+                    bool near_bottom = (obj_box.y >= box.y + box.height - max_distance) &&
+                                       (obj_box.x < box.x + box.width) &&
+                                       (obj_box.x + obj_box.width > box.x);
+                    if (near_bottom) is_near = true;
+                }
+
+                // If object is near on any of the requested sides, return it
+                if (is_near) {
+                    return &detection;
+                }
+            }
+
+            return nullptr;
+        };
+
+        // process arrow right
+        for (int i = 0; i < detections.size(); i++) {
+            auto &detection = detections[i];
+            if (detection.confidence >= 1.0f) continue;
+
+            DetectionNormalized *obj = nullptr;
+            switch (detection.class_id) {
+                case detect_classes_t::ARROW_RIGHT:
+                    obj = check_for_object_on(detection.box, LEFT|TOP|BOTTOM, detection.box.width, 0.5, {
+                        detect_classes_t::TRAFFIC_LIGHT,
+                        detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
+                        detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
+                        detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
+                        detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
+                    });
+                case detect_classes_t::TL_ARROW_LEFT:
+                    obj = check_for_object_on(detection.box, RIGHT|TOP|BOTTOM, detection.box.width, 0.5, {
+                        detect_classes_t::TRAFFIC_LIGHT,
+                        detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
+                        detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
+                        detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
+                        detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
+                    });
+                case detect_classes_t::TL_ARROW_FORWARD: {
+                    obj = check_for_object_on(detection.box, RIGHT|LEFT|TOP|BOTTOM, detection.box.width, 0.5, {
+                        detect_classes_t::TRAFFIC_LIGHT,
+                        detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
+                        detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
+                        detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
+                        detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
+                    });
+                } break;
+
+                default: break;
+            }
+
+            if (obj)
+                detection.confidence = 1.0;
         }
 
         return detections;
