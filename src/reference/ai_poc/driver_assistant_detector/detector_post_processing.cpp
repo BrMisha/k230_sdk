@@ -157,7 +157,8 @@ namespace detector_post_processing {
                 case detect_classes_t::APPROVED_RED:
                 case detect_classes_t::APPROVED_YELLOW:
                 case detect_classes_t::APPROVED_RED_YELLOW:
-                    filtered_indices.push_back(i);
+                    if (detections[i].confidence > 0.85)
+                        filtered_indices.push_back(i);
                     break;
                 default:
                     break;
