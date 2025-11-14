@@ -36,6 +36,7 @@ static k_datafifo_handle hDataFifo[2] = {
 std::atomic<bool> send_stop(false);
 
 std::vector<DetectionNormalizedCommon>  pending_detections;
+std::vector<DetectionNormalizedCommon>  pending_pre_detections;
 uint64_t pending_detections_pts = UINT64_MAX;
 DetectedSituation pending_detections_situation;
 std::mutex pending_detections_mutex;
@@ -256,6 +257,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 break;
             }
 
+            std::vector<DetectionNormalizedCommon>  _pending_pre_detections;
             std::vector<DetectionNormalizedCommon>  _pending_detections;
             uint64_t _pending_detections_pts;
             {
@@ -268,6 +270,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                     // If we have the first pts and pending_detections_pts is valid, then we got a detection result.
                     // In this case take these values to process it
                     _pending_detections_pts = pending_detections_pts - first_frame_time_stamp;
+                    _pending_pre_detections = std::move(pending_pre_detections);
                     _pending_detections = std::move(pending_detections);
                     pending_detections_pts = UINT64_MAX;
                 }
@@ -286,7 +289,16 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                     len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_forward");
                 len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
 
+                // add pre detections
+                for (auto &it: _pending_pre_detections) {
+                    auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
+                        detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
+                    if (l >= 0)
+                        len += l;
+                }
+                len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
 
+                // add detections
                 for (auto &it: _pending_detections) {
                     auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
                         detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
@@ -477,6 +489,10 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             pending_detections_situation = data->situation;
             for (size_t i = 0; i < data->detections_count; i++) {
                 pending_detections.push_back(data->detections[i]);
+            }
+            for (size_t i = 0; i < data->detections_pre_process_count; i++) {
+                // pre_detections locates after the last data->detections
+                pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
             }
         } break;
         default:

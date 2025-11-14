@@ -14,9 +14,10 @@ namespace driver_assistant_detector {
         uint64_t pts;
         DetectedSituation   situation;
         uint8_t detections_count;
+        uint8_t detections_pre_process_count;
         DetectionNormalizedCommon   detections[];
     } __attribute__((packed));
-    static_assert(sizeof(MSG_CMD_DETECTIONS_struct) == 13);
+    static_assert(sizeof(MSG_CMD_DETECTIONS_struct) == 14);
 
     static const char *IPCMSG_NAME = "driver_assistant";
 
