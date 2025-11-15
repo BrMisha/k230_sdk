@@ -229,7 +229,6 @@
     </div>
 
     <script>
-        const ws = new WebSocket('ws://' + window.location.hostname + ':8080', 'detection-protocol');
         const statusEl = document.getElementById('status');
         const timestampEl = document.getElementById('timestamp');
         const colorEl = document.getElementById('color');
@@ -239,74 +238,92 @@
         const detectionCountEl = document.getElementById('detection-count');
         const detectionListEl = document.getElementById('detection-list');
 
-        ws.onopen = () => {
-            statusEl.textContent = 'Connected';
-            statusEl.className = 'status connected';
-        };
+        let ws = null;
+        let reconnectTimeout = null;
+        const reconnectDelay = 1000; // 1 seconds
 
-        ws.onclose = () => {
-            statusEl.textContent = 'Disconnected';
-            statusEl.className = 'status disconnected';
-        };
+        function connect() {
+            ws = new WebSocket('ws://' + window.location.hostname + ':8080', 'detection-protocol');
 
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            statusEl.textContent = 'Connection error';
-            statusEl.className = 'status disconnected';
-        };
+            ws.onopen = () => {
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'status connected';
+                console.log('WebSocket connected');
+            };
 
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
+            ws.onclose = () => {
+                statusEl.textContent = 'Disconnected - Reconnecting...';
+                statusEl.className = 'status disconnected';
+                console.log('WebSocket disconnected, reconnecting in ' + (reconnectDelay / 1000) + 's...');
 
-                // Update timestamp (convert microseconds to milliseconds for Date)
-                const date = new Date(data.timestamp / 1000);
-                const timeStr = date.toLocaleTimeString('en-US', {
-                    hour12: false,
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit'
-            });
-                const dateStr = date.toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit'
+                // Attempt to reconnect after delay
+                reconnectTimeout = setTimeout(() => {
+                    connect();
+                }, reconnectDelay);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                statusEl.textContent = 'Connection error';
+                statusEl.className = 'status disconnected';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Update timestamp (convert microseconds to milliseconds for Date)
+                    const date = new Date(data.timestamp / 1000);
+                    const timeStr = date.toLocaleTimeString('en-US', {
+                        hour12: false,
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
                 });
-                timestampEl.textContent = `${dateStr} ${timeStr}`;
+                    const dateStr = date.toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                    });
+                    timestampEl.textContent = `${dateStr} ${timeStr}`;
 
-                // Update situation
-                colorEl.textContent = data.situation.color;
-                colorEl.className = `color ${data.situation.color}`;
+                    // Update situation
+                    colorEl.textContent = data.situation.color;
+                    colorEl.className = `color ${data.situation.color}`;
 
-                // Update arrows
-                arrowLeftEl.className = data.situation.arrow_left ? 'arrow arrow-left active' : 'arrow arrow-left';
-                arrowForwardEl.className = data.situation.arrow_forward ? 'arrow arrow-forward active' : 'arrow arrow-forward';
-                arrowRightEl.className = data.situation.arrow_right ? 'arrow arrow-right active' : 'arrow arrow-right';
+                    // Update arrows
+                    arrowLeftEl.className = data.situation.arrow_left ? 'arrow arrow-left active' : 'arrow arrow-left';
+                    arrowForwardEl.className = data.situation.arrow_forward ? 'arrow arrow-forward active' : 'arrow arrow-forward';
+                    arrowRightEl.className = data.situation.arrow_right ? 'arrow arrow-right active' : 'arrow arrow-right';
 
-                detectionListEl.innerHTML = data.detections.map(det => {
-                    // Determine color based on class name
-                    let nameColor = '#ffffff';
-                    const lowerName = det.class_name.toLowerCase();
-                    if (lowerName.includes('green')) {
-                        nameColor = '#00ff88';
-                    } else if (lowerName.includes('red')) {
-                        nameColor = '#ff4444';
-                    } else if (lowerName.includes('yellow')) {
-                        nameColor = '#ffee00';
-                    }
+                    detectionListEl.innerHTML = data.detections.map(det => {
+                        // Determine color based on class name
+                        let nameColor = '#ffffff';
+                        const lowerName = det.class_name.toLowerCase();
+                        if (lowerName.includes('green')) {
+                            nameColor = '#00ff88';
+                        } else if (lowerName.includes('red')) {
+                            nameColor = '#ff4444';
+                        } else if (lowerName.includes('yellow')) {
+                            nameColor = '#ffee00';
+                        }
 
-                    return `
-                        <div class="detection-item">
-                            <span class="class-name" style="color: ${nameColor}">${det.class_name}</span>
-                            <span class="confidence">${(det.confidence * 100).toFixed(1)}%</span>
-                        </div>
-                    `;
-                }).join('');
+                        return `
+                            <div class="detection-item">
+                                <span class="class-name" style="color: ${nameColor}">${det.class_name}</span>
+                                <span class="confidence">${(det.confidence * 100).toFixed(1)}%</span>
+                            </div>
+                        `;
+                    }).join('');
 
-            } catch (e) {
-                console.error('Error parsing message:', e);
-            }
-        };
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
+        }
+
+        // Initial connection
+        connect();
     </script>
 </body>
 </html>
