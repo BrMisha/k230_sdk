@@ -233,30 +233,43 @@ namespace detector_post_processing {
             if (detection.confidence >= 1.0f) continue;
 
             std::optional<size_t> obj_idx;
+            const float max_distance = std::max(detection.box.width, detection.box.height);
             switch (detection.class_id) {
                 case detect_classes_t::ARROW_RIGHT:
-                    obj_idx = check_for_object_on(detections, detection.box, LEFT|TOP|BOTTOM, detection.box.width, 0.5, {
+                    obj_idx = check_for_object_on(detections, detection.box, LEFT|TOP|BOTTOM, max_distance, 0.5, {
                         detect_classes_t::TRAFFIC_LIGHT,
                         detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
                         detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
                         detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
                         detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
+                    });
+                    if (!obj_idx.has_value())
+                        obj_idx = check_for_object_on(detections, detection.box, LEFT|TOP|BOTTOM, max_distance, 0.6, {
+                        detect_classes_t::COLOR_GREEN, detect_classes_t::COLOR_RED
                     });
                 case detect_classes_t::TL_ARROW_LEFT:
-                    obj_idx = check_for_object_on(detections, detection.box, RIGHT|TOP|BOTTOM, detection.box.width, 0.5, {
+                    obj_idx = check_for_object_on(detections, detection.box, RIGHT|TOP|BOTTOM, max_distance, 0.5, {
                         detect_classes_t::TRAFFIC_LIGHT,
                         detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
                         detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
                         detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
                         detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
                     });
+                    if (!obj_idx.has_value())
+                        obj_idx = check_for_object_on(detections, detection.box, RIGHT|TOP|BOTTOM, max_distance, 0.6, {
+                        detect_classes_t::COLOR_GREEN, detect_classes_t::COLOR_RED
+                    });
                 case detect_classes_t::TL_ARROW_FORWARD: {
-                    obj_idx = check_for_object_on(detections, detection.box, RIGHT|LEFT|TOP|BOTTOM, detection.box.width, 0.5, {
+                    obj_idx = check_for_object_on(detections, detection.box, RIGHT|LEFT|TOP|BOTTOM, max_distance, 0.5, {
                         detect_classes_t::TRAFFIC_LIGHT,
                         detect_classes_t::TRAFFIC_LIGHT_GREEN, detect_classes_t::TRAFFIC_LIGHT_RED,
                         detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW, detect_classes_t::TRAFFIC_LIGHT_YELLOW,
                         detect_classes_t::APPROVED_GREEN, detect_classes_t::APPROVED_RED,
                         detect_classes_t::APPROVED_YELLOW, detect_classes_t::APPROVED_RED_YELLOW
+                    });
+                    if (!obj_idx.has_value())
+                        obj_idx = check_for_object_on(detections, detection.box, RIGHT|LEFT|TOP|BOTTOM, max_distance, 0.6, {
+                        detect_classes_t::COLOR_GREEN, detect_classes_t::COLOR_RED
                     });
                 } break;
 
@@ -356,7 +369,7 @@ namespace detector_post_processing {
                                 break;
                             case GREEN:
                                 found_idx = check_for_object_on(detections, detection.box, LEFT | RIGHT | TOP | BOTTOM,
-                                                          detection.box.width, 0.8, {
+                                                          detection.box.width, 0.7, {
                                                               detect_classes_t::TRAFFIC_LIGHT_GREEN,
                                                               detect_classes_t::COLOR_GREEN,
                                                               detect_classes_t::APPROVED_GREEN
@@ -364,7 +377,7 @@ namespace detector_post_processing {
                                 break;
                             case RED:
                                 found_idx = check_for_object_on(detections, detection.box, LEFT | RIGHT | TOP | BOTTOM,
-                                                          detection.box.width, 0.8, {
+                                                          detection.box.width, 0.7, {
                                                               detect_classes_t::TRAFFIC_LIGHT_RED,
                                                               detect_classes_t::COLOR_RED,
                                                               detect_classes_t::APPROVED_RED
@@ -372,7 +385,7 @@ namespace detector_post_processing {
                                 break;
                             case YELLOW:
                                 found_idx = check_for_object_on(detections, detection.box, LEFT | RIGHT | TOP | BOTTOM,
-                                                          detection.box.width, 0.8, {
+                                                          detection.box.width, 0.7, {
                                                               detect_classes_t::TRAFFIC_LIGHT_YELLOW,
                                                               detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW,
                                                               detect_classes_t::APPROVED_YELLOW,
