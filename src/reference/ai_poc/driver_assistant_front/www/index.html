@@ -15,12 +15,17 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #1a1a2e;
             color: #eee;
-            padding: 20px;
+            padding: 10px;
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
         }
 
         .container {
-            max-width: 1400px;
-            margin: 0 auto;
+            max-width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
         }
 
         h1 {
@@ -33,11 +38,12 @@
 
         .status {
             background: #16213e;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
+            padding: 8px;
+            border-radius: 5px;
+            margin-bottom: 5px;
             text-align: center;
             border: 2px solid #0f3460;
+            font-size: 0.9em;
         }
 
         .status.connected {
@@ -52,18 +58,28 @@
 
         .situation {
             background: #0f3460;
-            padding: 20px;
+            padding: 10px;
             border-radius: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
             text-align: center;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
         }
 
         .situation .color {
             width: 100%;
-            height: 200px;
-            margin-bottom: 20px;
+            flex: 2;
+            min-height: 100px;
+            margin-bottom: 10px;
             border-radius: 10px;
             transition: background-color 0.3s, box-shadow 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3em;
+            font-weight: bold;
         }
 
         .situation .color.GREEN {
@@ -89,23 +105,21 @@
         .arrows {
             display: flex;
             justify-content: center;
+            align-items: center;
             gap: 20px;
-            margin-top: 15px;
+            flex: 1;
         }
 
         .arrow {
-            padding: 10px 20px;
-            background: #16213e;
-            border-radius: 5px;
-            opacity: 0.3;
-            transition: opacity 0.3s;
+            font-size: 4em;
+            opacity: 0.2;
+            transition: opacity 0.3s, color 0.3s;
+            color: #888;
         }
 
         .arrow.active {
             opacity: 1;
-            background: #00d9ff;
-            color: #000;
-            font-weight: bold;
+            color: #00ff88;
         }
 
         .detections h2 {
@@ -133,7 +147,7 @@
         }
 
         .confidence {
-            color: #ffee00;
+            color: #00d9ff;
         }
 
         .bbox {
@@ -144,10 +158,18 @@
 
         .timestamp {
             background: #0f3460;
-            padding: 10px;
+            padding: 5px;
             border-radius: 5px;
             text-align: center;
             color: #00d9ff;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+
+        .detections {
+            flex-shrink: 0;
+            max-height: 200px;
+            overflow-y: auto;
         }
     </style>
 </head>
@@ -164,9 +186,9 @@
         <div class="situation">
             <div class="color NONE" id="color"></div>
             <div class="arrows">
-                <div class="arrow" id="arrow-left">← Left</div>
-                <div class="arrow" id="arrow-forward">↑ Forward</div>
-                <div class="arrow" id="arrow-right">Right →</div>
+                <div class="arrow" id="arrow-left">←</div>
+                <div class="arrow" id="arrow-forward">↑</div>
+                <div class="arrow" id="arrow-right">→</div>
             </div>
         </div>
 
@@ -206,8 +228,20 @@
             try {
                 const data = JSON.parse(event.data);
 
-                // Update timestamp
-                timestampEl.textContent = `Timestamp: ${(data.timestamp / 1000).toFixed(3)}s`;
+                // Update timestamp (convert microseconds to milliseconds for Date)
+                const date = new Date(data.timestamp / 1000);
+                const timeStr = date.toLocaleTimeString('en-US', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit'
+            });
+                const dateStr = date.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit'
+                });
+                timestampEl.textContent = `${dateStr} ${timeStr}`;
 
                 // Update situation
                 colorEl.textContent = data.situation.color;
@@ -218,12 +252,25 @@
                 arrowForwardEl.className = data.situation.arrow_forward ? 'arrow active' : 'arrow';
                 arrowRightEl.className = data.situation.arrow_right ? 'arrow active' : 'arrow';
 
-                detectionListEl.innerHTML = data.detections.map(det => `
-                    <div class="detection-item">
-                            <span class="class-name">${det.class_name}</span>
+                detectionListEl.innerHTML = data.detections.map(det => {
+                    // Determine color based on class name
+                    let nameColor = '#ffffff';
+                    const lowerName = det.class_name.toLowerCase();
+                    if (lowerName.includes('green')) {
+                        nameColor = '#00ff88';
+                    } else if (lowerName.includes('red')) {
+                        nameColor = '#ff4444';
+                    } else if (lowerName.includes('yellow')) {
+                        nameColor = '#ffee00';
+                    }
+
+                    return `
+                        <div class="detection-item">
+                            <span class="class-name" style="color: ${nameColor}">${det.class_name}</span>
                             <span class="confidence">${(det.confidence * 100).toFixed(1)}%</span>
-                    </div>
-                `).join('');
+                        </div>
+                    `;
+                }).join('');
 
             } catch (e) {
                 console.error('Error parsing message:', e);
