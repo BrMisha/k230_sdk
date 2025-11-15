@@ -62,17 +62,15 @@
             border-radius: 10px;
             margin-bottom: 10px;
             text-align: center;
-            flex: 1;
             display: flex;
             flex-direction: column;
-            min-height: 0;
+            height: calc(100vh - 80px);
         }
 
         .situation .color {
             width: 100%;
-            flex: 2;
-            min-height: 100px;
-            margin-bottom: 10px;
+            height: 40vh;
+            margin-bottom: 0;
             border-radius: 10px;
             transition: background-color 0.3s, box-shadow 0.3s;
             display: flex;
@@ -106,20 +104,53 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 20px;
-            flex: 1;
+            gap: 40px;
+            height: 20vh;
         }
 
         .arrow {
-            font-size: 4em;
-            opacity: 0.2;
-            transition: opacity 0.3s, color 0.3s;
-            color: #888;
+            width: 0;
+            height: 0;
+            opacity: 0.3;
+            transition: opacity 0.3s, filter 0.3s;
+            position: relative;
+        }
+
+        .arrow-left {
+            border-top: 10vh solid transparent;
+            border-bottom: 10vh solid transparent;
+            border-right: 12vh solid #888;
+        }
+
+        .arrow-right {
+            border-top: 10vh solid transparent;
+            border-bottom: 10vh solid transparent;
+            border-left: 12vh solid #888;
+        }
+
+        .arrow-forward {
+            border-left: 10vh solid transparent;
+            border-right: 10vh solid transparent;
+            border-bottom: 12vh solid #888;
         }
 
         .arrow.active {
             opacity: 1;
-            color: #00ff88;
+        }
+
+        .arrow-left.active {
+            border-right-color: #00ff88;
+            filter: drop-shadow(0 0 20px #00ff88);
+        }
+
+        .arrow-right.active {
+            border-left-color: #00ff88;
+            filter: drop-shadow(0 0 20px #00ff88);
+        }
+
+        .arrow-forward.active {
+            border-bottom-color: #00ff88;
+            filter: drop-shadow(0 0 20px #00ff88);
         }
 
         .detections h2 {
@@ -186,9 +217,9 @@
         <div class="situation">
             <div class="color NONE" id="color"></div>
             <div class="arrows">
-                <div class="arrow" id="arrow-left">←</div>
-                <div class="arrow" id="arrow-forward">↑</div>
-                <div class="arrow" id="arrow-right">→</div>
+                <div class="arrow arrow-left" id="arrow-left"></div>
+                <div class="arrow arrow-forward" id="arrow-forward"></div>
+                <div class="arrow arrow-right" id="arrow-right"></div>
             </div>
         </div>
 
@@ -248,9 +279,9 @@
                 colorEl.className = `color ${data.situation.color}`;
 
                 // Update arrows
-                arrowLeftEl.className = data.situation.arrow_left ? 'arrow active' : 'arrow';
-                arrowForwardEl.className = data.situation.arrow_forward ? 'arrow active' : 'arrow';
-                arrowRightEl.className = data.situation.arrow_right ? 'arrow active' : 'arrow';
+                arrowLeftEl.className = data.situation.arrow_left ? 'arrow arrow-left active' : 'arrow arrow-left';
+                arrowForwardEl.className = data.situation.arrow_forward ? 'arrow arrow-forward active' : 'arrow arrow-forward';
+                arrowRightEl.className = data.situation.arrow_right ? 'arrow arrow-right active' : 'arrow arrow-right';
 
                 detectionListEl.innerHTML = data.detections.map(det => {
                     // Determine color based on class name
