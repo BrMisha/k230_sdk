@@ -233,28 +233,32 @@ static void venc_output(k_u32 venc_ch) {
     free(datafifo_buf);
 }
 
-std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame) {
-    std::vector<DetectionNormalized> results;
+std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, std::vector<DetectionNormalized> *pre_processed_detections = nullptr) {
+    auto results = pre_processed_detections ? pre_processed_detections : new std::vector<DetectionNormalized> ;
 
     auto r = sahi.detect(rgb_frame);
     for (auto it = r.cbegin(); it != r.cend(); ++it) {
-        results.push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
+        results->push_back(it->normalize(rgb_frame.cols, rgb_frame.rows));
     }
 
-    results = detector_post_processing::post_process(std::move(results));
+    auto post_results = detector_post_processing::post_process(*results);
 
-    return results;
+    // if we allocated memory
+    if (pre_processed_detections != results) delete results;
+
+    return post_results;
 }
 
 void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
+    std::vector<DetectionNormalized> pre_process_to_push;
     uint64_t results_to_push_pts = UINT64_MAX;
     std::mutex results_to_push_mutex;
     std::condition_variable results_to_push_cv;
 
     std::thread push_thread([&]() {
-        static const size_t MAX_COUNT = 50;
+        static const size_t MAX_COUNT = 100;
         auto buf = static_cast<MSG_CMD_DETECTIONS_struct *>(malloc(  sizeof(MSG_CMD_DETECTIONS_struct) + sizeof(DetectionNormalizedCommon) * MAX_COUNT));
         while (ipcmsg_handle && running) {
             std::unique_lock<std::mutex> lock(results_to_push_mutex);
@@ -287,8 +291,19 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
                     dnc->w = results_to_push[i].box.width;
                     dnc->h = results_to_push[i].box.height;
                 }
+                buf->detections_pre_process_count = pre_process_to_push.size();
+                // paste items after the last buf->detections
+                for (size_t i = 0; i < pre_process_to_push.size() && i < results_to_push.size()+MAX_COUNT;  ++i) {
+                    auto dnc = &buf->detections[results_to_push.size() + i];
+                    dnc->class_id = pre_process_to_push[i].class_id;
+                    dnc->confidence = pre_process_to_push[i].confidence;
+                    dnc->x = pre_process_to_push[i].box.x;
+                    dnc->y = pre_process_to_push[i].box.y;
+                    dnc->w = pre_process_to_push[i].box.width;
+                    dnc->h = pre_process_to_push[i].box.height;
+                }
                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECTIONS, buf,
-                    sizeof(MSG_CMD_DETECTIONS_struct) + (sizeof(DetectionNormalizedCommon) * results_to_push.size()));
+                    sizeof(MSG_CMD_DETECTIONS_struct) + (sizeof(DetectionNormalizedCommon) * (results_to_push.size() + pre_process_to_push.size())));
                 auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
                 kd_ipcmsg_destroy_message(pReq);
 
@@ -321,18 +336,20 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
 
         if (!rgb_frame) continue;
 
+        std::vector<DetectionNormalized> pre_process;
         std::vector<DetectionNormalized> results;
 
         {
             ScopedTiming st("SAHI detection", 1);
             std::lock_guard<std::mutex> lock(obDet_mutex);
             SAHI sahi(obDet, cv::Size(320, 320), sahi_overlap_ratio, sahi_nms_threshold);
-            results = detect(sahi, *rgb_frame);
-            printf("Detections count: %lu\n", results.size());
+            results = detect(sahi, *rgb_frame, &pre_process);
+            printf("Detections count: %lu, preprocess: %lu\n", results.size(), pre_process.size());
         }
 
         std::lock_guard<std::mutex> lock(results_to_push_mutex);
         results_to_push_pts = dump_info.v_frame.pts;
+        pre_process_to_push = std::move(pre_process);
         results_to_push = std::move(results);
         results_to_push_cv.notify_all();
     }
