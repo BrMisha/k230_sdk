@@ -26,7 +26,7 @@ black_box::black_box(std::string dir_path, int width, int height) : dir_path(std
 }
 
 int black_box::write_video_frame(const uint8_t *data, size_t data_length, uint64_t pts_us, bool is_keyframe) {
-    if (!_streamer.is_ready() || _streamer.get_total_data_len() > max_size) {
+    if (!_streamer.is_ready() || (is_keyframe && _streamer.get_total_data_len() > max_size)) {
         _streamer.stop();
 
         // Construct the recording file path: <dir_path>/recording_<number>.mp4
