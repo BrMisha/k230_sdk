@@ -143,10 +143,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
     uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
-    //uint64_t first_frame_time_stamp = UINT64_MAX;
     std::vector<uint8_t> periodic_header_buffer;  // Buffer for periodic HEADER frames
-
-    //char common_buf[1024*10];
 
     while (!send_stop) {
         readLen = 0;
@@ -166,13 +163,6 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
 
-            // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
-            // Header is generated at init time, but first video frame comes much later
-            /*if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
-                first_frame_time_stamp = frame->pts;
-            }
-            const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
-*/
             /*uint64_t microseconds = pts;
             uint64_t milliseconds = microseconds / 1000;
             uint64_t seconds = milliseconds / 1000;
@@ -328,6 +318,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                     ws_server->broadcast_detections(_pending_detections_pts, _pending_detections_situation, _pending_detections);
                 }
 
+                // TODO: impl in future
                 /*std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                 if (stream_endpoint_detections.port() != 0) {
                     udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
