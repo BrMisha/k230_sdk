@@ -16,6 +16,7 @@
 #include <asio.hpp>
 #include <optional>
 
+#include "black_box.h"
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common_ipc.h"
@@ -43,11 +44,6 @@ std::mutex pending_detections_mutex;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
-
-struct BbFiles_t {
-    std::string video;
-    std::string log;
-};
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
@@ -131,16 +127,14 @@ int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &d
     return 0;
 }
 
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<BbFiles_t> &bb_files_path, websocket_server::WebSocketServer *ws_server = nullptr) {
+void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_dir_path, websocket_server::WebSocketServer *ws_server = nullptr) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
     int counter = 0;
 
-    MediaStreamerFile streamer_file;
-    FILE *output_file_detections = nullptr;
-    if (bb_files_path.has_value()) {
-        streamer_file.init(bb_files_path.value().video.c_str(), 1920, 1080);
-        output_file_detections = fopen(bb_files_path.value().log.c_str(), "w");
+    std::unique_ptr<black_box> streamer_file;
+    if (bb_dir_path.has_value()) {
+        streamer_file = std::make_unique<black_box>(bb_dir_path.value(), 1920, 1080);
     }
 
     MediaStreamerRtsp streamer_rtsp;
@@ -149,10 +143,10 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
     uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
-    uint64_t first_frame_time_stamp = UINT64_MAX;
+    //uint64_t first_frame_time_stamp = UINT64_MAX;
     std::vector<uint8_t> periodic_header_buffer;  // Buffer for periodic HEADER frames
 
-    char common_buf[1024*10];
+    //char common_buf[1024*10];
 
     while (!send_stop) {
         readLen = 0;
@@ -174,18 +168,18 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
             // Header is generated at init time, but first video frame comes much later
-            if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
+            /*if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
                 first_frame_time_stamp = frame->pts;
             }
             const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
-
-            uint64_t microseconds = pts;
+*/
+            /*uint64_t microseconds = pts;
             uint64_t milliseconds = microseconds / 1000;
             uint64_t seconds = milliseconds / 1000;
             uint64_t minutes = seconds / 60;
             uint64_t hours = minutes / 60;
-            //printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
-            //       hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);
+            printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
+                   hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);*/
 
             if (!recording_started) {
                 if (frame->type == 3) {
@@ -220,12 +214,12 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
                     int ret = -1;
 
-                    if (streamer_file.is_ready())
-                        ret = streamer_file.write_video_frame(combined.data(), combined.size(), pts,
+                    if (streamer_file != nullptr)
+                        ret = streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts,
                             true);
 
                     if (streamer_rtsp.is_ready())
-                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), pts,
+                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
                             true);
 
                     if (ret == 0) {
@@ -254,24 +248,24 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                     combined.insert(combined.end(), periodic_header_buffer.begin(), periodic_header_buffer.end());
                     combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
 
-                    if (streamer_file.is_ready())
-                        streamer_file.write_video_frame(combined.data(), combined.size(), pts, true);
+                    if (streamer_file != nullptr)
+                        streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts, true);
                     if (streamer_rtsp.is_ready())
-                        streamer_rtsp.write_video_frame(combined.data(), combined.size(), pts, true);
+                        streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts, true);
 
                     periodic_header_buffer.clear();
                 }
                 else {
                     // P-frame or I-frame without header - write normally
-                    if (streamer_file.is_ready())
-                        streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+                    if (streamer_file != nullptr)
+                        streamer_file->write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
                     if (streamer_rtsp.is_ready())
-                        streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+                        streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
 
                     // Log standalone I-frames (shouldn't happen)
                     if (frame->type == 2) {
                         printf("WARNING: Standalone I-frame without HEADER (type 2), size=%u bytes, PTS=%lu\n",
-                               frame->data_len, pts);
+                               frame->data_len, frame->pts);
                     }
                 }
             }
@@ -280,9 +274,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
             if (counter++ > 100) {
                 counter = 0;
 
-                if (output_file_detections) {
-                    fflush(output_file_detections);
-                    fsync(fileno(output_file_detections));
+                if (streamer_file) {
+                    streamer_file->flush_files();
                 }
 
                 std::thread([ipcmsg_handle]() {
@@ -308,66 +301,37 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             std::vector<DetectionNormalizedCommon>  _pending_pre_detections;
             std::vector<DetectionNormalizedCommon>  _pending_detections;
+            DetectedSituation _pending_detections_situation;
             uint64_t _pending_detections_pts;
             {
                 std::lock_guard lock(pending_detections_mutex);
 
-                if (pending_detections_pts == UINT64_MAX    // No pending detections
-                    || first_frame_time_stamp == UINT64_MAX) // Did not initialize fist pts
+                if (pending_detections_pts == UINT64_MAX)    // No pending detections
                     _pending_detections_pts = UINT64_MAX;
                 else {
                     // If we have the first pts and pending_detections_pts is valid, then we got a detection result.
                     // In this case take these values to process it
-                    _pending_detections_pts = pending_detections_pts - first_frame_time_stamp;
+                    _pending_detections_pts = pending_detections_pts;
                     _pending_pre_detections = std::move(pending_pre_detections);
                     _pending_detections = std::move(pending_detections);
+                    _pending_detections_situation = pending_detections_situation;
                     pending_detections_pts = UINT64_MAX;
                 }
             }
 
             if (_pending_detections_pts != UINT64_MAX) {
-                auto len = snprintf(common_buf, sizeof(common_buf), "%lu;:", _pending_detections_pts/1000);
-
-                len += snprintf(common_buf+len, sizeof(common_buf)-len, "%s",
-                    DetectedSituationColor_str[pending_detections_situation.color].c_str());
-                if (pending_detections_situation.arrow_left)
-                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_left");
-                if (pending_detections_situation.arrow_right)
-                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_right");
-                if (pending_detections_situation.arrow_forward)
-                    len += snprintf(common_buf+len, sizeof(common_buf)-len, " arrow_forward");
-                len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
-
-                // add pre detections
-                for (auto &it: _pending_pre_detections) {
-                    auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
-                        detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
-                    if (l >= 0)
-                        len += l;
+                if (streamer_file) {
+                    streamer_file->write_detections(_pending_detections_pts, _pending_pre_detections, _pending_detections, _pending_detections_situation);
                 }
-                len += snprintf(common_buf+len, sizeof(common_buf)-len, ";:");
-
-                // add detections
-                for (auto &it: _pending_detections) {
-                    auto l = snprintf(common_buf+len, sizeof(common_buf)-len, "%s %.2f %.10f %.10f %f %f;",
-                        detect_classes_str[it.class_id].c_str(), it.confidence, it.x, it.y, it.w, it.h);
-                    if (l >= 0)
-                        len += l;
-                }
-                len += snprintf(common_buf+len, sizeof(common_buf)-len, "\n");
-
-                if (output_file_detections)
-                    fwrite(common_buf, 1, len, output_file_detections);
-
                 // Broadcast via WebSocket
                 if (ws_server) {
-                    ws_server->broadcast_detections(_pending_detections_pts, pending_detections_situation, _pending_detections);
+                    ws_server->broadcast_detections(_pending_detections_pts, _pending_detections_situation, _pending_detections);
                 }
 
-                std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
+                /*std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
                 if (stream_endpoint_detections.port() != 0) {
                     udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
-                }
+                }*/
             }
         }
         else {
@@ -375,8 +339,6 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
         }
     }
 
-    streamer_file.stop();
-    if (output_file_detections) fclose(output_file_detections);
     // Do dot stop rtsp beause of to long
     //streamer_rtsp.stop();
 
@@ -602,30 +564,6 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    std::optional<BbFiles_t> bb_files_path;
-    if (bb_dir_path.has_value()) {
-        for (int i = 0; i < 0xFFFF; ++i) {
-            char bb_file_buf[64];
-            char bb_log_buf[64];
-            snprintf(bb_file_buf, sizeof(bb_file_buf), "%s/%d.mp4", bb_dir_path->c_str(), i);
-            snprintf(bb_log_buf, sizeof(bb_log_buf), "%s/%d.txt", bb_dir_path->c_str(), i);
-
-            FILE *file = fopen(bb_file_buf, "r");
-            if (!file) {
-                file = fopen(bb_log_buf, "r");
-                if (!file) {
-                    bb_files_path = BbFiles_t {
-                        .video = bb_file_buf,
-                        .log = bb_log_buf
-                    };
-                    break;
-                }
-                fclose(file);
-            }
-            else fclose(file);
-        }
-    }
-
     ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
 
     // WebSocket Server
@@ -645,7 +583,7 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_files_path, &ws_server);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_dir_path, &ws_server);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");

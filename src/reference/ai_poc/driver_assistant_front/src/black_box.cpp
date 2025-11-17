@@ -43,6 +43,7 @@ void black_box::write_detections(uint64_t pts,
     const std::vector<driver_assistant_detector::DetectionNormalizedCommon> &pre_detections,
     const std::vector<driver_assistant_detector::DetectionNormalizedCommon> &detections,
     const driver_assistant_detector::DetectedSituation &situation) {
+    if (!_streamer.is_ready() || _streamer_first_pts == 0) return;
 
     // if we have a detection file from the prev session but pts>=_streamer_first_pts, close this file and write data to new
     if (_file_detections.is_open() && _file_detections_number < _streamer_recording_number && pts >= _streamer_first_pts)
@@ -56,8 +57,10 @@ void black_box::write_detections(uint64_t pts,
         _file_detections.open(recording_path);
     }
 
+    if (pts < _file_detections_first_pts) return; // because of some bug
+
     // Write timestamp in milliseconds
-    _file_detections << (pts - _file_detections_first_pts / 1000) << ";:";
+    _file_detections << ((pts - _file_detections_first_pts) / 1000) << ";:";
 
     // Write detected situation color
     _file_detections << driver_assistant_detector::DetectedSituationColor_str[situation.color];
