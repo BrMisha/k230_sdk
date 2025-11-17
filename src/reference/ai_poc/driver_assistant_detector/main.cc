@@ -93,6 +93,9 @@ static int datafifo_init(void) {
         return -1;
     }
 
+    for (size_t i = 0; i < 10; i++)
+        kd_datafifo_write(hDataFifo[WRITER_INDEX], nullptr);
+
     s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_PHY_ADDR, &datafifo_phy_addr[WRITER_INDEX]);
     if (K_SUCCESS != s32Ret) {
         printf("get datafifo phy addr error:%x\n", s32Ret);
