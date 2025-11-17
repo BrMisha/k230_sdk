@@ -2,9 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
-#include <errno.h>
-#include <unistd.h>
-#include <fcntl.h>
 
 // K230 SDK headers
 #include "k_type.h"
@@ -28,25 +25,6 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
     // =========================================================================
     // Initialize MP4 file writer
     // =========================================================================
-
-    // CRITICAL: Truncate file before creating new fMP4
-    // Fragmented MP4 (fmp4_flag=1) appends to existing files instead of overwriting.
-    // This causes stale data from previous recordings to appear at the beginning,
-    // resulting in timeline discontinuities and "artifacts at beginning (first 1-3 sec)".
-    //
-    // Solution: Open with O_TRUNC to force truncation, then close immediately.
-    // This ensures kd_mp4_create() will write to a clean file.
-
-    int fd = open(config, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd >= 0) {
-        close(fd);
-        printf("MediaStreamerFile: File %s truncated/created (clean start)\n", config);
-    } else {
-        printf("MediaStreamerFile: WARNING: Failed to truncate %s - errno=%d (%s)\n",
-               config, errno, strerror(errno));
-        printf("MediaStreamerFile: This may cause artifacts if file already existed!\n");
-    }
-
     k_mp4_config_s mp4_config;
     memset(&mp4_config, 0, sizeof(mp4_config));
     mp4_config.config_type = K_MP4_CONFIG_MUXER;

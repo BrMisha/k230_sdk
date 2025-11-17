@@ -138,11 +138,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
     MediaStreamerFile streamer_file;
     FILE *output_file_detections = nullptr;
-
     if (bb_files_path.has_value()) {
-        printf("=== Initializing MP4 file: %s ===\n", bb_files_path.value().video.c_str());
         streamer_file.init(bb_files_path.value().video.c_str(), 1920, 1080);
-        printf("=== MP4 initialization complete ===\n");
         output_file_detections = fopen(bb_files_path.value().log.c_str(), "w");
     }
 
@@ -153,6 +150,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
     std::vector<uint8_t> header_buffer;
     uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
     uint64_t first_frame_time_stamp = UINT64_MAX;
+    std::vector<uint8_t> periodic_header_buffer;  // Buffer for periodic HEADER frames
 
     char common_buf[1024*10];
 
@@ -174,19 +172,10 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
 
-            // DEBUG: Log ALL frames from FIFO to track stale data
-            static int frame_counter = 0;
-            if (frame_counter < 50) {  // Log first 50 frames only
-                printf("FIFO frame #%d: type=%u, pts=%lu, size=%u bytes\n",
-                       frame_counter, frame->type, frame->pts, frame->data_len);
-                frame_counter++;
-            }
-
             // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
             // Header is generated at init time, but first video frame comes much later
             if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
                 first_frame_time_stamp = frame->pts;
-                printf("PTS normalization base set: first_frame_time_stamp=%lu\n", first_frame_time_stamp);
             }
             const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
 
@@ -252,20 +241,37 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 // Discard Type 1 (P-frames) until we have header+IDR written
             }
             else {
-                // After recording started, write I-frames and P-frames, but SKIP periodic header frames
+                // After recording started: combine periodic HEADERs with I-frames, write P-frames normally
                 if (frame->type == 3) {
-                    // Periodic HEADER frame - SKIP (this is the fix!)
-                    printf("SKIPPED periodic HEADER (type 3), size=%u bytes, PTS=%lu\n", frame->data_len, pts);
-                } else {
-                    // Write I-frames (type 2) and P-frames (type 1)
+                    // Periodic HEADER frame - buffer it to combine with next I-frame
+                    // I-frames need their VPS/SPS/PPS to decode properly
+                    periodic_header_buffer.assign(frame->data, frame->data + frame->data_len);
+                }
+                else if (frame->type == 2 && !periodic_header_buffer.empty()) {
+                    // I-frame following HEADER - combine them
+                    std::vector<uint8_t> combined;
+                    combined.reserve(periodic_header_buffer.size() + frame->data_len);
+                    combined.insert(combined.end(), periodic_header_buffer.begin(), periodic_header_buffer.end());
+                    combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
+
+                    if (streamer_file.is_ready())
+                        streamer_file.write_video_frame(combined.data(), combined.size(), pts, true);
+                    if (streamer_rtsp.is_ready())
+                        streamer_rtsp.write_video_frame(combined.data(), combined.size(), pts, true);
+
+                    periodic_header_buffer.clear();
+                }
+                else {
+                    // P-frame or I-frame without header - write normally
                     if (streamer_file.is_ready())
                         streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
                     if (streamer_rtsp.is_ready())
                         streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
 
-                    // Log I-frames for verification
+                    // Log standalone I-frames (shouldn't happen)
                     if (frame->type == 2) {
-                        printf("Written I-frame (type 2), size=%u bytes, PTS=%lu\n", frame->data_len, pts);
+                        printf("WARNING: Standalone I-frame without HEADER (type 2), size=%u bytes, PTS=%lu\n",
+                               frame->data_len, pts);
                     }
                 }
             }
