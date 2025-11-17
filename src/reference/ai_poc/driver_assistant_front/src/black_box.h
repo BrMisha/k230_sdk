@@ -17,7 +17,6 @@ class black_box {
     uint64_t _streamer_first_pts = 0;
 
     size_t _streamer_recording_number = 0;
-    //size_t _prev_current_recording_number = 0;
 
     std::ofstream _file_detections;
     // it may have a lower value than _current_recording_number
@@ -26,11 +25,12 @@ class black_box {
 
 public:
     static constexpr size_t max_size = 1024ULL * 1024 * 1024 * 2;  // 2 GB
+    static constexpr size_t min_free_space = (max_size * 3) / 2;
     static constexpr const char* prefix = "recording_";
 
     explicit black_box(std::string dir_path, int width, int height);
 
-    std::string dir_path;
+    const std::string dir_path;
     const int width;
     const int height;
 

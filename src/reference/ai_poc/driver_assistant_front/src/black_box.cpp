@@ -34,6 +34,25 @@ int black_box::write_video_frame(const uint8_t *data, size_t data_length, uint64
         _streamer.init(recording_path.c_str(), width, height);
 
         _streamer_first_pts = pts_us;
+
+        while (1) {
+            auto space = get_free_space(dir_path.c_str());
+            std::cout << "Free space: " << space/1024 << " MB" << std::endl;
+            if (space >= min_free_space) break;
+
+            auto list = list_of_recordings(this->dir_path.c_str());
+            auto min = std::min_element(list.cbegin(), list.cend());
+            if (min == list.cend() || list.size() < 2) { // 3 to prevent removing not finished detections
+                std::cerr << "UNABLE TO FREE SPACE!!!" << std::endl;
+                break;
+            }
+
+            fs::remove(this->dir_path + "/" + prefix + std::to_string(*min) + ".mp4");
+            fs::remove(this->dir_path + "/" + prefix + std::to_string(*min) + ".txt");
+
+            std::cout << "Removed " << prefix + std::to_string(*min) << std::endl;
+        }
+
     }
 
     return _streamer.write_video_frame(data, data_length, pts_us - _streamer_first_pts, is_keyframe);
