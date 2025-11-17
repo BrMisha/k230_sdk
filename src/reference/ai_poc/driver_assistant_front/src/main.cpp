@@ -138,8 +138,11 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
     MediaStreamerFile streamer_file;
     FILE *output_file_detections = nullptr;
+
     if (bb_files_path.has_value()) {
+        printf("=== Initializing MP4 file: %s ===\n", bb_files_path.value().video.c_str());
         streamer_file.init(bb_files_path.value().video.c_str(), 1920, 1080);
+        printf("=== MP4 initialization complete ===\n");
         output_file_detections = fopen(bb_files_path.value().log.c_str(), "w");
     }
 
@@ -148,6 +151,7 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
     bool recording_started = false;
     std::vector<uint8_t> header_buffer;
+    uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
     uint64_t first_frame_time_stamp = UINT64_MAX;
 
     char common_buf[1024*10];
@@ -170,10 +174,19 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
 
             auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
 
+            // DEBUG: Log ALL frames from FIFO to track stale data
+            static int frame_counter = 0;
+            if (frame_counter < 50) {  // Log first 50 frames only
+                printf("FIFO frame #%d: type=%u, pts=%lu, size=%u bytes\n",
+                       frame_counter, frame->type, frame->pts, frame->data_len);
+                frame_counter++;
+            }
+
             // FIX: Only start timestamp normalization from first real video frame (type 2), not header (type 3)
             // Header is generated at init time, but first video frame comes much later
             if (first_frame_time_stamp == UINT64_MAX && frame->type == 2) {
                 first_frame_time_stamp = frame->pts;
+                printf("PTS normalization base set: first_frame_time_stamp=%lu\n", first_frame_time_stamp);
             }
             const auto pts = (first_frame_time_stamp != UINT64_MAX) ? (frame->pts - first_frame_time_stamp) : frame->pts;
 
@@ -189,9 +202,27 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (frame->type == 3) {
                     // Buffer Type 3 (VPS/SPS/PPS) - don't write yet
                     header_buffer.assign(frame->data, frame->data + frame->data_len);
-                    printf("Header buffered, size=%zu bytes\n", header_buffer.size());
+                    header_buffer_pts = frame->pts;  // Store HEADER PTS for validation
+                    printf("Header buffered, size=%zu bytes, PTS=%lu\n", header_buffer.size(), frame->pts);
                 }
                 else if (frame->type == 2 && !header_buffer.empty()) {
+                    // Validate HEADER and I-frame PTS are close (within 2 seconds)
+                    // This detects stale HEADER frames from previous encoder sessions
+                    uint64_t pts_diff = (frame->pts > header_buffer_pts)
+                                      ? (frame->pts - header_buffer_pts)
+                                      : (header_buffer_pts - frame->pts);
+
+                    if (pts_diff > 2000000) {  // More than 2 seconds apart
+                        printf("WARNING: Stale HEADER detected (PTS gap = %lu us = %.1f sec)\n",
+                               pts_diff, pts_diff / 1000000.0);
+                        printf("  HEADER PTS: %lu, I-frame PTS: %lu\n", header_buffer_pts, frame->pts);
+                        printf("  Discarding stale HEADER, waiting for fresh one\n");
+                        header_buffer.clear();
+                        header_buffer_pts = 0;
+                        // Don't start recording yet - wait for next HEADER that matches I-frame PTS
+                    }
+                    else {
+                    // PTS gap is acceptable - HEADER and I-frame are from same session
                     // Combine header + IDR and write together
                     std::vector<uint8_t> combined;
                     combined.reserve(header_buffer.size() + frame->data_len);
@@ -216,15 +247,27 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                         printf("Failed to write first frame (header+IDR): error %d\n", ret);
                     }
                     header_buffer.clear();
+                    }
                 }
                 // Discard Type 1 (P-frames) until we have header+IDR written
             }
             else {
-                // After recording started, write all subsequent frames normally
-                if (streamer_file.is_ready())
-                    streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
-                if (streamer_rtsp.is_ready())
-                    streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+                // After recording started, write I-frames and P-frames, but SKIP periodic header frames
+                if (frame->type == 3) {
+                    // Periodic HEADER frame - SKIP (this is the fix!)
+                    printf("SKIPPED periodic HEADER (type 3), size=%u bytes, PTS=%lu\n", frame->data_len, pts);
+                } else {
+                    // Write I-frames (type 2) and P-frames (type 1)
+                    if (streamer_file.is_ready())
+                        streamer_file.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+                    if (streamer_rtsp.is_ready())
+                        streamer_rtsp.write_video_frame(frame->data, frame->data_len, pts, frame->type == 2);
+
+                    // Log I-frames for verification
+                    if (frame->type == 2) {
+                        printf("Written I-frame (type 2), size=%u bytes, PTS=%lu\n", frame->data_len, pts);
+                    }
+                }
             }
 
             // blink
