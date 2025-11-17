@@ -12,6 +12,7 @@ MediaStreamerFile::MediaStreamerFile()
     , video_track_handle_(nullptr)
     // , subtitle_track_handle_(nullptr)  // DISABLED
     , mp4_initialized_(false)
+    , total_data_len_(0)
 {
 }
 
@@ -79,6 +80,7 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
     // }
 
     mp4_initialized_ = true;
+    total_data_len_ = 0;  // Reset byte counter for new recording
     printf("MediaStreamerFile: Fragmented MP4 initialized - %s (%dx%d)\n",
            config, width, height);
 
@@ -107,6 +109,9 @@ int MediaStreamerFile::write_video_frame(const uint8_t* data, size_t data_length
         printf("MediaStreamerFile: kd_mp4_write_frame failed: %d\n", ret);
         return ret;
     }
+
+    // Accumulate total bytes written
+    total_data_len_ += data_length;
 
     return 0;
 }

@@ -52,12 +52,18 @@ public:
      */
     bool is_ready() const override { return mp4_initialized_; }
 
+    /**
+     * Get total bytes written to MP4 file (raw encoded data, not including container overhead)
+     */
+    size_t get_total_data_len() const { return total_data_len_; }
+
 private:
     // MP4 file writer handles (using K230 SDK mp4_format API)
     void* mp4_muxer_;
     void* video_track_handle_;
     // void* subtitle_track_handle_;  // DISABLED: Not supported in fragmented MP4
     bool mp4_initialized_;
+    size_t total_data_len_;  // Total bytes written (accumulated data_length)
 };
 
 #endif // MEDIA_STREAMER_FILE_H
