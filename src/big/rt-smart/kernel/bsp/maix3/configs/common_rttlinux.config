@@ -44,7 +44,7 @@
 #define RT_USING_DEVICE_OPS
 #define RT_USING_CONSOLE
 #define RT_CONSOLEBUF_SIZE 256
-#define RT_CONSOLE_DEVICE_NAME "uart"
+#define RT_CONSOLE_DEVICE_NAME "virt-tty"
 #define RT_VER_NUM 0x50000
 #define ARCH_CPU_64BIT
 #define RT_USING_CACHE
@@ -367,4 +367,5 @@
 
 #define RT_USING_MPP
 #define RT_USING_IPCM
+#define RT_USING_VIRT_TTY
 #endif
