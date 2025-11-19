@@ -8,6 +8,7 @@ namespace driver_assistant_detector {
         MSG_CMD_DETECT_RGB,
         MSG_CMD_LED_SET,
         MSG_CMD_DETECTIONS,
+        MSG_CMD_APP_CLOSED,
     } ipc_msg_cmd_t;
 
     struct MSG_CMD_DETECTIONS_struct {

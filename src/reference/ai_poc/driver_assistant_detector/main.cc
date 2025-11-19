@@ -456,6 +456,10 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                 ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
             }
         } break;
+        case MSG_CMD_APP_CLOSED: {
+            printf("APP_CLOSED\n");
+            running = false;
+        } break;
         default:
             break;
     }
@@ -540,10 +544,31 @@ int main(int argc, char *argv[]) {
         if (ipcmsg_handle) kd_ipcmsg_run(ipcmsg_handle);
     });
 
-    if (image_input_mode) {
-        while (getchar() != 'q') {
-            usleep(10000);
+    auto wait_for_exit = []() {
+        fd_set readfds;
+        struct timeval timeout;
+
+        while (running) {
+            FD_ZERO(&readfds);
+            FD_SET(STDIN_FILENO, &readfds);
+
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 100000;  // 100ms timeout
+
+            int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+
+            if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+                char c = getchar();
+                if (c == 'q' || c == 'Q') {
+                    running = false;
+                    break;
+                }
+            }
         }
+    };
+
+    if (image_input_mode) {
+        wait_for_exit();
         running = false;
     }
     else {
@@ -561,9 +586,7 @@ int main(int argc, char *argv[]) {
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
 
-        while (getchar() != 'q') {
-            usleep(10000);
-        }
+        wait_for_exit();
         running = false;
 
         isp_ai_detector_thread.join();

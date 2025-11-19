@@ -583,6 +583,10 @@ int main(int argc, char *argv[]) {
         }
 
         send_stop = true;
+
+        auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_APP_CLOSED, "", 1);
+        auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
+        kd_ipcmsg_destroy_message(pReq);
     }
 
     read_fifo_thread.join();
