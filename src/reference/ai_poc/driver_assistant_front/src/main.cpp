@@ -17,6 +17,7 @@
 #include <optional>
 
 #include "black_box.h"
+#include "fb_display.h"
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common_ipc.h"
@@ -44,6 +45,8 @@ std::mutex pending_detections_mutex;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
+
+FbDisplay g_fb_display;
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
@@ -453,6 +456,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
                                                 detections.push_back(responce_struct->detections[i]);
 
                                             ws_server->broadcast_detections(0, responce_struct->situation, detections);
+                                            g_fb_display.drawSituation(responce_struct->situation);
                                         }
                                     }
 
@@ -489,6 +493,7 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             pending_detections.clear();
             pending_detections_pts = data->pts;
             pending_detections_situation = data->situation;
+            g_fb_display.drawSituation(data->situation);
             for (size_t i = 0; i < data->detections_count; i++) {
                 pending_detections.push_back(data->detections[i]);
             }
@@ -505,6 +510,16 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
     std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
+
+    // Initialize framebuffer display
+    if (!g_fb_display.open("/dev/fb1")) {
+        printf("Warning: Failed to open /dev/fb1 for display\n");
+    } else {
+        printf("Framebuffer display initialized (320x170 RGB565)\n");
+        g_fb_display.drawTestText();  // Show "AI" on startup
+        sleep(5);
+        g_fb_display.clear();
+    }
 
     std::optional<std::string> bb_dir_path;
     bool daemon_mode;
