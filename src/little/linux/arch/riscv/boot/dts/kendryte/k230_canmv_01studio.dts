@@ -92,8 +92,8 @@
 		spi-max-frequency = <8000000>;
 		spi-cpol;
 		spi-cpha;
-		rotate = <0>;
-		bgr;
+		rotate = <90>;
+		/* bgr; */
 		fps = <8>;
 		buswidth = <8>;
 		width = <170>;

@@ -153,7 +153,7 @@ static int init_display(struct fbtft_par *par)
 }
 
 /**
- * set_addr_win() - set the GRAM update window with X offset
+ * set_addr_win() - set the GRAM update window with offset for 170x320 panel
  *
  * @par: FBTFT parameter object
  * @xs: x start
@@ -161,13 +161,29 @@ static int init_display(struct fbtft_par *par)
  * @xe: x end
  * @ye: y end
  *
- * Adds X offset of 35 for 170x320 panel (confirmed by test).
+ * Adds offset of 35 for 170x320 panel. Offset moves between X/Y based on rotation.
  */
 static void set_addr_win(struct fbtft_par *par, int xs, int ys, int xe, int ye)
 {
-	/* Add X offset of 35 for 170x320 panel */
-	xs += 35;
-	xe += 35;
+	/* Offset of 35 for 170x320 panel in 240x320 RAM */
+	switch (par->info->var.rotate) {
+	case 0:
+		xs += 35;
+		xe += 35;
+		break;
+	case 90:
+		ys += 35;
+		ye += 35;
+		break;
+	case 180:
+		xs += 35;
+		xe += 35;
+		break;
+	case 270:
+		ys += 35;
+		ye += 35;
+		break;
+	}
 
 	write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
 		  (xs >> 8) & 0xFF, xs & 0xFF, (xe >> 8) & 0xFF, xe & 0xFF);
