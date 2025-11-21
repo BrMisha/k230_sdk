@@ -83,6 +83,51 @@ static void __rt_assert_handler(const char *ex_string, const char *func, rt_size
     asm volatile("ebreak":::"memory");
 }
 
+// IOMUX configuration structures
+typedef struct {
+    rt_uint32_t st : 1;
+    rt_uint32_t ds : 4;
+    rt_uint32_t pd : 1;
+    rt_uint32_t pu : 1;
+    rt_uint32_t oe_en : 1;
+    rt_uint32_t ie_en : 1;
+    rt_uint32_t msc : 1;
+    rt_uint32_t sl : 1;
+    rt_uint32_t io_sel : 3;
+    rt_uint32_t resv0 : 17;
+    rt_uint32_t pad_di : 1;
+} mux_config_t;
+
+#define MUXPIN_NUM_IO (64)
+typedef struct {
+    mux_config_t io[MUXPIN_NUM_IO];
+} muxpin_t;
+
+// Configure SPI0 pins (QSPI0_CONF1: pins 14-17) for Linux fbtft driver
+static void init_spi0_pins(void)
+{
+    volatile muxpin_t *muxpin = (volatile muxpin_t *)IOMUX_BASE_ADDR;
+
+    // Configure pins 14-17 for SPI function (io_sel = 3)
+    // Pin 14: SPI0 CS - moderate drive strength (ds=3) to reduce overshoot/ringing
+    mux_config_t cs_pin = {.st = 1, .ds = 0x3, .pd = 0, .pu = 1, .oe_en = 1,
+                          .ie_en = 0, .msc = 1, .sl = 1, .io_sel = 3};
+    // Pin 15: SPI0 CLK - moderate drive strength for cleaner edges
+    mux_config_t clk_pin = {.st = 1, .ds = 0x3, .pd = 0, .pu = 0, .oe_en = 1,
+                           .ie_en = 0, .msc = 1, .sl = 1, .io_sel = 3};
+    // Pin 16: SPI0 D0 (MOSI) - moderate drive strength
+    mux_config_t d0_pin = {.st = 1, .ds = 0x3, .pd = 0, .pu = 0, .oe_en = 1,
+                          .ie_en = 1, .msc = 1, .sl = 1, .io_sel = 3};
+    // Pin 17: SPI0 D1 (MISO) - moderate drive strength
+    mux_config_t d1_pin = {.st = 1, .ds = 0x3, .pd = 0, .pu = 0, .oe_en = 1,
+                          .ie_en = 1, .msc = 1, .sl = 1, .io_sel = 3};
+
+    muxpin->io[14] = cs_pin;
+    muxpin->io[15] = clk_pin;
+    muxpin->io[16] = d0_pin;
+    muxpin->io[17] = d1_pin;
+}
+
 //BSP的C入口
 void primary_cpu_entry(void)
 {
@@ -93,6 +138,10 @@ void primary_cpu_entry(void)
     //关中断
     rt_hw_interrupt_disable();
     rt_assert_set_hook(__rt_assert_handler);
+
+    // Configure SPI0 pins for Linux
+    init_spi0_pins();
+
     //启动RT-Thread Smart内核
     entry();
 }
