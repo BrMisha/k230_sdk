@@ -19,14 +19,15 @@
 struct MediaInputConfig {
     int sensor_width = 1920;
     int sensor_height = 1080;
-    int rgb888_2_width = 1920;
-    int rgb888_2_height = 1080;
+    int small_rgb888_width = 1920;
+    int small_rgb888_height = 1080;
     int bitrate_kbps = 4000;
 };
 
 class MediaIspDump {
     friend class Media;
 
+    k_u64 _phy_addr;
     void *_vbvaddr;
     size_t _size;
 
@@ -34,8 +35,8 @@ class MediaIspDump {
     k_vicap_dev _vicap_dev;
     k_vicap_chn _vicap_chn;
 
-    MediaIspDump(void *vbvaddr, size_t size, k_video_frame_info dump_info, k_vicap_dev vicap_dev, k_vicap_chn vicap_chn)
-    : _vbvaddr(vbvaddr), _size(size), _dump_info(dump_info), _vicap_dev(vicap_dev), _vicap_chn(vicap_chn) {}
+    MediaIspDump(k_u64 phy_addr, void *vbvaddr, size_t size, k_video_frame_info dump_info, k_vicap_dev vicap_dev, k_vicap_chn vicap_chn)
+    : _phy_addr(phy_addr), _vbvaddr(vbvaddr), _size(size), _dump_info(dump_info), _vicap_dev(vicap_dev), _vicap_chn(vicap_chn) {}
 
     // Prevent copying, allow moving
     MediaIspDump(const MediaIspDump&) = delete;
@@ -62,14 +63,13 @@ class Media {
     const k_u32 _venc_ch = 0;
 
     const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
-    const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
-    const k_vicap_chn _vicap_chn_rgb888_2 = VICAP_CHN_ID_1;
+    //const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
+    const k_vicap_chn _vicap_chn_small_rgb888 = VICAP_CHN_ID_1;
     const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_2;
 
-    static const k_u32 _pool_id_yuv420 = 3;
-    static const k_u32 _pool_id_rgb = 4;
-    static const k_u32 _pool_id_rgb_2 = 5;
     static const k_u32 _pool_id_venc = 2;
+    //static const k_u32 _pool_id_rgb = 3;
+    static const k_u32 _pool_id_small_rgb = 4;
 
     k_video_frame_info _venc_vf_info;
     void    *_venc_pic_vaddr = nullptr;
@@ -86,7 +86,7 @@ public:
 
     MediaInputConfig const *input_config() const { return &_input_config;}
 
-    std::optional<std::unique_ptr<MediaIspDump>> isp_dump_rgb888(k_video_frame_info &dump_info, uint8_t channel); // channel 0 or 1
+    std::optional<std::unique_ptr<MediaIspDump>> isp_dump_small_rgb888(k_video_frame_info &dump_info, k_u32 timeout_ms = 1000);
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump_yuv420(k_video_frame_info &dump_info);
 
     k_u32 venc_get_channel() const {return _venc_ch;}

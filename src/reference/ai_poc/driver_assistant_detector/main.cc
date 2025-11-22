@@ -317,27 +317,39 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
     });
 
     std::unique_ptr<cv::Mat> rgb_frame;
+    uint64_t rgb_frame_pts;
+    std::mutex rgb_frame_mutex;
+    std::condition_variable rgb_frame_cv;
+
+    std::thread poll_thread([&]() {
+        k_video_frame_info dump_info;
+
+        while (running) {
+            auto picture = media->isp_dump_small_rgb888(dump_info, 100);
+            if (!picture) {
+                std::cout << "Dump empty" << std::endl;
+                continue;
+            }
+
+            std::unique_lock lock(rgb_frame_mutex, std::try_to_lock);
+            if (lock.owns_lock()) {
+                if (!rgb_frame)
+                    rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
+
+                memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
+                rgb_frame_pts = dump_info.v_frame.pts;
+                std::cout << "Push new data to rgb_frame" << std::endl;
+                rgb_frame_cv.notify_one();
+            }
+        }
+    });
+
     while (running) {
         ScopedTiming st("----------------Total time--------------- ", 1);
 
-        k_video_frame_info dump_info;
-        int ret;
-        {
-            ScopedTiming st_isp_dump_rgb888("isp_dump_rgb888", debug_mode);
-            auto picture = media->isp_dump_rgb888(dump_info, 1);
-            if (!picture) {
-                printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
-                break;
-            }
-
-            if (!rgb_frame)
-                rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
-
-            // Copy camera RGB data to buffer. We can not use vbvaddr directly for detection because it is to low
-            memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
-        }
-
-        if (!rgb_frame) continue;
+        std::unique_lock<std::mutex> lock_rgb_frame(rgb_frame_mutex);
+        rgb_frame_cv.wait(lock_rgb_frame);
+        if (!running) continue;
 
         std::vector<DetectionNormalized> pre_process;
         std::vector<DetectionNormalized> results;
@@ -350,12 +362,19 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
             printf("Detections count: %lu, preprocess: %lu\n", results.size(), pre_process.size());
         }
 
+        pin_mode_t mode;
+        mode.pin = LED_PIN_NUM;
+        ioctl(gpio_led_fd, results.size() ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
+
         std::lock_guard<std::mutex> lock(results_to_push_mutex);
-        results_to_push_pts = dump_info.v_frame.pts;
+        results_to_push_pts = rgb_frame_pts;
         pre_process_to_push = std::move(pre_process);
         results_to_push = std::move(results);
         results_to_push_cv.notify_all();
     }
+
+    rgb_frame_cv.notify_all();
+    poll_thread.join();
 
     results_to_push_cv.notify_all();
     push_thread.join();
@@ -450,10 +469,10 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
             if (msg->u32BodyLen == sizeof(uint8_t)) {
                 auto state = *static_cast<uint8_t *>(msg->pBody);
 
-                pin_mode_t mode;
+                /*pin_mode_t mode;
                 mode.pin = LED_PIN_NUM;
                 ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
-                ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
+                ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);*/
             }
         } break;
         case MSG_CMD_APP_CLOSED: {
@@ -575,8 +594,8 @@ int main(int argc, char *argv[]) {
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
-            .rgb888_2_width = 768,
-            .rgb888_2_height = 432,
+            .small_rgb888_width = 768,
+            .small_rgb888_height = 432,
             .bitrate_kbps = 4000
         };
         Media media(config);
