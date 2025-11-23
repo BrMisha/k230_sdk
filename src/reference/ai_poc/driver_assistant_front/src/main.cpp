@@ -16,6 +16,7 @@
 #include <asio.hpp>
 #include <optional>
 
+#include "utils.h"
 #include "black_box.h"
 #include "fb_display.h"
 #include "k_datafifo.h"
@@ -24,6 +25,14 @@
 #include "media_streamer_file.h"
 #include "media_streamer_rtsp.h"
 #include "websocket_server.h"
+
+// LVGL includes
+extern "C" {
+#include "lvgl.h"
+#include "src/osal/lv_os.h"  // For lv_lock()/lv_unlock()
+#include "lv_port_disp.h"
+#include "ui/export/ui.h"
+}
 
 using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
@@ -46,7 +55,7 @@ std::mutex pending_detections_mutex;
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
 
-FbDisplay g_fb_display;
+//FbDisplay g_fb_display;
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
@@ -456,7 +465,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
                                                 detections.push_back(responce_struct->detections[i]);
 
                                             ws_server->broadcast_detections(0, responce_struct->situation, detections);
-                                            g_fb_display.drawSituation(responce_struct->situation);
+                                            //g_fb_display.drawSituation(responce_struct->situation);
                                         }
                                     }
 
@@ -489,17 +498,42 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
         case MSG_CMD_DETECTIONS: {
             auto data = reinterpret_cast<MSG_CMD_DETECTIONS_struct*>(msg->pBody);
 
-            std::lock_guard lock(pending_detections_mutex);
-            pending_detections.clear();
-            pending_detections_pts = data->pts;
-            pending_detections_situation = data->situation;
-            g_fb_display.drawSituation(data->situation);
-            for (size_t i = 0; i < data->detections_count; i++) {
-                pending_detections.push_back(data->detections[i]);
+            {
+                std::lock_guard lock(pending_detections_mutex);
+                pending_detections.clear();
+                pending_detections_pts = data->pts;
+                pending_detections_situation = data->situation;
+                //g_fb_display.drawSituation(data->situation);
+                for (size_t i = 0; i < data->detections_count; i++) {
+                    pending_detections.push_back(data->detections[i]);
+                }
+                for (size_t i = 0; i < data->detections_pre_process_count; i++) {
+                    // pre_detections locates after the last data->detections
+                    pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
+                }
             }
-            for (size_t i = 0; i < data->detections_pre_process_count; i++) {
-                // pre_detections locates after the last data->detections
-                pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
+
+            static DetectedSituation   last_situation;
+            if (last_situation != data->situation) {
+                last_situation = data->situation;
+
+                lv_lock();
+                switch (last_situation.color) {
+                    case DetectedSituationColor::RED:
+                        lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_RED), LV_PART_MAIN);
+                        break;
+                    case DetectedSituationColor::GREEN:
+                        lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_GREEN), LV_PART_MAIN);
+                        break;
+                    case DetectedSituationColor::YELLOW:
+                        lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_MAIN);
+                        break;
+                    case DetectedSituationColor::NONE:
+                    default:
+                        lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x404040), LV_PART_MAIN);
+                        break;
+                }
+                lv_unlock();
             }
         } break;
         default:
@@ -511,15 +545,45 @@ int main(int argc, char *argv[]) {
     std::cout << "./driver_assistant_front -H to show usage" << std::endl;
     std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
 
-    // Initialize framebuffer display
-    if (!g_fb_display.open("/dev/fb1")) {
-        printf("Warning: Failed to open /dev/fb1 for display\n");
-    } else {
-        printf("Framebuffer display initialized (320x170 RGB565)\n");
-        g_fb_display.drawTestText();  // Show "AI" on startup
-        sleep(5);
-        g_fb_display.clear();
-    }
+    // Initialize LVGL
+    lv_init();
+    // Initialize display port
+    lv_port_disp_init();
+    // Load SquareLine Studio UI
+    ui_init();
+
+    // Create LVGL timer thread (30ms tick + 1s time update)
+    std::thread lvgl_thread([]() {
+        while (!send_stop) {
+            lv_tick_inc(30);        // Increment LVGL tick by 30ms
+            lv_timer_handler();
+            usleep(30000);          // Sleep 30ms
+        }
+    });
+
+    std::thread lvgl_thread_upd([]() {
+        static char ip_buffer[32];
+        static char time_buffer[16];
+
+        while (!send_stop) {
+            lv_lock();
+
+            // Set IP address on display
+            std::string ip = utils::get_ip_address();
+            snprintf(ip_buffer, sizeof(ip_buffer), "%s", ip.c_str());
+            lv_label_set_text(ui_ipaddr, ip_buffer);
+
+            // Set time on display
+            std::string time = utils::get_current_time();
+            snprintf(time_buffer, sizeof(time_buffer), "%s", time.c_str());
+            lv_label_set_text(ui_time, time_buffer);
+
+            //lv_refr_now(NULL);
+            lv_unlock();
+
+            usleep(1000000);
+        }
+    });
 
     std::optional<std::string> bb_dir_path;
     bool daemon_mode;
@@ -619,6 +683,12 @@ int main(int argc, char *argv[]) {
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
     ipcmsg_thread.join();
+
+    // Cleanup LVGL
+    lvgl_thread_upd.join();
+    lvgl_thread.join();
+    ui_destroy();
+    lv_port_disp_deinit();
 
     return 0;
 }

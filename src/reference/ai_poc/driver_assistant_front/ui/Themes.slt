@@ -1,0 +1,45 @@
+{
+  "deftheme": {
+    "name": "Default",
+    "properties": [
+      {
+        "nid": 1000213,
+        "strtype": "THEME_COLOR",
+        "strval": "red",
+        "intarray": [
+          255,
+          0,
+          0,
+          255
+        ],
+        "InheritedType": 0
+      },
+      {
+        "nid": 1000214,
+        "strtype": "THEME_COLOR",
+        "strval": "green",
+        "intarray": [
+          0,
+          255,
+          0,
+          255
+        ],
+        "InheritedType": 0
+      },
+      {
+        "nid": 1000215,
+        "strtype": "THEME_COLOR",
+        "strval": "yellow",
+        "intarray": [
+          255,
+          255,
+          0,
+          255
+        ],
+        "InheritedType": 0
+      }
+    ]
+  },
+  "themes": [],
+  "selected_theme": "Default"
+}

@@ -77,6 +77,17 @@ namespace driver_assistant_detector {
         bool arrow_left, arrow_right, arrow_forward;
 
         DetectedSituation() : color(DetectedSituationColor::NONE), arrow_left(false), arrow_right(false), arrow_forward(false) {}
+
+        bool operator==(const DetectedSituation& other) const {
+            return color == other.color &&
+                   arrow_left == other.arrow_left &&
+                   arrow_right == other.arrow_right &&
+                   arrow_forward == other.arrow_forward;
+        }
+
+        bool operator!=(const DetectedSituation& other) const {
+            return !(*this == other);
+        }
     } __attribute__((packed));
     static_assert(sizeof(DetectedSituation) == 4);
 
