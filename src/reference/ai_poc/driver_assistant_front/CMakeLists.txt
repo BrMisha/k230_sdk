@@ -29,6 +29,7 @@ file(GLOB UI_SOURCES
     ${ui_root}/*.c
     ${ui_root}/screens/*.c
     ${ui_root}/components/*.c
+    ${ui_root}/images/*.c
 )
 
 set(BIN driver_assistant_front)

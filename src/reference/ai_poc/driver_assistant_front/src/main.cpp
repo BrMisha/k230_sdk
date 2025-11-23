@@ -533,6 +533,26 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
                         lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x404040), LV_PART_MAIN);
                         break;
                 }
+
+                // Update arrow visibility based on detected situation
+                if (last_situation.arrow_left) {
+                    lv_obj_remove_flag(ui_arrowleft, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowleft, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                if (last_situation.arrow_right) {
+                    lv_obj_remove_flag(ui_arrowright, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowright, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                if (last_situation.arrow_forward) {
+                    lv_obj_remove_flag(ui_arrowforward, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowforward, LV_OBJ_FLAG_HIDDEN);
+                }
+
                 lv_unlock();
             }
         } break;
