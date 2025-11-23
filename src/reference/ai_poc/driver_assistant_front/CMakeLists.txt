@@ -17,9 +17,19 @@ set(THIRDPARTY_PATH ${CDK_SRC_DIR}/user/thirdparty)
 set(BUILDROOT_SYSROOT "${k230_sdk}/output/k230_canmv_01studio_defconfig/little/buildroot-ext/host/riscv64-buildroot-linux-gnu/sysroot")
 
 set(src_root "${PROJECT_SOURCE_DIR}/src")
+set(ui_root "${PROJECT_SOURCE_DIR}/ui/export")
 
-set(CMAKE_INSTALL_PREFIX "../")
-file(GLOB APP_SOURCES ${src_root}/*.cpp)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "Install directory" FORCE)
+endif()
+file(GLOB APP_SOURCES ${src_root}/*.cpp ${src_root}/*.c)
+
+# LVGL and UI sources
+file(GLOB UI_SOURCES
+    ${ui_root}/*.c
+    ${ui_root}/screens/*.c
+    ${ui_root}/components/*.c
+)
 
 set(BIN driver_assistant_front)
 
@@ -47,6 +57,11 @@ include_directories(${LIVE555_ROOT}/UsageEnvironment/include)
 # libwebsockets from buildroot
 include_directories(${BUILDROOT_SYSROOT}/usr/include)
 
+# LVGL includes
+include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
+include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl/src)
+include_directories(${ui_root})
+
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
 link_directories(${CDK_SRC_DIR}/user/middleware/mp4_format/lib)
@@ -63,11 +78,21 @@ link_directories(${LIVE555_ROOT}/UsageEnvironment)
 # libwebsockets library from buildroot
 link_directories(${BUILDROOT_SYSROOT}/usr/lib)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --sysroot=${BUILDROOT_SYSROOT}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
 
-add_executable(${BIN} ${APP_SOURCES})
+# Build LVGL 9.3.0 from source (compatible with SquareLine Studio 9.2.2 export)
+# Tell LVGL to use our lv_conf.h (with LV_OS_PTHREAD enabled) via LV_CONF_INCLUDE_SIMPLE
+add_compile_definitions(LV_CONF_INCLUDE_SIMPLE)
+add_subdirectory(${k230_sdk}/src/big/mpp/userapps/src/lvgl ${CMAKE_CURRENT_BINARY_DIR}/lvgl)
+
+# Exclude ARM-specific assembly files (NEON/Helium) from LVGL build for RISC-V
+get_target_property(LVGL_SOURCES lvgl SOURCES)
+list(FILTER LVGL_SOURCES EXCLUDE REGEX ".*lv_blend_(neon|helium)\\.S$")
+set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
+
+add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
     datafifo
     pthread
@@ -80,6 +105,7 @@ target_link_libraries(${BIN} -Wl,--start-group
     BasicUsageEnvironment
     groupsock
     websockets
+    lvgl
     -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)
