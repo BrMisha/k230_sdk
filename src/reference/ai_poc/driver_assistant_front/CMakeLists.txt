@@ -22,6 +22,10 @@ set(ui_root "${PROJECT_SOURCE_DIR}/ui/export")
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "Install directory" FORCE)
 endif()
+
+# Add media streaming submodule
+add_subdirectory(media_streaming)
+
 file(GLOB APP_SOURCES ${src_root}/*.cpp ${src_root}/*.c)
 
 # LVGL and UI sources
@@ -95,6 +99,7 @@ set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
 
 add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
+    media_streaming
     datafifo
     pthread
     sys

@@ -22,8 +22,8 @@
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common_ipc.h"
-#include "media_streamer_file.h"
-#include "media_streamer_rtsp.h"
+#include "media_streamer_file.h"  // From media_streaming module
+#include "media_streamer_rtsp.h"  // From media_streaming module
 #include "websocket_server.h"
 
 // LVGL includes
