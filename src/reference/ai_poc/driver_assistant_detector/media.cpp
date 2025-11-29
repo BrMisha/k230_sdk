@@ -284,6 +284,9 @@ k_s32 Media::vivcap_init()
     /* Configure sensor device attributes to prepare for ISP initialization */
     k_vicap_dev_attr dev_attr;
     memset(&dev_attr, 0, sizeof(k_vicap_dev_attr));
+    if (_input_config.rotate_camera) {
+        dev_attr.mirror = VICAP_MIRROR_BOTH;  // 180 degree rotation
+    }
     dev_attr.acq_win.h_start = 0; /* No horizontal offset for ISP input frame */
     dev_attr.acq_win.v_start = 0; /* No vertical offset for ISP input frame */
     dev_attr.acq_win.width = _input_config.sensor_width; /* ISP input image width */

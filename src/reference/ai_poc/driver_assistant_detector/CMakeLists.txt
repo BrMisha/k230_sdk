@@ -1,6 +1,15 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.14)
 set(src main.cc utils.cc ai_base.cc ob_det.cc sahi.cpp media.cpp image_decoder.cpp detector_post_processing.cpp)
 set(bin driver_assistant_detector.elf)
+
+# Fetch argparse from GitHub
+include(FetchContent)
+FetchContent_Declare(
+    argparse
+    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
+    GIT_TAG        v3.2
+)
+FetchContent_MakeAvailable(argparse)
 
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(.)
@@ -27,4 +36,5 @@ target_link_libraries(${bin} -Wl,--start-group rvv Nncase.Runtime.Native nncase.
  switch cameric_reg_drv t_database_c t_mxml_c t_json_c t_common_c vo connector sensor atomic dma vdec vicap venc datafifo ipcmsg -Wl,--end-group)
 
 target_link_libraries(${bin} opencv_imgproc opencv_imgcodecs opencv_core zlib libjpeg-turbo libopenjp2 libpng libtiff libwebp csi_cv)
+target_link_libraries(${bin} argparse)
 install(TARGETS ${bin} DESTINATION bin)

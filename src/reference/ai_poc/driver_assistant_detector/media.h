@@ -22,6 +22,7 @@ struct MediaInputConfig {
     int small_rgb888_width = 1920;
     int small_rgb888_height = 1080;
     int bitrate_kbps = 4000;
+    bool rotate_camera = false;
 };
 
 class MediaIspDump {
