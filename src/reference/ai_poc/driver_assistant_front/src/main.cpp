@@ -15,6 +15,7 @@
 #include <vector>
 #include <asio.hpp>
 #include <optional>
+#include <argparse/argparse.hpp>
 
 #include "utils.h"
 #include "black_box.h"
@@ -103,40 +104,6 @@ void datafifo_deinit() {
     kd_datafifo_close(hDataFifo[WRITER_INDEX]);
 
     printf("datafifo_deinit finish\n");
-}
-
-static void Usage() {
-    std::cout << "Usage: ./driver_assistant_front [-p phyAddr] [-b bb_path] [-d]" << std::endl;
-    std::cout << "-p: phyAddr (physical address for datafifo)" << std::endl;
-    std::cout << "-b: bb_path (path for output files)" << std::endl;
-    std::cout << "-d: daemon mode" << std::endl;
-    exit(-1);
-}
-
-int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &daemon_mode) {
-    daemon_mode = false;
-
-    int result;
-    opterr = 0;
-    while ((result = getopt(argc, argv, "H:b:d")) != -1) {
-        switch (result) {
-            case 'H': {
-                Usage();
-                break;
-            }
-            case 'b': {
-                bb = std::make_optional(optarg);
-                break;
-            }
-            case 'd': {
-                daemon_mode = true;
-                break;
-            }
-            default: Usage();
-                break;
-        }
-    }
-    return 0;
 }
 
 void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_dir_path, websocket_server::WebSocketServer *ws_server = nullptr) {
@@ -575,8 +542,28 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 }
 
 int main(int argc, char *argv[]) {
-    std::cout << "./driver_assistant_front -H to show usage" << std::endl;
-    std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
+    // Parse command line arguments using argparse
+    std::optional<std::string> bb_dir_path;
+    bool daemon_mode = false;
+
+    argparse::ArgumentParser program("driver_assistant_front");
+
+    program.add_argument("-b", "--bb")
+        .help("Black box output directory path")
+        .action([&](const std::string& value) { bb_dir_path = value; });
+
+    program.add_argument("-d", "--daemon")
+        .flag()
+        .help("Run in daemon mode")
+        .store_into(daemon_mode);
+
+    try {
+        program.parse_args(argc, argv);
+    } catch (const std::exception& err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        return 1;
+    }
 
     // Initialize LVGL
     lv_init();
@@ -618,9 +605,7 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    std::optional<std::string> bb_dir_path;
-    bool daemon_mode;
-    int ret = parse_config(argc, argv, bb_dir_path, daemon_mode);
+    int ret;
 
     k_u64 datafifo_phy_addr[2] = {0,0};
 

@@ -1,10 +1,18 @@
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 3.30)
 include(./cmake/Riscv64.cmake)
 
 project(driver_assistant_front C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Fetch argparse from GitHub (after project() so toolchain is set up)
+include(FetchContent)
+FetchContent_Declare(
+    argparse
+    URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
+)
+FetchContent_MakeAvailable(argparse)
 
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
@@ -138,6 +146,7 @@ target_link_libraries(${BIN} -Wl,--start-group
     z
     pcre
     lvgl
+    argparse
     -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)
