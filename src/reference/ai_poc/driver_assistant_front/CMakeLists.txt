@@ -13,8 +13,22 @@ set(RTSMART_SRC_DIR ${k230_sdk}/src/big/rt-smart)
 set(IPCMSG_ROOT ${CDK_SRC_DIR}/user/component/ipcmsg)
 set(THIRDPARTY_PATH ${CDK_SRC_DIR}/user/thirdparty)
 
-# Buildroot sysroot for libwebsockets
-set(BUILDROOT_SYSROOT "${k230_sdk}/output/k230_canmv_01studio_defconfig/little/buildroot-ext/host/riscv64-buildroot-linux-gnu/sysroot")
+# Read CONF from .last_conf (set by main SDK Makefile)
+set(LAST_CONF_FILE "${k230_sdk}/.last_conf")
+if(EXISTS "${LAST_CONF_FILE}")
+    file(READ "${LAST_CONF_FILE}" LAST_CONF_CONTENT)
+    string(REGEX MATCH "CONF=([^\n\r]+)" _ "${LAST_CONF_CONTENT}")
+    set(CONF "${CMAKE_MATCH_1}")
+else()
+    message(FATAL_ERROR "Cannot find .last_conf - please build SDK first with 'make CONF=...'")
+endif()
+
+# Buildroot paths (using staging for proper cross-compilation sysroot)
+set(BUILDROOT_DIR "${k230_sdk}/output/${CONF}/little/buildroot-ext")
+set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
+
+# libwebsockets from buildroot build
+set(LIBWEBSOCKETS_ROOT "${BUILDROOT_DIR}/build/libwebsockets-4.0.21")
 
 set(src_root "${PROJECT_SOURCE_DIR}/src")
 set(ui_root "${PROJECT_SOURCE_DIR}/ui/export")
@@ -59,8 +73,11 @@ include_directories(${LIVE555_ROOT}/groupsock/include)
 include_directories(${LIVE555_ROOT}/liveMedia/include)
 include_directories(${LIVE555_ROOT}/UsageEnvironment/include)
 
-# libwebsockets from buildroot
-include_directories(${BUILDROOT_SYSROOT}/usr/include)
+# libwebsockets includes
+include_directories(${LIBWEBSOCKETS_ROOT}/include)
+
+# Buildroot staging includes (OpenSSL, GLib, etc.)
+include_directories(${BUILDROOT_STAGING}/usr/include)
 
 # LVGL includes
 include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
@@ -80,12 +97,16 @@ link_directories(${LIVE555_ROOT}/groupsock)
 link_directories(${LIVE555_ROOT}/liveMedia)
 link_directories(${LIVE555_ROOT}/UsageEnvironment)
 
-# libwebsockets library from buildroot
-link_directories(${BUILDROOT_SYSROOT}/usr/lib)
+# libwebsockets library
+link_directories(${LIBWEBSOCKETS_ROOT}/lib)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto --sysroot=${BUILDROOT_SYSROOT}")
+# Buildroot target libraries (OpenSSL, GLib, zlib, pcre, etc.)
+# Note: staging has headers/pkg-config, target has the actual .so files
+link_directories(${BUILDROOT_DIR}/target/usr/lib)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto")
 
 # Build LVGL 9.3.0 from source (compatible with SquareLine Studio 9.2.2 export)
 # Tell LVGL to use our lv_conf.h (with LV_OS_PTHREAD enabled) via LV_CONF_INCLUDE_SIMPLE
@@ -111,6 +132,11 @@ target_link_libraries(${BIN} -Wl,--start-group
     BasicUsageEnvironment
     groupsock
     websockets
+    ssl
+    crypto
+    glib-2.0
+    z
+    pcre
     lvgl
     -Wl,--end-group)
 
