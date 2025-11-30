@@ -1,13 +1,12 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.30)
 set(src main.cc utils.cc ai_base.cc ob_det.cc sahi.cpp media.cpp image_decoder.cpp detector_post_processing.cpp)
 set(bin driver_assistant_detector.elf)
 
 # Fetch argparse from GitHub
 include(FetchContent)
 FetchContent_Declare(
-    argparse
-    GIT_REPOSITORY https://github.com/p-ranav/argparse.git
-    GIT_TAG        v3.2
+        argparse
+        URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
 )
 FetchContent_MakeAvailable(argparse)
 
