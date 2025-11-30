@@ -133,6 +133,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
         }
 
         if (readLen > 0) {
+            auto start_time = std::chrono::steady_clock::now();
+
             k_char *pBuf;
             s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], reinterpret_cast<void **>(&pBuf));
             if (K_SUCCESS != s32Ret) {
@@ -302,6 +304,12 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (stream_endpoint_detections.port() != 0) {
                     udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
                 }*/
+            }
+
+            auto duration_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start_time).count();
+            if (duration_ms > 10.0) {
+                printf("WARNING: Frame processing took %.2f ms\n", duration_ms);
             }
         }
         else {
@@ -542,6 +550,8 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 }
 
 int main(int argc, char *argv[]) {
+    std::cout << "Built at " << __DATE__ << " " << __TIME__ << std::endl;
+
     // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;
     bool daemon_mode = false;
@@ -584,6 +594,7 @@ int main(int argc, char *argv[]) {
     std::thread lvgl_thread_upd([]() {
         static char ip_buffer[32];
         static char time_buffer[16];
+        static char cpu_buffer[8];
 
         while (!send_stop) {
             lv_lock();
@@ -597,6 +608,11 @@ int main(int argc, char *argv[]) {
             std::string time = utils::get_current_time();
             snprintf(time_buffer, sizeof(time_buffer), "%s", time.c_str());
             lv_label_set_text(ui_time, time_buffer);
+
+            // Set Linux CPU load on display
+            int cpu_load = utils::get_linux_cpu_load();
+            snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", cpu_load);
+            lv_label_set_text(ui_cpu1, cpu_buffer);
 
             //lv_refr_now(NULL);
             lv_unlock();

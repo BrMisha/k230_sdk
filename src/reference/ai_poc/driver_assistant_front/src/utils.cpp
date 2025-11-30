@@ -12,6 +12,7 @@
 #include <ctime>
 #include <sstream>
 #include <iomanip>
+#include <cstdio>
 
 namespace utils {
 
@@ -58,6 +59,43 @@ std::string get_current_time() {
         << std::setfill('0') << std::setw(2) << local_time->tm_sec;
 
     return oss.str();
+}
+
+int get_linux_cpu_load() {
+    static unsigned long long prev_idle = 0, prev_total = 0;
+    static bool first_call = true;
+
+    FILE* f = fopen("/proc/stat", "r");
+    if (!f) return 0;
+
+    unsigned long long user = 0, nice = 0, system = 0, idle = 0;
+    unsigned long long iowait = 0, irq = 0, softirq = 0, steal = 0;
+
+    // Read at least 4 fields (user, nice, system, idle), rest are optional
+    int n = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal);
+    fclose(f);
+
+    if (n < 4) return 0;
+
+    unsigned long long idle_time = idle + iowait;
+    unsigned long long total_time = user + nice + system + idle + iowait + irq + softirq + steal;
+
+    unsigned long long idle_delta = idle_time - prev_idle;
+    unsigned long long total_delta = total_time - prev_total;
+
+    prev_idle = idle_time;
+    prev_total = total_time;
+
+    // Skip first call (delta from 0 gives average since boot)
+    if (first_call) {
+        first_call = false;
+        return 0;
+    }
+
+    if (total_delta == 0) return 0;
+
+    return static_cast<int>(100 * (total_delta - idle_delta) / total_delta);
 }
 
 } // namespace utils
