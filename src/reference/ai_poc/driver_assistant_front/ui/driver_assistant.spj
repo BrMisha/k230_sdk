@@ -194,7 +194,7 @@
                 "flags": 34,
                 "strtype": "OBJECT/Size",
                 "intarray": [
-                  50,
+                  65,
                   100
                 ],
                 "InheritedType": 7
@@ -571,7 +571,8 @@
                 "InheritedType": 11
               }
             ],
-            "saved_objtypeKey": "IMAGE"
+            "saved_objtypeKey": "IMAGE",
+            "tree_closed": true
           },
           {
             "guid": "GUID10373563-192688S2844327",
@@ -613,7 +614,7 @@
                 "flags": 34,
                 "strtype": "OBJECT/Position",
                 "intarray": [
-                  -25,
+                  -40,
                   0
                 ],
                 "InheritedType": 7
@@ -776,7 +777,7 @@
                 "flags": 34,
                 "strtype": "OBJECT/Position",
                 "intarray": [
-                  -12,
+                  -20,
                   0
                 ],
                 "InheritedType": 7
