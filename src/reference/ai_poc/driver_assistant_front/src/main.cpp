@@ -248,20 +248,6 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (streamer_file) {
                     streamer_file->flush_files();
                 }
-
-                std::thread([ipcmsg_handle]() {
-                    uint8_t state = 1;
-                    auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
-                    auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-                    kd_ipcmsg_destroy_message(pReq);
-
-                    usleep(200000);
-
-                    state = 0;
-                    pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
-                    ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-                    kd_ipcmsg_destroy_message(pReq);
-                }).detach();
             }
 
             s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
@@ -591,12 +577,16 @@ int main(int argc, char *argv[]) {
         }
     });
 
-    std::thread lvgl_thread_upd([]() {
+    std::atomic<k_s32> ipcmsg_handle(0);
+
+    std::thread lvgl_thread_upd([&ipcmsg_handle]() {
         static char ip_buffer[32];
         static char time_buffer[16];
         static char cpu_buffer[8];
 
         while (!send_stop) {
+            usleep(1000000);
+
             lv_lock();
 
             // Set IP address on display
@@ -614,10 +604,23 @@ int main(int argc, char *argv[]) {
             snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", cpu_load);
             lv_label_set_text(ui_cpu1, cpu_buffer);
 
+            // Set RT-Thread CPU load on display (request from big core via IPC)
+            k_s32 handle = ipcmsg_handle.load();
+            if (handle != 0) {
+                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_GET_CPU_USAGE, nullptr, 0);
+                k_ipcmsg_message_t *resp = nullptr;
+                auto ret = kd_ipcmsg_send_sync(handle, pReq, &resp, 1000);
+                if (ret == K_SUCCESS && resp && resp->s32RetVal == K_SUCCESS && resp->u32BodyLen == sizeof(uint8_t)) {
+                    uint8_t rt_cpu = *reinterpret_cast<uint8_t*>(resp->pBody);
+                    snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", rt_cpu);
+                    lv_label_set_text(ui_cpu0, cpu_buffer);
+                }
+                if (resp) kd_ipcmsg_destroy_message(resp);
+                kd_ipcmsg_destroy_message(pReq);
+            }
+
             //lv_refr_now(NULL);
             lv_unlock();
-
-            usleep(1000000);
         }
     });
 
@@ -631,19 +634,20 @@ int main(int argc, char *argv[]) {
         .u32Priority = 0
     };
 
-    k_s32 ipcmsg_handle;
     ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_add_service failed: %d\n", ret);
         return -1;
     }
     printf("kd_ipcmsg_connect...\n");
-    ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
+    k_s32 ipcmsg_handle_tmp;
+    ret = kd_ipcmsg_connect(&ipcmsg_handle_tmp, IPCMSG_NAME, ipcmsg_recv);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_connect failed: %d\n", ret);
         return -1;
     }
-    std::thread ipcmsg_thread([ipcmsg_handle] {
+    ipcmsg_handle = ipcmsg_handle_tmp;
+    std::thread ipcmsg_thread([&ipcmsg_handle] {
         kd_ipcmsg_run(ipcmsg_handle);
     });
     // request datafifo_phy_addr
@@ -682,12 +686,12 @@ int main(int argc, char *argv[]) {
     std::thread udp_receiver_thread(udp_receiver, &socket);
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
-    tcp_server_accept(&acceptor, ipcmsg_handle, &ws_server);
+    tcp_server_accept(&acceptor, ipcmsg_handle.load(), &ws_server);
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_dir_path, &ws_server);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle.load(), bb_dir_path, &ws_server);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");

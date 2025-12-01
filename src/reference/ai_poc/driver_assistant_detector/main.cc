@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <future>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <mutex>
@@ -36,6 +37,7 @@
 #include "media.h"
 #include "image_decoder.h"
 
+
 using namespace driver_assistant_detector;
 
 // GPIO userspace definitions (from sample_gpio.c)
@@ -51,6 +53,12 @@ typedef struct {
     unsigned short pin;     /* pin number, from 0 to 63 */
     unsigned short mode;    /* pin level status, 0 low level, 1 high level */
 } pin_mode_t;
+
+// Syscall wrapper for RT-Thread CPU usage (syscall #162)
+#define SYS_GET_CPU_USAGE 162
+static inline int get_cpu_usage(int cpu_id) {
+    return syscall(SYS_GET_CPU_USAGE, cpu_id);
+}
 
 // datafifo
 #define READER_INDEX    0
@@ -466,19 +474,15 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                 kd_ipcmsg_destroy_message(pResp);
             }
         } break;
-        case MSG_CMD_LED_SET: {
-            if (msg->u32BodyLen == sizeof(uint8_t)) {
-                auto state = *static_cast<uint8_t *>(msg->pBody);
-
-                /*pin_mode_t mode;
-                mode.pin = LED_PIN_NUM;
-                ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
-                ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);*/
-            }
-        } break;
         case MSG_CMD_APP_CLOSED: {
             printf("APP_CLOSED\n");
             running = false;
+        } break;
+        case MSG_CMD_GET_CPU_USAGE: {
+                uint8_t cpu = get_cpu_usage(0);
+                auto pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, &cpu, sizeof(cpu));
+                kd_ipcmsg_send_only(s32Id, pResp);
+                kd_ipcmsg_destroy_message(pResp);
         } break;
         default:
             break;
