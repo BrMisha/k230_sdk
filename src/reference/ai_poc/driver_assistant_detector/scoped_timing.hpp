@@ -48,6 +48,11 @@ public:
 		}
 	}
 
+	double elapsed_ms() const {
+		auto now = std::chrono::steady_clock::now();
+		return std::chrono::duration<double, std::milli>(now - m_start).count();
+	}
+
 	/**
 	 * @brief ScopedTiming析构,结束计时，并打印耗时
 	 * @return None
@@ -56,9 +61,8 @@ public:
 	{
 		if (enable_profile)
 		{
-			m_stop = std::chrono::steady_clock::now();
-			double elapsed_ms = std::chrono::duration<double, std::milli>(m_stop - m_start).count();
-			std::cout << m_info << " took " << elapsed_ms << " ms" << std::endl;
+			double elapsed = elapsed_ms();
+			std::cout << m_info << " took " << elapsed << " ms" << std::endl;
 		}
 
 		if (m_flush) fflush(stdout);
@@ -69,5 +73,5 @@ private:
 	int enable_profile;							   // 是否统计时间
 	std::string m_info;							   // 计时对象名称
 	std::chrono::steady_clock::time_point m_start; // 计时开始时间
-	std::chrono::steady_clock::time_point m_stop;  // 计时结束时间
+	//std::chrono::steady_clock::time_point m_stop;  // 计时结束时间
 };

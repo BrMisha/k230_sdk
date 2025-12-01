@@ -15,14 +15,25 @@
 #include <vector>
 #include <asio.hpp>
 #include <optional>
+#include <argparse/argparse.hpp>
 
+#include "utils.h"
 #include "black_box.h"
+#include "fb_display.h"
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common_ipc.h"
-#include "media_streamer_file.h"
-#include "media_streamer_rtsp.h"
+#include "media_streamer_file.h"  // From media_streaming module
+#include "media_streamer_rtsp.h"  // From media_streaming module
 #include "websocket_server.h"
+
+// LVGL includes
+extern "C" {
+#include "lvgl.h"
+#include "src/osal/lv_os.h"  // For lv_lock()/lv_unlock()
+#include "lv_port_disp.h"
+#include "ui/export/ui.h"
+}
 
 using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
@@ -44,6 +55,8 @@ std::mutex pending_detections_mutex;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
+
+//FbDisplay g_fb_display;
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
@@ -93,40 +106,6 @@ void datafifo_deinit() {
     printf("datafifo_deinit finish\n");
 }
 
-static void Usage() {
-    std::cout << "Usage: ./driver_assistant_front [-p phyAddr] [-b bb_path] [-d]" << std::endl;
-    std::cout << "-p: phyAddr (physical address for datafifo)" << std::endl;
-    std::cout << "-b: bb_path (path for output files)" << std::endl;
-    std::cout << "-d: daemon mode" << std::endl;
-    exit(-1);
-}
-
-int parse_config(int argc, char *argv[], std::optional<std::string> &bb, bool &daemon_mode) {
-    daemon_mode = false;
-
-    int result;
-    opterr = 0;
-    while ((result = getopt(argc, argv, "H:b:d")) != -1) {
-        switch (result) {
-            case 'H': {
-                Usage();
-                break;
-            }
-            case 'b': {
-                bb = std::make_optional(optarg);
-                break;
-            }
-            case 'd': {
-                daemon_mode = true;
-                break;
-            }
-            default: Usage();
-                break;
-        }
-    }
-    return 0;
-}
-
 void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_dir_path, websocket_server::WebSocketServer *ws_server = nullptr) {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
@@ -154,6 +133,8 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
         }
 
         if (readLen > 0) {
+            auto start_time = std::chrono::steady_clock::now();
+
             k_char *pBuf;
             s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], reinterpret_cast<void **>(&pBuf));
             if (K_SUCCESS != s32Ret) {
@@ -267,20 +248,6 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (streamer_file) {
                     streamer_file->flush_files();
                 }
-
-                std::thread([ipcmsg_handle]() {
-                    uint8_t state = 1;
-                    auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
-                    auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-                    kd_ipcmsg_destroy_message(pReq);
-
-                    usleep(200000);
-
-                    state = 0;
-                    pReq = kd_ipcmsg_create_message(0, MSG_CMD_LED_SET, &state, sizeof(state));
-                    ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-                    kd_ipcmsg_destroy_message(pReq);
-                }).detach();
             }
 
             s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
@@ -323,6 +290,12 @@ void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std
                 if (stream_endpoint_detections.port() != 0) {
                     udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
                 }*/
+            }
+
+            auto duration_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start_time).count();
+            if (duration_ms > 10.0) {
+                printf("WARNING: Frame processing took %.2f ms\n", duration_ms);
             }
         }
         else {
@@ -453,6 +426,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
                                                 detections.push_back(responce_struct->detections[i]);
 
                                             ws_server->broadcast_detections(0, responce_struct->situation, detections);
+                                            //g_fb_display.drawSituation(responce_struct->situation);
                                         }
                                     }
 
@@ -485,16 +459,75 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
         case MSG_CMD_DETECTIONS: {
             auto data = reinterpret_cast<MSG_CMD_DETECTIONS_struct*>(msg->pBody);
 
-            std::lock_guard lock(pending_detections_mutex);
-            pending_detections.clear();
-            pending_detections_pts = data->pts;
-            pending_detections_situation = data->situation;
-            for (size_t i = 0; i < data->detections_count; i++) {
-                pending_detections.push_back(data->detections[i]);
+            {
+                std::lock_guard lock(pending_detections_mutex);
+                pending_detections.clear();
+                pending_detections_pts = data->pts;
+                pending_detections_situation = data->situation;
+                //g_fb_display.drawSituation(data->situation);
+                for (size_t i = 0; i < data->detections_count; i++) {
+                    pending_detections.push_back(data->detections[i]);
+                }
+                for (size_t i = 0; i < data->detections_pre_process_count; i++) {
+                    // pre_detections locates after the last data->detections
+                    pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
+                }
             }
-            for (size_t i = 0; i < data->detections_pre_process_count; i++) {
-                // pre_detections locates after the last data->detections
-                pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
+
+            static DetectedSituation   last_situation;
+            static int color_timeout = 0;
+
+            if (last_situation != data->situation || color_timeout != 0) {
+                last_situation = data->situation;
+
+                if (color_timeout != 0) {
+                    --color_timeout;
+                }
+
+                lv_lock();
+
+                if (color_timeout == 0 || last_situation.color != DetectedSituationColor::NONE) {
+                    switch (last_situation.color) {
+                        case DetectedSituationColor::RED:
+                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_RED), LV_PART_MAIN);
+                            color_timeout = 2;
+                            break;
+                        case DetectedSituationColor::GREEN:
+                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_GREEN), LV_PART_MAIN);
+                            color_timeout = 2;
+                            break;
+                        case DetectedSituationColor::YELLOW:
+                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_MAIN);
+                            color_timeout = 2;
+                            break;
+                        case DetectedSituationColor::NONE:
+                        default:
+                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x404040), LV_PART_MAIN);
+                            color_timeout = 0;
+                            break;
+                    }
+                }
+
+                // Update arrow visibility based on detected situation
+                if (last_situation.arrow_left) {
+                    lv_obj_remove_flag(ui_arrowleft, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowleft, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                if (last_situation.arrow_right) {
+                    lv_obj_remove_flag(ui_arrowright, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowright, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                if (last_situation.arrow_forward) {
+                    lv_obj_remove_flag(ui_arrowforward, LV_OBJ_FLAG_HIDDEN);
+                } else {
+                    lv_obj_add_flag(ui_arrowforward, LV_OBJ_FLAG_HIDDEN);
+                }
+
+                lv_unlock();
             }
         } break;
         default:
@@ -503,12 +536,95 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 }
 
 int main(int argc, char *argv[]) {
-    std::cout << "./driver_assistant_front -H to show usage" << std::endl;
-    std::cout << "./driver_assistant_front -b /mnt/bb" << std::endl;
+    std::cout << "Built at " << __DATE__ << " " << __TIME__ << std::endl;
 
+    // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;
-    bool daemon_mode;
-    int ret = parse_config(argc, argv, bb_dir_path, daemon_mode);
+    bool daemon_mode = false;
+
+    argparse::ArgumentParser program("driver_assistant_front");
+
+    program.add_argument("-b", "--bb")
+        .help("Black box output directory path")
+        .action([&](const std::string& value) { bb_dir_path = value; });
+
+    program.add_argument("-d", "--daemon")
+        .flag()
+        .help("Run in daemon mode")
+        .store_into(daemon_mode);
+
+    try {
+        program.parse_args(argc, argv);
+    } catch (const std::exception& err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        return 1;
+    }
+
+    // Initialize LVGL
+    lv_init();
+    // Initialize display port
+    lv_port_disp_init();
+    // Load SquareLine Studio UI
+    ui_init();
+
+    // Create LVGL timer thread (30ms tick + 1s time update)
+    std::thread lvgl_thread([]() {
+        while (!send_stop) {
+            lv_tick_inc(30);        // Increment LVGL tick by 30ms
+            lv_timer_handler();
+            usleep(30000);          // Sleep 30ms
+        }
+    });
+
+    std::atomic<k_s32> ipcmsg_handle(0);
+
+    std::thread lvgl_thread_upd([&ipcmsg_handle]() {
+        static char ip_buffer[32];
+        static char time_buffer[16];
+        static char cpu_buffer[8];
+
+        while (!send_stop) {
+            usleep(1000000);
+
+            lv_lock();
+
+            // Set IP address on display
+            std::string ip = utils::get_ip_address();
+            snprintf(ip_buffer, sizeof(ip_buffer), "%s", ip.c_str());
+            lv_label_set_text(ui_ipaddr, ip_buffer);
+
+            // Set time on display
+            std::string time = utils::get_current_time();
+            snprintf(time_buffer, sizeof(time_buffer), "%s", time.c_str());
+            lv_label_set_text(ui_time, time_buffer);
+
+            // Set Linux CPU load on display
+            int cpu_load = utils::get_linux_cpu_load();
+            snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", cpu_load);
+            lv_label_set_text(ui_cpu1, cpu_buffer);
+
+            // Set RT-Thread CPU load on display (request from big core via IPC)
+            k_s32 handle = ipcmsg_handle.load();
+            if (handle != 0) {
+                auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_GET_CPU_USAGE, nullptr, 0);
+                k_ipcmsg_message_t *resp = nullptr;
+                auto ret = kd_ipcmsg_send_sync(handle, pReq, &resp, 1000);
+                if (ret == K_SUCCESS && resp && resp->s32RetVal == K_SUCCESS && resp->u32BodyLen == sizeof(uint8_t)) {
+                    uint8_t rt_cpu = *reinterpret_cast<uint8_t*>(resp->pBody);
+                    snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", rt_cpu);
+                    lv_label_set_text(ui_cpu0, cpu_buffer);
+                }
+                if (resp) kd_ipcmsg_destroy_message(resp);
+                kd_ipcmsg_destroy_message(pReq);
+            }
+
+            //lv_refr_now(NULL);
+            lv_unlock();
+        }
+    });
+
+    int ret;
 
     k_u64 datafifo_phy_addr[2] = {0,0};
 
@@ -518,19 +634,20 @@ int main(int argc, char *argv[]) {
         .u32Priority = 0
     };
 
-    k_s32 ipcmsg_handle;
     ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_add_service failed: %d\n", ret);
         return -1;
     }
     printf("kd_ipcmsg_connect...\n");
-    ret = kd_ipcmsg_connect(&ipcmsg_handle, IPCMSG_NAME, ipcmsg_recv);
+    k_s32 ipcmsg_handle_tmp;
+    ret = kd_ipcmsg_connect(&ipcmsg_handle_tmp, IPCMSG_NAME, ipcmsg_recv);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_connect failed: %d\n", ret);
         return -1;
     }
-    std::thread ipcmsg_thread([ipcmsg_handle] {
+    ipcmsg_handle = ipcmsg_handle_tmp;
+    std::thread ipcmsg_thread([&ipcmsg_handle] {
         kd_ipcmsg_run(ipcmsg_handle);
     });
     // request datafifo_phy_addr
@@ -569,12 +686,12 @@ int main(int argc, char *argv[]) {
     std::thread udp_receiver_thread(udp_receiver, &socket);
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
-    tcp_server_accept(&acceptor, ipcmsg_handle, &ws_server);
+    tcp_server_accept(&acceptor, ipcmsg_handle.load(), &ws_server);
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle, bb_dir_path, &ws_server);
+    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle.load(), bb_dir_path, &ws_server);
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -604,6 +721,12 @@ int main(int argc, char *argv[]) {
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
     ipcmsg_thread.join();
+
+    // Cleanup LVGL
+    lvgl_thread_upd.join();
+    lvgl_thread.join();
+    ui_destroy();
+    lv_port_disp_deinit();
 
     return 0;
 }

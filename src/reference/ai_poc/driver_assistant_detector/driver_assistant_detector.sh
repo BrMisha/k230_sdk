@@ -1,1 +1,1 @@
-./sharefs/driver_assistant_detector/driver_assistant_detector.elf 1 1 /sharefs/driver_assistant_detector/best.kmodel 0.5 0.7 0.3 0.2
+./sharefs/driver_assistant_detector/driver_assistant_detector.elf --model /sharefs/driver_assistant_detector/best.kmodel -d --obj-thresh 0.5 --nms-thresh 0.7 --sahi-nms 0.3 -r

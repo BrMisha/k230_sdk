@@ -8,12 +8,14 @@
 #include <fcntl.h>
 #include <future>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include "utils.h"
 #include <opencv2/opencv.hpp>
 #include <mutex>
 #include <memory>
 #include <iomanip>
 
+#include <argparse/argparse.hpp>
 #include "detector_post_processing.h"
 #include "k_ipcmsg.h"
 #include "k_module.h"
@@ -35,6 +37,7 @@
 #include "media.h"
 #include "image_decoder.h"
 
+
 using namespace driver_assistant_detector;
 
 // GPIO userspace definitions (from sample_gpio.c)
@@ -51,6 +54,12 @@ typedef struct {
     unsigned short mode;    /* pin level status, 0 low level, 1 high level */
 } pin_mode_t;
 
+// Syscall wrapper for RT-Thread CPU usage (syscall #162)
+#define SYS_GET_CPU_USAGE 162
+static inline int get_cpu_usage(int cpu_id) {
+    return syscall(SYS_GET_CPU_USAGE, cpu_id);
+}
+
 // datafifo
 #define READER_INDEX    0
 #define WRITER_INDEX    1
@@ -62,8 +71,8 @@ k_u64 datafifo_phy_addr[2] = {0,0};
 
 std::atomic<bool> running(true);
 
-float sahi_overlap_ratio = 0;
-float sahi_nms_threshold = 0;
+double sahi_overlap_ratio = 0;
+double sahi_nms_threshold = 0;
 std::mutex obDet_mutex;
 OBDet *obDet;
 
@@ -252,7 +261,7 @@ std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, std::vec
     return post_results;
 }
 
-void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
+void isp_ai_detector(Media *media, bool debug_mode, k_s32 ipcmsg_handle) {
 
     std::vector<DetectionNormalized> results_to_push;
     std::vector<DetectionNormalized> pre_process_to_push;
@@ -317,27 +326,39 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
     });
 
     std::unique_ptr<cv::Mat> rgb_frame;
+    uint64_t rgb_frame_pts;
+    std::mutex rgb_frame_mutex;
+    std::condition_variable rgb_frame_cv;
+
+    std::thread poll_thread([&]() {
+        k_video_frame_info dump_info;
+
+        while (running) {
+            auto picture = media->isp_dump_small_rgb888(dump_info, 100);
+            if (!picture) {
+                std::cout << "Dump empty" << std::endl;
+                continue;
+            }
+
+            std::unique_lock lock(rgb_frame_mutex, std::try_to_lock);
+            if (lock.owns_lock()) {
+                if (!rgb_frame)
+                    rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
+
+                memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
+                rgb_frame_pts = dump_info.v_frame.pts;
+                std::cout << "Push new data to rgb_frame" << std::endl;
+                rgb_frame_cv.notify_one();
+            }
+        }
+    });
+
     while (running) {
         ScopedTiming st("----------------Total time--------------- ", 1);
 
-        k_video_frame_info dump_info;
-        int ret;
-        {
-            ScopedTiming st_isp_dump_rgb888("isp_dump_rgb888", debug_mode);
-            auto picture = media->isp_dump_rgb888(dump_info, 1);
-            if (!picture) {
-                printf("!!!!!!!!! ISP DUMP !!!!!!!!. Error: %d\n", ret);
-                break;
-            }
-
-            if (!rgb_frame)
-                rgb_frame = std::make_unique<cv::Mat>(dump_info.v_frame.height, dump_info.v_frame.width, CV_8UC3);
-
-            // Copy camera RGB data to buffer. We can not use vbvaddr directly for detection because it is to low
-            memcpy(rgb_frame->data, picture.value()->vbvaddr(), rgb_frame->cols * rgb_frame->rows * 3);
-        }
-
-        if (!rgb_frame) continue;
+        std::unique_lock<std::mutex> lock_rgb_frame(rgb_frame_mutex);
+        rgb_frame_cv.wait(lock_rgb_frame);
+        if (!running) continue;
 
         std::vector<DetectionNormalized> pre_process;
         std::vector<DetectionNormalized> results;
@@ -350,12 +371,19 @@ void isp_ai_detector(Media *media, int debug_mode, k_s32 ipcmsg_handle) {
             printf("Detections count: %lu, preprocess: %lu\n", results.size(), pre_process.size());
         }
 
+        pin_mode_t mode;
+        mode.pin = LED_PIN_NUM;
+        ioctl(gpio_led_fd, results.size() ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
+
         std::lock_guard<std::mutex> lock(results_to_push_mutex);
-        results_to_push_pts = dump_info.v_frame.pts;
+        results_to_push_pts = rgb_frame_pts;
         pre_process_to_push = std::move(pre_process);
         results_to_push = std::move(results);
         results_to_push_cv.notify_all();
     }
+
+    rgb_frame_cv.notify_all();
+    poll_thread.join();
 
     results_to_push_cv.notify_all();
     push_thread.join();
@@ -446,61 +474,90 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t *msg) {
                 kd_ipcmsg_destroy_message(pResp);
             }
         } break;
-        case MSG_CMD_LED_SET: {
-            if (msg->u32BodyLen == sizeof(uint8_t)) {
-                auto state = *static_cast<uint8_t *>(msg->pBody);
-
-                pin_mode_t mode;
-                mode.pin = LED_PIN_NUM;
-                ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
-                ioctl(gpio_led_fd, state ? GPIO_WRITE_HIGH : GPIO_WRITE_LOW, &mode);
-            }
-        } break;
         case MSG_CMD_APP_CLOSED: {
             printf("APP_CLOSED\n");
             running = false;
+        } break;
+        case MSG_CMD_GET_CPU_USAGE: {
+                uint8_t cpu = get_cpu_usage(0);
+                auto pResp = kd_ipcmsg_create_resp_message(msg, K_SUCCESS, &cpu, sizeof(cpu));
+                kd_ipcmsg_send_only(s32Id, pResp);
+                kd_ipcmsg_destroy_message(pResp);
         } break;
         default:
             break;
     }
 }
 
-void print_usage(const char *name) {
-    cout << "Usage: " << name << " <debug_mode> <image_input_mode> <kmodel> <obj_thresh> <nms_thresh> <sahi_nms_thresh> <overlap_ratio>" << endl
-            << "For example: " << endl
-            << " ./driver_assistant_detector.elf 0 0 yolov8n.kmodel 0.5 0.45 0.35 0.2" << endl
-            << "Options:" << endl
-            << " 1> debug_mode           Debug mode: 0=no debug, 1=simple debug, 2=detailed debug\n"
-            << " 2> image_input_mode     Image input mode\n"
-            << " 3> kmodel               Object detection kmodel file path\n"
-            << " 4> obj_thresh           Object detection threshold\n"
-            << " 5> nms_thresh           Per-tile NMS threshold (e.g., 0.45)\n"
-            << " 6> sahi_nms_thresh      SAHI global NMS threshold (e.g., 0.35)\n"
-            << " 7> overlap_ratio        SAHI overlap ratio (e.g., 0.2)\n"
-            << "\n"
-            << endl;
-}
-
 int main(int argc, char *argv[]) {
     std::cout << "case " << argv[0] << " built at " << __DATE__ << " " << __TIME__ << std::endl;
-    if (argc != 8) {
-        print_usage(argv[0]);
-        return -1;
-    }
 
-    int debug_mode = atoi(argv[1]);
-    int image_input_mode = atoi(argv[2]);
-    char *fd_kmodel_path = argv[3];
-    float obj_det_thresh = atof(argv[4]);
-    float obj_det_nms_thresh = atof(argv[5]);
-    sahi_nms_threshold = atof(argv[6]);
-    sahi_overlap_ratio = atof(argv[7]);
+    bool debug_mode = false;
+    bool without_camera = false;
+    bool rotate_camera = false;
+    std::string kmodel_path;
+    double obj_det_thresh = 0.5;
+    double obj_det_nms_thresh = 0.7;
+
+    argparse::ArgumentParser program("driver_assistant_detector");
+
+    program.add_argument("-d", "--debug")
+        .flag()
+        .store_into(debug_mode)
+        .help("Enable debug mode");
+
+    program.add_argument("-w", "--without-camera")
+        .flag()
+        .store_into(without_camera)
+        .help("Run without camera (image input mode)");
+
+    program.add_argument("-m", "--model")
+        .required()
+        .store_into(kmodel_path)
+        .help("KModel file path");
+
+    program.add_argument("--obj-thresh")
+        .default_value(0.5)
+        .scan<'g', double>()
+        .store_into(obj_det_thresh)
+        .help("Object detection threshold");
+
+    program.add_argument("--nms-thresh")
+        .default_value(0.7)
+        .scan<'g', double>()
+        .store_into(obj_det_nms_thresh)
+        .help("Per-tile NMS threshold");
+
+    program.add_argument("--sahi-nms")
+        .default_value(0.3)
+        .scan<'g', double>()
+        .store_into(sahi_nms_threshold)
+        .help("SAHI global NMS threshold");
+
+    program.add_argument("--overlap")
+        .default_value(0.2)
+        .scan<'g', double>()
+        .store_into(sahi_overlap_ratio)
+        .help("SAHI overlap ratio");
+
+    program.add_argument("-r", "--rotate")
+        .flag()
+        .store_into(rotate_camera)
+        .help("Rotate camera 180 degrees");
+
+    try {
+        program.parse_args(argc, argv);
+    } catch (const std::exception& err) {
+        std::cout << "Error: " << err.what() << std::endl;
+        std::cout << program;
+        return 1;
+    }
 
     // Print parsed parameters
     std::cout << "=== Parsed Parameters ===" << std::endl;
-    std::cout << "  debug_mode:          " << (debug_mode ? "yes" : "no") << std::endl;
-    std::cout << "  image_input_mode:    " << (image_input_mode ? "yes" : "no") << std::endl;
-    std::cout << "  kmodel:              " << fd_kmodel_path << std::endl;
+    std::cout << "  debug_mode:          " << debug_mode << std::endl;
+    std::cout << "  image_input_mode:    " << without_camera << std::endl;
+    std::cout << "  kmodel:              " << kmodel_path << std::endl;
     std::cout << "  obj_det_thresh:      " << std::fixed << std::setprecision(2) << obj_det_thresh << std::endl;
     std::cout << "  obj_det_nms_thresh:  " << std::fixed << std::setprecision(2) << obj_det_nms_thresh << std::endl;
     std::cout << "  sahi_nms_threshold:  " << std::fixed << std::setprecision(2) << sahi_nms_threshold << std::endl;
@@ -513,7 +570,7 @@ int main(int argc, char *argv[]) {
     ioctl(gpio_led_fd, GPIO_DM_OUTPUT, &mode);
     ioctl(gpio_led_fd, GPIO_WRITE_LOW, &mode);
 
-    obDet = new OBDet(fd_kmodel_path, obj_det_thresh, obj_det_nms_thresh, 0);
+    obDet = new OBDet(kmodel_path.c_str(), obj_det_thresh, obj_det_nms_thresh, 0);
 
     // datafifo
     k_s32 ret = datafifo_init();
@@ -567,7 +624,7 @@ int main(int argc, char *argv[]) {
         }
     };
 
-    if (image_input_mode) {
+    if (without_camera) {
         wait_for_exit();
         running = false;
     }
@@ -575,9 +632,10 @@ int main(int argc, char *argv[]) {
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
-            .rgb888_2_width = 768,
-            .rgb888_2_height = 432,
-            .bitrate_kbps = 4000
+            .small_rgb888_width = 768,
+            .small_rgb888_height = 432,
+            .bitrate_kbps = 4000,
+            .rotate_camera = rotate_camera
         };
         Media media(config);
         media.init();

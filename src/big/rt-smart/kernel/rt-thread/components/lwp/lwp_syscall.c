@@ -60,6 +60,7 @@
 #include <tty.h>
 #include "lwp_ipc_internal.h"
 #include <pthread.h>
+#include "usage.h"
 #ifndef GRND_NONBLOCK
 #define GRND_NONBLOCK	0x0001
 #endif /* GRND_NONBLOCK */
@@ -4370,6 +4371,11 @@ int sys_fsync(int fd)
     return res;
 }
 
+int sys_get_cpu_usage(int cpu_id)
+{
+    return sys_cpu_usage((rt_uint8_t)cpu_id);
+}
+
 const static void* func_table[] =
 {
     SYSCALL_SIGN(sys_exit),            /* 01 */
@@ -4572,6 +4578,7 @@ const static void* func_table[] =
     SYSCALL_SIGN(sys_timer_settime),
     SYSCALL_SIGN(sys_timer_gettime),
     SYSCALL_SIGN(sys_timer_getoverrun),
+    SYSCALL_SIGN(sys_get_cpu_usage),  /* 162 */
 };
 
 const void *lwp_get_sys_api(rt_uint32_t number)

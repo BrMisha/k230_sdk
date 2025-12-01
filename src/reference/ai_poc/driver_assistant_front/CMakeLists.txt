@@ -1,10 +1,18 @@
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 3.30)
 include(./cmake/Riscv64.cmake)
 
 project(driver_assistant_front C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Fetch argparse from GitHub (after project() so toolchain is set up)
+include(FetchContent)
+FetchContent_Declare(
+    argparse
+    URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
+)
+FetchContent_MakeAvailable(argparse)
 
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
@@ -13,13 +21,42 @@ set(RTSMART_SRC_DIR ${k230_sdk}/src/big/rt-smart)
 set(IPCMSG_ROOT ${CDK_SRC_DIR}/user/component/ipcmsg)
 set(THIRDPARTY_PATH ${CDK_SRC_DIR}/user/thirdparty)
 
-# Buildroot sysroot for libwebsockets
-set(BUILDROOT_SYSROOT "${k230_sdk}/output/k230_canmv_01studio_defconfig/little/buildroot-ext/host/riscv64-buildroot-linux-gnu/sysroot")
+# Read CONF from .last_conf (set by main SDK Makefile)
+set(LAST_CONF_FILE "${k230_sdk}/.last_conf")
+if(EXISTS "${LAST_CONF_FILE}")
+    file(READ "${LAST_CONF_FILE}" LAST_CONF_CONTENT)
+    string(REGEX MATCH "CONF=([^\n\r]+)" _ "${LAST_CONF_CONTENT}")
+    set(CONF "${CMAKE_MATCH_1}")
+else()
+    message(FATAL_ERROR "Cannot find .last_conf - please build SDK first with 'make CONF=...'")
+endif()
+
+# Buildroot paths (using staging for proper cross-compilation sysroot)
+set(BUILDROOT_DIR "${k230_sdk}/output/${CONF}/little/buildroot-ext")
+set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
+
+# libwebsockets from buildroot build
+set(LIBWEBSOCKETS_ROOT "${BUILDROOT_DIR}/build/libwebsockets-4.0.21")
 
 set(src_root "${PROJECT_SOURCE_DIR}/src")
+set(ui_root "${PROJECT_SOURCE_DIR}/ui/export")
 
-set(CMAKE_INSTALL_PREFIX "../")
-file(GLOB APP_SOURCES ${src_root}/*.cpp)
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}" CACHE PATH "Install directory" FORCE)
+endif()
+
+# Add media streaming submodule
+add_subdirectory(media_streaming)
+
+file(GLOB APP_SOURCES ${src_root}/*.cpp ${src_root}/*.c)
+
+# LVGL and UI sources
+file(GLOB UI_SOURCES
+    ${ui_root}/*.c
+    ${ui_root}/screens/*.c
+    ${ui_root}/components/*.c
+    ${ui_root}/images/*.c
+)
 
 set(BIN driver_assistant_front)
 
@@ -44,8 +81,16 @@ include_directories(${LIVE555_ROOT}/groupsock/include)
 include_directories(${LIVE555_ROOT}/liveMedia/include)
 include_directories(${LIVE555_ROOT}/UsageEnvironment/include)
 
-# libwebsockets from buildroot
-include_directories(${BUILDROOT_SYSROOT}/usr/include)
+# libwebsockets includes
+include_directories(${LIBWEBSOCKETS_ROOT}/include)
+
+# Buildroot staging includes (OpenSSL, GLib, etc.)
+include_directories(${BUILDROOT_STAGING}/usr/include)
+
+# LVGL includes
+include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
+include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl/src)
+include_directories(${ui_root})
 
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
@@ -60,15 +105,30 @@ link_directories(${LIVE555_ROOT}/groupsock)
 link_directories(${LIVE555_ROOT}/liveMedia)
 link_directories(${LIVE555_ROOT}/UsageEnvironment)
 
-# libwebsockets library from buildroot
-link_directories(${BUILDROOT_SYSROOT}/usr/lib)
+# libwebsockets library
+link_directories(${LIBWEBSOCKETS_ROOT}/lib)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix --sysroot=${BUILDROOT_SYSROOT}")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --sysroot=${BUILDROOT_SYSROOT}")
+# Buildroot target libraries (OpenSSL, GLib, zlib, pcre, etc.)
+# Note: staging has headers/pkg-config, target has the actual .so files
+link_directories(${BUILDROOT_DIR}/target/usr/lib)
 
-add_executable(${BIN} ${APP_SOURCES})
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DASIO_STANDALONE -Dunix -fno-lto")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fno-lto")
+
+# Build LVGL 9.3.0 from source (compatible with SquareLine Studio 9.2.2 export)
+# Tell LVGL to use our lv_conf.h (with LV_OS_PTHREAD enabled) via LV_CONF_INCLUDE_SIMPLE
+add_compile_definitions(LV_CONF_INCLUDE_SIMPLE)
+add_subdirectory(${k230_sdk}/src/big/mpp/userapps/src/lvgl ${CMAKE_CURRENT_BINARY_DIR}/lvgl)
+
+# Exclude ARM-specific assembly files (NEON/Helium) from LVGL build for RISC-V
+get_target_property(LVGL_SOURCES lvgl SOURCES)
+list(FILTER LVGL_SOURCES EXCLUDE REGEX ".*lv_blend_(neon|helium)\\.S$")
+set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
+
+add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
+    media_streaming
     datafifo
     pthread
     sys
@@ -80,6 +140,13 @@ target_link_libraries(${BIN} -Wl,--start-group
     BasicUsageEnvironment
     groupsock
     websockets
+    ssl
+    crypto
+    glib-2.0
+    z
+    pcre
+    lvgl
+    argparse
     -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)

@@ -88,6 +88,13 @@ static int init_display(struct fbtft_par *par)
 
 	/* set pixel format to RGB-565 */
 	write_reg(par, MIPI_DCS_SET_PIXEL_FORMAT, MIPI_DCS_PIXEL_FMT_16BIT);
+
+	/* Set display window for 170×320 panel in portrait (no rotation) */
+	/* Column address: 35 to 204 (X offset 35, confirmed by test) */
+	write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS, 0x00, 0x23, 0x00, 0xCC);
+	/* Row address: 0 to 319 (no Y offset) */
+	write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS, 0x00, 0x00, 0x01, 0x3F);
+
 	if (HSD20_IPS)
 		write_reg(par, PORCTRL, 0x05, 0x05, 0x00, 0x33, 0x33);
 
@@ -143,6 +150,48 @@ static int init_display(struct fbtft_par *par)
 		write_reg(par, MIPI_DCS_ENTER_INVERT_MODE);
 
 	return 0;
+}
+
+/**
+ * set_addr_win() - set the GRAM update window with offset for 170x320 panel
+ *
+ * @par: FBTFT parameter object
+ * @xs: x start
+ * @ys: y start
+ * @xe: x end
+ * @ye: y end
+ *
+ * Adds offset of 35 for 170x320 panel. Offset moves between X/Y based on rotation.
+ */
+static void set_addr_win(struct fbtft_par *par, int xs, int ys, int xe, int ye)
+{
+	/* Offset of 35 for 170x320 panel in 240x320 RAM */
+	switch (par->info->var.rotate) {
+	case 0:
+		xs += 35;
+		xe += 35;
+		break;
+	case 90:
+		ys += 35;
+		ye += 35;
+		break;
+	case 180:
+		xs += 35;
+		xe += 35;
+		break;
+	case 270:
+		ys += 35;
+		ye += 35;
+		break;
+	}
+
+	write_reg(par, MIPI_DCS_SET_COLUMN_ADDRESS,
+		  (xs >> 8) & 0xFF, xs & 0xFF, (xe >> 8) & 0xFF, xe & 0xFF);
+
+	write_reg(par, MIPI_DCS_SET_PAGE_ADDRESS,
+		  (ys >> 8) & 0xFF, ys & 0xFF, (ye >> 8) & 0xFF, ye & 0xFF);
+
+	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
 }
 
 /**
@@ -259,6 +308,7 @@ static struct fbtft_display display = {
 	.gamma = HSD20_IPS_GAMMA,
 	.fbtftops = {
 		.init_display = init_display,
+		.set_addr_win = set_addr_win,
 		.set_var = set_var,
 		.set_gamma = set_gamma,
 		.blank = blank,

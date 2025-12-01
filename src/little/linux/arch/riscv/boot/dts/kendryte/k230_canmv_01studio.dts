@@ -66,6 +66,45 @@
 &gpio23 {
     status = "okay";
 };
+
+&gpio14 {
+    status = "okay";
+};
+
+&gpio42 {
+    status = "okay";
+};
+
+&gpio46 {
+    status = "okay";
+};
+
+&gpio60 {
+    status = "okay";
+};
+
+&spi1 {
+	status = "okay";
+
+	st7789v@0 {
+		compatible = "sitronix,st7789v";
+		reg = <0>;
+		spi-max-frequency = <32000000>;
+		spi-cpol;
+		spi-cpha;
+		rotate = <90>;
+		/* bgr; */
+		fps = <30>;
+		buswidth = <8>;
+		width = <170>;
+		height = <320>;
+		reset-gpios = <&port42 0 0>;  /* GPIO42, active high */
+		dc-gpios = <&port46 0 0>;     /* GPIO46, active high */
+		led-gpios = <&port60 0 0>;    /* GPIO60 backlight, active high */
+		debug = <3>;
+	};
+};
+
 /* // conflict with HDMI
 &i2c3 {
 	status = "okay";

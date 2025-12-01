@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "media_streamer_file.h"
+#include "media_streamer_file.h"  // From media_streaming module
 #include "../../driver_assistant_detector/common_ipc.h"
 
 
