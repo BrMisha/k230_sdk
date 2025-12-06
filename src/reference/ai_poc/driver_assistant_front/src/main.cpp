@@ -39,25 +39,12 @@ extern "C" {
 using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
 
-// datafifo
-#define READER_INDEX    0
-#define WRITER_INDEX    1
-static k_datafifo_handle hDataFifo[2] = {
-    (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE, (k_datafifo_handle) K_DATAFIFO_INVALID_HANDLE
-};
-
 std::atomic<bool> send_stop(false);
 
 DatafifoHelper::PendingDetections pending_detections;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
-
-//FbDisplay g_fb_display;
-
-static void release(void *pStream) {
-    //printf("release %p\n", pStream);
-}
 
 void udp_receiver(asio::ip::udp::socket *socket) {
     char recv_buf[64];
@@ -356,7 +343,8 @@ int main(int argc, char *argv[]) {
 
     int ret;
 
-    k_u64 datafifo_phy_addr[2] = {0,0};
+    k_u64 datafifo_phy_addr_writer = 0;
+    k_u64 datafifo_phy_addr_reader = 0;
 
     k_ipcmsg_connect_t stConnectAtt {
         .u32RemoteId = 1,
@@ -387,16 +375,16 @@ int main(int argc, char *argv[]) {
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_send_sync failed: %d\n", ret);
     }
-    else if (responce->u32CMD == MSG_CMD_GET_PHY_ADDRESS && responce->s32RetVal == K_SUCCESS && responce->u32BodyLen == sizeof(datafifo_phy_addr)) {
+    else if (responce->u32CMD == MSG_CMD_GET_PHY_ADDRESS && responce->s32RetVal == K_SUCCESS && responce->u32BodyLen == sizeof(k_u64)*2) {
         auto p = reinterpret_cast<k_u64*>(responce->pBody);
-        datafifo_phy_addr[WRITER_INDEX] = p[0];
-        datafifo_phy_addr[READER_INDEX] = p[1];
+        datafifo_phy_addr_writer = p[0];
+        datafifo_phy_addr_reader = p[1];
     }
     kd_ipcmsg_destroy_message(responce);
     kd_ipcmsg_destroy_message(pReq);
 
-    printf("datafifo WRITER_INDEX = %lx, READER_INDEX = %lx\n", datafifo_phy_addr[WRITER_INDEX], datafifo_phy_addr[READER_INDEX]);
-    if (datafifo_phy_addr[WRITER_INDEX] == 0 || datafifo_phy_addr[READER_INDEX] == 0) {
+    printf("datafifo WRITER_INDEX = %lx, READER_INDEX = %lx\n", datafifo_phy_addr_writer, datafifo_phy_addr_reader);
+    if (datafifo_phy_addr_writer == 0 || datafifo_phy_addr_reader == 0) {
         printf("datafifo_phy_addr not received!\n");
         kd_ipcmsg_disconnect(ipcmsg_handle);
         return -1;
@@ -413,7 +401,7 @@ int main(int argc, char *argv[]) {
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
 
-    auto fifo_helper = std::make_shared<DatafifoHelper>(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX], std::move(bb_dir_path), &pending_detections, &socket, &ws_server);
+    auto fifo_helper = std::make_shared<DatafifoHelper>(datafifo_phy_addr_reader, datafifo_phy_addr_writer, std::move(bb_dir_path), &pending_detections, &socket, &ws_server);
 
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
