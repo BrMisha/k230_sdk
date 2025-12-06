@@ -53,8 +53,13 @@ cd -
 
 
 if [ -d /sharefs/driver_assistant_detector ]; then
-	echo "Starting driver assistant front..."
 	cd /sharefs/driver_assistant_detector
-	./driver_assistant_front -b /mnt/bb -d > /mnt/bb/driver_assistant.log 2>&1 &
-	echo "Driver assistant started"
+	# Only start if driver_assistant_detector.sh exists and doesn't start with #
+	if [ -f driver_assistant_detector.sh ] && ! head -c 1 driver_assistant_detector.sh | grep -q '#'; then
+		echo "Starting driver assistant front..."
+		./driver_assistant_front -b /mnt/bb -d > /mnt/bb/driver_assistant.log 2>&1 &
+		echo "Driver assistant started"
+	else
+		echo "driver_assistant_detector.sh not found or disabled (starts with #)"
+	fi
 fi

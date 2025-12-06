@@ -343,12 +343,12 @@ namespace detector_post_processing {
             case detect_classes_t::TRAFFIC_LIGHT_RED:
             case detect_classes_t::COLOR_RED:
             case detect_classes_t::APPROVED_RED:
+            case detect_classes_t::APPROVED_RED_YELLOW:
+            case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
                 situation.color = DetectedSituationColor::RED;
                 break;
-            case detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW:
             case detect_classes_t::TRAFFIC_LIGHT_YELLOW:
             case detect_classes_t::APPROVED_YELLOW:
-            case detect_classes_t::APPROVED_RED_YELLOW:
                 situation.color = DetectedSituationColor::YELLOW;
                 break;
             default: ;
@@ -379,17 +379,17 @@ namespace detector_post_processing {
                                 found_idx = check_for_object_on(detections, detection.box, LEFT | RIGHT | TOP | BOTTOM,
                                                           detection.box.width, 0.7, {
                                                               detect_classes_t::TRAFFIC_LIGHT_RED,
+                                                              detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW,
                                                               detect_classes_t::COLOR_RED,
-                                                              detect_classes_t::APPROVED_RED
+                                                              detect_classes_t::APPROVED_RED,
+                                                              detect_classes_t::APPROVED_RED_YELLOW
                                                           });
                                 break;
                             case YELLOW:
                                 found_idx = check_for_object_on(detections, detection.box, LEFT | RIGHT | TOP | BOTTOM,
                                                           detection.box.width, 0.7, {
                                                               detect_classes_t::TRAFFIC_LIGHT_YELLOW,
-                                                              detect_classes_t::TRAFFIC_LIGHT_RED_YELLOW,
-                                                              detect_classes_t::APPROVED_YELLOW,
-                                                              detect_classes_t::APPROVED_RED_YELLOW
+                                                              detect_classes_t::APPROVED_YELLOW
                                                           });
                                 break;
                         }

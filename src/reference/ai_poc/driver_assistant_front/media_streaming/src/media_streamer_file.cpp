@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <chrono>
 
 // K230 SDK headers
 #include "k_type.h"
@@ -10,10 +11,13 @@
 MediaStreamerFile::MediaStreamerFile()
     : mp4_muxer_(nullptr)
     , video_track_handle_(nullptr)
-    // , subtitle_track_handle_(nullptr)  // DISABLED
     , mp4_initialized_(false)
     , total_data_len_(0)
 {
+    // Initialize all slots as not ready
+    for (size_t i = 0; i < NUM_SLOTS; i++) {
+        slots_[i].ready.store(false);
+    }
 }
 
 MediaStreamerFile::~MediaStreamerFile() {
@@ -81,7 +85,19 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
 
     mp4_initialized_ = true;
     total_data_len_ = 0;  // Reset byte counter for new recording
-    printf("MediaStreamerFile: Fragmented MP4 initialized - %s (%dx%d)\n",
+
+    // Reset ring buffer indices
+    write_idx_ = 0;
+    read_idx_ = 0;
+    for (size_t i = 0; i < NUM_SLOTS; i++) {
+        slots_[i].ready.store(false);
+    }
+
+    // Start background writer thread
+    running_ = true;
+    writer_thread_ = std::thread(&MediaStreamerFile::writer_loop, this);
+
+    printf("MediaStreamerFile: Fragmented MP4 initialized - %s (%dx%d) [async]\n",
            config, width, height);
 
     return 0;
@@ -89,12 +105,46 @@ int MediaStreamerFile::init(const char* config, int width, int height) {
 
 int MediaStreamerFile::write_video_frame(const uint8_t* data, size_t data_length,
                                          uint64_t pts_us, bool is_keyframe) {
-    if (!mp4_initialized_) {
-        printf("MediaStreamerFile: Not initialized\n");
+    if (!mp4_initialized_ || !running_) {
+        printf("MediaStreamerFile: Not initialized or stopped\n");
         return -1;
     }
 
-    // Write to MP4 file
+    if (data_length > MAX_FRAME_SIZE) {
+        printf("MediaStreamerFile: Frame too large (%zu > %zu)\n", data_length, MAX_FRAME_SIZE);
+        return -1;
+    }
+
+    // Get next write slot
+    size_t idx = write_idx_.load() % NUM_SLOTS;
+    FrameSlot& slot = slots_[idx];
+
+    // Check if slot is available (not yet consumed by writer thread)
+    if (slot.ready.load()) {
+        // Queue full - would overwrite unread data
+        printf("MediaStreamerFile: Queue full, dropping frame (queue=%zu)\n", queue_size());
+        return -1;
+    }
+
+    // Copy frame data to slot (this is the fast part - just memcpy)
+    memcpy(slot.data, data, data_length);
+    slot.len = data_length;
+    slot.pts = pts_us;
+    slot.is_keyframe = is_keyframe;
+
+    // Mark slot as ready and advance write index
+    slot.ready.store(true);
+    write_idx_++;
+
+    // Wake up writer thread
+    cv_.notify_one();
+
+    return 0;
+}
+
+int MediaStreamerFile::write_frame_sync(const uint8_t* data, size_t data_length,
+                                        uint64_t pts_us, bool is_keyframe) {
+    // Actual MP4 write - called from writer thread
     k_mp4_frame_data_s frame_data;
     memset(&frame_data, 0, sizeof(frame_data));
     frame_data.codec_id = K_MP4_CODEC_ID_H265;
@@ -114,6 +164,35 @@ int MediaStreamerFile::write_video_frame(const uint8_t* data, size_t data_length
     total_data_len_ += data_length;
 
     return 0;
+}
+
+void MediaStreamerFile::writer_loop() {
+    printf("MediaStreamerFile: Writer thread started\n");
+
+    while (running_ || read_idx_.load() < write_idx_.load()) {
+        size_t idx = read_idx_.load() % NUM_SLOTS;
+        FrameSlot& slot = slots_[idx];
+
+        // Wait for data to be available
+        if (!slot.ready.load()) {
+            if (!running_) {
+                break;  // Exit if stopped and no more data
+            }
+            // Wait with timeout
+            std::unique_lock<std::mutex> lock(cv_mutex_);
+            cv_.wait_for(lock, std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Write frame to MP4 (slow operation)
+        write_frame_sync(slot.data, slot.len, slot.pts, slot.is_keyframe);
+
+        // Mark slot as consumed and advance read index
+        slot.ready.store(false);
+        read_idx_++;
+    }
+
+    printf("MediaStreamerFile: Writer thread finished (wrote %zu bytes)\n", total_data_len_.load());
 }
 
 // DISABLED: Subtitle track not supported in fragmented MP4
@@ -162,14 +241,26 @@ int MediaStreamerFile::write_video_frame(const uint8_t* data, size_t data_length
 // }
 
 void MediaStreamerFile::stop() {
-    // Close MP4 file
-    if (mp4_initialized_) {
-        kd_mp4_destroy_tracks((KD_HANDLE)mp4_muxer_);
-        kd_mp4_destroy((KD_HANDLE)mp4_muxer_);
-        mp4_muxer_ = nullptr;
-        video_track_handle_ = nullptr;
-        // subtitle_track_handle_ = nullptr;  // DISABLED
-        mp4_initialized_ = false;
-        printf("MediaStreamerFile: Fragmented MP4 closed\n");
+    if (!mp4_initialized_) {
+        return;
     }
+
+    // Stop writer thread and wait for it to drain remaining frames
+    if (running_) {
+        printf("MediaStreamerFile: Stopping writer thread (queue=%zu)...\n", queue_size());
+        running_ = false;
+        cv_.notify_one();  // Wake up writer thread
+
+        if (writer_thread_.joinable()) {
+            writer_thread_.join();
+        }
+    }
+
+    // Close MP4 file
+    kd_mp4_destroy_tracks((KD_HANDLE)mp4_muxer_);
+    kd_mp4_destroy((KD_HANDLE)mp4_muxer_);
+    mp4_muxer_ = nullptr;
+    video_track_handle_ = nullptr;
+    mp4_initialized_ = false;
+    printf("MediaStreamerFile: Fragmented MP4 closed\n");
 }

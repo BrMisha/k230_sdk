@@ -193,7 +193,7 @@ k_s32 Media::init_vb() {
 
     //VB for RGB888_2 output
     static_assert(_pool_id_small_rgb == 4);
-    vb_config.comm_pool[_pool_id_small_rgb].blk_cnt = 30;
+    vb_config.comm_pool[_pool_id_small_rgb].blk_cnt = 3;
     vb_config.comm_pool[_pool_id_small_rgb].mode = VB_REMAP_MODE_CACHED;
     vb_config.comm_pool[_pool_id_small_rgb].blk_size = VICAP_ALIGN_UP(_input_config.small_rgb888_width * _input_config.small_rgb888_height * 3, 0x1000);
 
@@ -355,7 +355,7 @@ k_s32 Media::vivcap_init()
     chn_attr.scale_enable = K_FALSE;
     chn_attr.chn_enable = K_TRUE;
     chn_attr.pix_format = PIXEL_FORMAT_YVU_PLANAR_420;
-    chn_attr.buffer_num = 2;  // Minimum buffers for real-time (reduce latency)
+    chn_attr.buffer_num = 10;
     chn_attr.alignment = 12;  // 4096-byte (page) alignment for DMA (2^12 = 4096)
     // chn_attr.buffer_size = config.comm_pool[0].blk_size;
     chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.sensor_width * _input_config.sensor_height * 3) / 2, 0x1000);

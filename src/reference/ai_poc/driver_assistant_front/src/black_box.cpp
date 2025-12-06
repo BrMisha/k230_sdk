@@ -115,11 +115,11 @@ void black_box::flush_files() {
     _file_detections.flush(); // Flush C++ stream buffer (equivalent to fflush)
 
     // Get file descriptor from ofstream using GNU extension
-    auto *filebuf = dynamic_cast<__gnu_cxx::stdio_filebuf<char> *>(_file_detections.rdbuf());
+    /*auto *filebuf = dynamic_cast<__gnu_cxx::stdio_filebuf<char> *>(_file_detections.rdbuf());
     if (filebuf) {
         int fd = filebuf->fd();
         fsync(fd); // Sync to disk (equivalent to fsync(fileno(...)))
-    }
+    }*/
 }
 
 std::vector<size_t> black_box::list_of_recordings(const char *dir_path) {
