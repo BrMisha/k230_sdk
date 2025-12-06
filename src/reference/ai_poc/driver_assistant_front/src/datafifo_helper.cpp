@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <memory>
 #include <chrono>
+#include <thread>
 #include <unistd.h>
 
 #include "black_box.h"
@@ -13,9 +14,13 @@ using namespace driver_assistant_detector;
 static void release(void* stream) {
 }
 
-DatafifoHelper::DatafifoHelper(uint64_t reader_phy_addr, uint64_t writer_phy_addr, std::optional<std::string> bb_dir_path)
+DatafifoHelper::DatafifoHelper(uint64_t reader_phy_addr, uint64_t writer_phy_addr, std::optional<std::string> bb_dir_path,
+                               PendingDetections* pending, asio::ip::udp::socket* udp_socket, websocket_server::WebSocketServer* ws_server)
     : reader_handle((k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE)
     , writer_handle((k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE)
+    , pending(pending)
+    , udp_socket(udp_socket)
+    , ws_server(ws_server)
     , bb_dir_path(std::move(bb_dir_path))
 {
     k_datafifo_params_s params_reader = {10, DATAFIFO_DETECTOR_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
@@ -40,6 +45,8 @@ DatafifoHelper::DatafifoHelper(uint64_t reader_phy_addr, uint64_t writer_phy_add
     }
 
     printf("datafifo_init finish\n");
+
+    read_fifo_thread = std::thread(&DatafifoHelper::read_fifo_task, this);
 }
 
 DatafifoHelper::~DatafifoHelper() {
@@ -51,9 +58,58 @@ DatafifoHelper::~DatafifoHelper() {
         kd_datafifo_close(reader_handle);
     }
     printf("datafifo_deinit finish\n");
+
+    stop();
 }
 
-void DatafifoHelper::read_fifo_task(asio::ip::udp::socket *udp_socket, std::atomic<bool>* send_stop, PendingDetections* pending, websocket_server::WebSocketServer *ws_server)
+bool DatafifoHelper::Writer::write(void* pData)
+{
+    auto ret = kd_datafifo_write(writer_handle, pData);
+    if (K_SUCCESS != ret) {
+        printf("kd_datafifo_write error:%x\n", ret);
+        return false;
+    }
+
+    ret = kd_datafifo_cmd(writer_handle, DATAFIFO_CMD_WRITE_DONE, NULL);
+    if (K_SUCCESS != ret) {
+        printf("DATAFIFO_CMD_WRITE_DONE error:%x\n", ret);
+        return false;
+    }
+
+    return true;
+}
+
+void DatafifoHelper::stop()
+{
+    if (send_stop) return;
+
+    send_stop = true;
+    read_fifo_thread.join();
+}
+
+std::optional<DatafifoHelper::Writer> DatafifoHelper::writer()
+{
+    // call write NULL to flush
+    k_s32 ret = kd_datafifo_write(writer_handle, NULL);
+    if (K_SUCCESS != ret) {
+        printf("kd_datafifo_write error:%x\n", ret);
+        return std::nullopt;
+    }
+
+    k_u32 datafifo_avail_write_len = 0;
+    ret = kd_datafifo_cmd(writer_handle, DATAFIFO_CMD_GET_AVAIL_WRITE_LEN, &datafifo_avail_write_len);
+    if (K_SUCCESS != ret) {
+        printf("get available write len error:%x\n", ret);
+        return std::nullopt;
+    }
+    if (datafifo_avail_write_len < DATAFIFO_FRONT_BLOCK_LEN) {
+        return std::nullopt;
+    }
+
+    return std::make_optional(Writer(writer_handle));
+}
+
+void DatafifoHelper::read_fifo_task()
 {
     k_u32 readLen = 0;
     k_s32 s32Ret = K_SUCCESS;
@@ -72,7 +128,7 @@ void DatafifoHelper::read_fifo_task(asio::ip::udp::socket *udp_socket, std::atom
     uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
     std::vector<uint8_t> periodic_header_buffer;  // Buffer for periodic HEADER frames
 
-    while (!*send_stop) {
+    while (!send_stop) {
         readLen = 0;
         s32Ret = kd_datafifo_cmd(reader_handle, DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
         if (K_SUCCESS != s32Ret) {

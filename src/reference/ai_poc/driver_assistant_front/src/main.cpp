@@ -48,7 +48,7 @@ static k_datafifo_handle hDataFifo[2] = {
 
 std::atomic<bool> send_stop(false);
 
-PendingDetections pending_detections;
+DatafifoHelper::PendingDetections pending_detections;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
@@ -87,11 +87,11 @@ void udp_receiver(asio::ip::udp::socket *socket) {
     printf("udp_receiver finished\n");
 }
 
-void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, websocket_server::WebSocketServer *ws_server = nullptr) {
-    acceptor->async_accept([acceptor, ipcmsg_handle, ws_server](asio::error_code ec, asio::ip::tcp::socket peer) {
+void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, std::shared_ptr<DatafifoHelper> fifo_helper, websocket_server::WebSocketServer *ws_server = nullptr) {
+    acceptor->async_accept([acceptor, ipcmsg_handle, fifo_helper, ws_server](asio::error_code ec, asio::ip::tcp::socket peer) {
         if (!ec) {
             // Handle client in separate thread
-            std::thread([peer = std::move(peer), ipcmsg_handle, ws_server]() mutable {
+            std::thread([peer = std::move(peer), ipcmsg_handle, fifo_helper, ws_server]() mutable {
                 printf("Client connected\n");
 
                 static k_char *buf = nullptr;
@@ -121,39 +121,19 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
                             printf("Image data received, image_data_len = %lu\n", image_data_len);
                             buff_len = 0;
 
-                            // call write NULL to flush
-                            k_s32 ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
-                            if (K_SUCCESS != ret) {
-                                printf("kd_datafifo_write error:%x\n", ret);
-                                break;
-                            }
+                            auto fifo_writer = fifo_helper->writer();
 
-                            k_u32 datafifo_avail_write_len = 0;
-                            ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_GET_AVAIL_WRITE_LEN,
-                                                     &datafifo_avail_write_len);
-                            if (K_SUCCESS != ret) {
-                                printf("get available write len error:%x\n", ret);
-                                break;
-                            }
-                            if (datafifo_avail_write_len >= DATAFIFO_FRONT_BLOCK_LEN) {
+                            if (fifo_writer != std::nullopt) {
                                 printf("About to send...\n");
 
-                                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], buf + sizeof(MSG_CMD_DETECT_RGB_struct));
-                                if (K_SUCCESS != ret) {
-                                    printf("kd_datafifo_write error:%x\n", ret);
-                                    break;
-                                }
-
-                                ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
-                                if (K_SUCCESS != ret) {
-                                    printf("DATAFIFO_CMD_WRITE_DONE error:%x\n", ret);
+                                if (!fifo_writer->write(buf + sizeof(MSG_CMD_DETECT_RGB_struct))) {
                                     break;
                                 }
 
                                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_DETECT_RGB, msg,
                                                                      sizeof(MSG_CMD_DETECT_RGB_struct));
                                 k_ipcmsg_message_t *responce = nullptr;
-                                ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 10000);
+                                auto ret = kd_ipcmsg_send_sync(ipcmsg_handle, pReq, &responce, 10000);
                                 if (ret != K_SUCCESS) {
                                     printf("kd_ipcmsg_send_sync failed: %d\n", ret);
                                     break;
@@ -187,7 +167,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
                                 kd_ipcmsg_destroy_message(responce);
                                 kd_ipcmsg_destroy_message(pReq);
                             } else {
-                                printf("no free space: %d\n", datafifo_avail_write_len);
+
                             }
                         }
                     }
@@ -198,7 +178,7 @@ void tcp_server_accept(asio::ip::tcp::acceptor* acceptor, k_s32 ipcmsg_handle, w
         }
 
         // Accept next connection (RECURSIVE CALL)
-        tcp_server_accept(acceptor, ipcmsg_handle, ws_server);
+        tcp_server_accept(acceptor, ipcmsg_handle, fifo_helper, ws_server);
     });
 }
 
@@ -432,17 +412,14 @@ int main(int argc, char *argv[]) {
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
+
+    auto fifo_helper = std::make_shared<DatafifoHelper>(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX], std::move(bb_dir_path), &pending_detections, &socket, &ws_server);
+
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
-    tcp_server_accept(&acceptor, ipcmsg_handle.load(), &ws_server);
+    tcp_server_accept(&acceptor, ipcmsg_handle.load(), fifo_helper, &ws_server);
     std::thread io_context_thread([&io_context]() {
         io_context.run();
-    });
-
-    auto fifo_helper = std::make_unique<DatafifoHelper>(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX], std::move(bb_dir_path));
-
-    std::thread read_fifo_thread([&]() {
-        fifo_helper->read_fifo_task(&socket, &send_stop, &pending_detections, &ws_server);
     });
 
     if (!daemon_mode) {
@@ -458,17 +435,16 @@ int main(int argc, char *argv[]) {
         kd_ipcmsg_destroy_message(pReq);
     }
 
-    read_fifo_thread.join();
+    socket.close();
+    acceptor.close();
+
+    // to stop using fifo and something else
+    fifo_helper->stop();
 
     ws_server.stop();
     websocket_thread.join();
-
-    socket.close();
-    acceptor.close();
     // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
-
-    fifo_helper.reset();
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
