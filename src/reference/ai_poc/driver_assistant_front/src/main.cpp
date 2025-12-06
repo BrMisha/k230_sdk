@@ -20,6 +20,7 @@
 #include "utils.h"
 #include "black_box.h"
 #include "fb_display.h"
+#include "datafifo_helper.h"
 #include "k_datafifo.h"
 #include "k_ipcmsg.h"
 #include "../../driver_assistant_detector/common_ipc.h"
@@ -47,11 +48,7 @@ static k_datafifo_handle hDataFifo[2] = {
 
 std::atomic<bool> send_stop(false);
 
-std::vector<DetectionNormalizedCommon>  pending_detections;
-std::vector<DetectionNormalizedCommon>  pending_pre_detections;
-uint64_t pending_detections_pts = UINT64_MAX;
-DetectedSituation pending_detections_situation;
-std::mutex pending_detections_mutex;
+PendingDetections pending_detections;
 
 std::mutex stream_endpoint_mutex;
 asio::ip::udp::endpoint stream_endpoint_detections;
@@ -60,253 +57,6 @@ asio::ip::udp::endpoint stream_endpoint_detections;
 
 static void release(void *pStream) {
     //printf("release %p\n", pStream);
-}
-
-int datafifo_init(k_u64 reader_phyAddr, k_u64 writer_phyAddr) {
-    k_s32 s32Ret = K_SUCCESS;
-    k_datafifo_params_s params_reader = {10, DATAFIFO_DETECTOR_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
-    s32Ret = kd_datafifo_open_by_addr(&hDataFifo[READER_INDEX], &params_reader, reader_phyAddr);
-    if (K_SUCCESS != s32Ret) {
-        printf("open datafifo error:%x\n", s32Ret);
-        return -1;
-    }
-
-    k_datafifo_params_s params_writer = {2, DATAFIFO_FRONT_BLOCK_LEN, K_TRUE, DATAFIFO_WRITER};
-    s32Ret = kd_datafifo_open_by_addr(&hDataFifo[WRITER_INDEX], &params_writer, writer_phyAddr);
-    if (K_SUCCESS != s32Ret)
-    {
-        printf("open datafifo error:%x\n", s32Ret);
-        return -1;
-    }
-
-    s32Ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_SET_DATA_RELEASE_CALLBACK, (void *) release);
-    if (K_SUCCESS != s32Ret)
-    {
-        printf("set release func callback error:%x\n", s32Ret);
-        return -1;
-    }
-
-    printf("datafifo_init finish\n");
-
-    return 0;
-}
-
-void datafifo_deinit() {
-    k_s32 s32Ret = K_SUCCESS;
-    // call write NULL to flush and release stream buffer.
-    s32Ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
-    if (K_SUCCESS != s32Ret)
-    {
-        printf("write error:%x\n", s32Ret);
-    }
-
-    kd_datafifo_close(hDataFifo[READER_INDEX]);
-    kd_datafifo_close(hDataFifo[WRITER_INDEX]);
-
-    printf("datafifo_deinit finish\n");
-}
-
-void read_fifo(asio::ip::udp::socket *udp_socket, k_s32 ipcmsg_handle, const std::optional<std::string> &bb_dir_path, websocket_server::WebSocketServer *ws_server = nullptr) {
-    k_u32 readLen = 0;
-    k_s32 s32Ret = K_SUCCESS;
-    int counter = 0;
-
-    std::unique_ptr<black_box> streamer_file;
-    if (bb_dir_path.has_value()) {
-        streamer_file = std::make_unique<black_box>(bb_dir_path.value(), 1920, 1080);
-    }
-
-    MediaStreamerRtsp streamer_rtsp;
-    streamer_rtsp.init("live", 1920, 1080);
-
-    bool recording_started = false;
-    std::vector<uint8_t> header_buffer;
-    uint64_t header_buffer_pts = 0;  // PTS of buffered HEADER (for stale data detection)
-    std::vector<uint8_t> periodic_header_buffer;  // Buffer for periodic HEADER frames
-
-    while (!send_stop) {
-        readLen = 0;
-        s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_GET_AVAIL_READ_LEN, &readLen);
-        if (K_SUCCESS != s32Ret) {
-            printf("get available read len error:%x\n", s32Ret);
-            break;
-        }
-
-        if (readLen > 0) {
-            auto start_time = std::chrono::steady_clock::now();
-
-            k_char *pBuf;
-            s32Ret = kd_datafifo_read(hDataFifo[READER_INDEX], reinterpret_cast<void **>(&pBuf));
-            if (K_SUCCESS != s32Ret) {
-                printf("read error:%x\n", s32Ret);
-                break;
-            }
-
-            auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
-
-            /*uint64_t microseconds = pts;
-            uint64_t milliseconds = microseconds / 1000;
-            uint64_t seconds = milliseconds / 1000;
-            uint64_t minutes = seconds / 60;
-            uint64_t hours = minutes / 60;
-            printf("Read frame. pts: %lu %02lu:%02lu:%02lu.%03lu, type %d, len %u\n", pts,
-                   hours, minutes % 60, seconds % 60, milliseconds % 1000, frame->type, frame->data_len);*/
-
-            if (!recording_started) {
-                if (frame->type == 3) {
-                    // Buffer Type 3 (VPS/SPS/PPS) - don't write yet
-                    header_buffer.assign(frame->data, frame->data + frame->data_len);
-                    header_buffer_pts = frame->pts;  // Store HEADER PTS for validation
-                    printf("Header buffered, size=%zu bytes, PTS=%lu\n", header_buffer.size(), frame->pts);
-                }
-                else if (frame->type == 2 && !header_buffer.empty()) {
-                    // Validate HEADER and I-frame PTS are close (within 2 seconds)
-                    // This detects stale HEADER frames from previous encoder sessions
-                    uint64_t pts_diff = (frame->pts > header_buffer_pts)
-                                      ? (frame->pts - header_buffer_pts)
-                                      : (header_buffer_pts - frame->pts);
-
-                    if (pts_diff > 2000000) {  // More than 2 seconds apart
-                        printf("WARNING: Stale HEADER detected (PTS gap = %lu us = %.1f sec)\n",
-                               pts_diff, pts_diff / 1000000.0);
-                        printf("  HEADER PTS: %lu, I-frame PTS: %lu\n", header_buffer_pts, frame->pts);
-                        printf("  Discarding stale HEADER, waiting for fresh one\n");
-                        header_buffer.clear();
-                        header_buffer_pts = 0;
-                        // Don't start recording yet - wait for next HEADER that matches I-frame PTS
-                    }
-                    else {
-                    // PTS gap is acceptable - HEADER and I-frame are from same session
-                    // Combine header + IDR and write together
-                    std::vector<uint8_t> combined;
-                    combined.reserve(header_buffer.size() + frame->data_len);
-                    combined.insert(combined.end(), header_buffer.begin(), header_buffer.end());
-                    combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
-
-                    int ret = -1;
-
-                    if (streamer_file != nullptr)
-                        ret = streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts,
-                            true);
-
-                    if (streamer_rtsp.is_ready())
-                        ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
-                            true);
-
-                    if (ret == 0) {
-                        recording_started = true;
-                        printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
-                               combined.size());
-                    } else {
-                        printf("Failed to write first frame (header+IDR): error %d\n", ret);
-                    }
-                    header_buffer.clear();
-                    }
-                }
-                // Discard Type 1 (P-frames) until we have header+IDR written
-            }
-            else {
-                // After recording started: combine periodic HEADERs with I-frames, write P-frames normally
-                if (frame->type == 3) {
-                    // Periodic HEADER frame - buffer it to combine with next I-frame
-                    // I-frames need their VPS/SPS/PPS to decode properly
-                    periodic_header_buffer.assign(frame->data, frame->data + frame->data_len);
-                }
-                else if (frame->type == 2 && !periodic_header_buffer.empty()) {
-                    // I-frame following HEADER - combine them
-                    std::vector<uint8_t> combined;
-                    combined.reserve(periodic_header_buffer.size() + frame->data_len);
-                    combined.insert(combined.end(), periodic_header_buffer.begin(), periodic_header_buffer.end());
-                    combined.insert(combined.end(), frame->data, frame->data + frame->data_len);
-
-                    if (streamer_file != nullptr)
-                        streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts, true);
-                    if (streamer_rtsp.is_ready())
-                        streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts, true);
-
-                    periodic_header_buffer.clear();
-                }
-                else {
-                    // P-frame or I-frame without header - write normally
-                    if (streamer_file != nullptr)
-                        streamer_file->write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
-                    if (streamer_rtsp.is_ready())
-                        streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
-
-                    // Log standalone I-frames (shouldn't happen)
-                    if (frame->type == 2) {
-                        printf("WARNING: Standalone I-frame without HEADER (type 2), size=%u bytes, PTS=%lu\n",
-                               frame->data_len, frame->pts);
-                    }
-                }
-            }
-
-            // blink
-            if (counter++ > 100) {
-                counter = 0;
-
-                if (streamer_file) {
-                    streamer_file->flush_files();
-                }
-            }
-
-            s32Ret = kd_datafifo_cmd(hDataFifo[READER_INDEX], DATAFIFO_CMD_READ_DONE, pBuf);
-            if (K_SUCCESS != s32Ret) {
-                printf("read done error:%x\n", s32Ret);
-                break;
-            }
-
-            std::vector<DetectionNormalizedCommon>  _pending_pre_detections;
-            std::vector<DetectionNormalizedCommon>  _pending_detections;
-            DetectedSituation _pending_detections_situation;
-            uint64_t _pending_detections_pts;
-            {
-                std::lock_guard lock(pending_detections_mutex);
-
-                if (pending_detections_pts == UINT64_MAX)    // No pending detections
-                    _pending_detections_pts = UINT64_MAX;
-                else {
-                    // If we have the first pts and pending_detections_pts is valid, then we got a detection result.
-                    // In this case take these values to process it
-                    _pending_detections_pts = pending_detections_pts;
-                    _pending_pre_detections = std::move(pending_pre_detections);
-                    _pending_detections = std::move(pending_detections);
-                    _pending_detections_situation = pending_detections_situation;
-                    pending_detections_pts = UINT64_MAX;
-                }
-            }
-
-            if (_pending_detections_pts != UINT64_MAX) {
-                if (streamer_file) {
-                    streamer_file->write_detections(_pending_detections_pts, _pending_pre_detections, _pending_detections, _pending_detections_situation);
-                }
-                // Broadcast via WebSocket
-                if (ws_server) {
-                    ws_server->broadcast_detections(_pending_detections_pts, _pending_detections_situation, _pending_detections);
-                }
-
-                // TODO: impl in future
-                /*std::lock_guard<std::mutex> lock(stream_endpoint_mutex);
-                if (stream_endpoint_detections.port() != 0) {
-                    udp_socket->send_to(asio::buffer(common_buf, len), stream_endpoint_detections);
-                }*/
-            }
-
-            auto duration_ms = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - start_time).count();
-            if (duration_ms > 10.0) {
-                printf("WARNING: Frame processing took %.2f ms\n", duration_ms);
-            }
-        }
-        else {
-            usleep(10000);
-        }
-    }
-
-    // Do dot stop rtsp beause of to long
-    //streamer_rtsp.stop();
-
-    printf("read_fifo finished\n");
 }
 
 void udp_receiver(asio::ip::udp::socket *socket) {
@@ -460,17 +210,17 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
             auto data = reinterpret_cast<MSG_CMD_DETECTIONS_struct*>(msg->pBody);
 
             {
-                std::lock_guard lock(pending_detections_mutex);
-                pending_detections.clear();
-                pending_detections_pts = data->pts;
-                pending_detections_situation = data->situation;
+                std::lock_guard lock(pending_detections.mutex);
+                pending_detections.detections.clear();
+                pending_detections.pts = data->pts;
+                pending_detections.situation = data->situation;
                 //g_fb_display.drawSituation(data->situation);
                 for (size_t i = 0; i < data->detections_count; i++) {
-                    pending_detections.push_back(data->detections[i]);
+                    pending_detections.detections.push_back(data->detections[i]);
                 }
                 for (size_t i = 0; i < data->detections_pre_process_count; i++) {
                     // pre_detections locates after the last data->detections
-                    pending_pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
+                    pending_detections.pre_detections.push_back(data->detections[static_cast<size_t>(data->detections_count) + i]);
                 }
             }
 
@@ -672,8 +422,6 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    ret = datafifo_init(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX]);
-
     // WebSocket Server
     websocket_server::WebSocketServer ws_server(8080, "/www");
     std::thread websocket_thread([&ws_server]() {
@@ -691,7 +439,11 @@ int main(int argc, char *argv[]) {
         io_context.run();
     });
 
-    std::thread read_fifo_thread(read_fifo, &socket, ipcmsg_handle.load(), bb_dir_path, &ws_server);
+    auto fifo_helper = std::make_unique<DatafifoHelper>(datafifo_phy_addr[READER_INDEX], datafifo_phy_addr[WRITER_INDEX], std::move(bb_dir_path));
+
+    std::thread read_fifo_thread([&]() {
+        fifo_helper->read_fifo_task(&socket, &send_stop, &pending_detections, &ws_server);
+    });
 
     if (!daemon_mode) {
         printf("Input q to exit: \n");
@@ -716,7 +468,7 @@ int main(int argc, char *argv[]) {
     // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
 
-    datafifo_deinit();
+    fifo_helper.reset();
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
