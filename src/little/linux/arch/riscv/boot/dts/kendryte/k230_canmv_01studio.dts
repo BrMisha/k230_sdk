@@ -83,6 +83,15 @@
     status = "okay";
 };
 
+&i2c2 {
+	status = "okay";
+
+	lsm6ds3@6a {
+		compatible = "st,lsm6ds3";
+		reg = <0x6a>;
+	};
+};
+
 &spi1 {
 	status = "okay";
 
