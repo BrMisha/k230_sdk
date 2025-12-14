@@ -43,6 +43,7 @@ using namespace std::chrono_literals;
 using namespace driver_assistant_detector;
 
 std::atomic<bool> send_stop(false);
+std::atomic<bool> is_moving(false);
 
 DatafifoHelper::PendingDetections pending_detections;
 
@@ -287,40 +288,47 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // IMU Test Loop - prints Roll/Pitch/Yaw to console
+    Imu imu;
+    if (imu.init())
     {
-        Imu imu;
-        if (imu.init()) {
-            // Run VESC-style calibration if --imuc flag is set
-            if (imu_calibrate) {
-                imu.calibrate();
-            } else {
-                // Try to load saved calibration
-                imu.load_calibration(Imu::DEFAULT_CALIBRATION_FILE);
-            }
-
-            std::cout << "IMU initialized (accel-only). Starting test loop (Ctrl+C to exit)..." << std::endl;
-
-            while (true) {
-                auto data = imu.read();
-                if (data) {
-                    RpyAngles rpy = imu.update(*data);
-                    float mag = std::sqrt(data->accel_x * data->accel_x +
-                                          data->accel_y * data->accel_y);
-                    bool moving = imu.is_moving(*data, 1.0f);  // X+Y magnitude threshold
-                    std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
-                              << "  Pitch: " << rpy.pitch
-                              << "  Mag: " << std::setprecision(2) << mag
-                              << "  " << (moving ? "MOVING" : "STILL")
-                    << std::endl;
-                }
-
-                usleep(50000);  // 50ms = 20Hz (sufficient for accel-only)
-            }
-        } else {
-            std::cerr << "IMU initialization failed, continuing without IMU test" << std::endl;
+        // Run VESC-style calibration if --imuc flag is set
+        if (imu_calibrate)
+        {
+            imu.calibrate();
         }
+        else
+        {
+            // Try to load saved calibration
+            imu.load_calibration(Imu::DEFAULT_CALIBRATION_FILE);
+        }
+
+        std::cout << "IMU initialized (accel-only). Starting test loop (Ctrl+C to exit)..." << std::endl;
     }
+    else
+    {
+        std::cerr << "IMU initialization failed, continuing without IMU test" << std::endl;
+    }
+
+    std::thread imu_thread([&]()
+    {
+        while (!send_stop && imu.is_initialized() && imu.is_calibrated())
+        {
+            auto data = imu.read();
+            if (data)
+            {
+                RpyAngles rpy = imu.update(*data);
+                float mag = std::sqrt(data->accel_x * data->accel_x + data->accel_y * data->accel_y);
+                is_moving = imu.is_moving(*data, 1.0f); // X+Y magnitude threshold
+                std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
+                    << "  Pitch: " << rpy.pitch
+                    << "  Mag: " << std::setprecision(2) << mag
+                    << "  " << (is_moving ? "MOVING" : "STILL")
+                    << std::endl;
+            }
+
+            usleep(50000); // 50ms = 20Hz (sufficient for accel-only)
+        }
+    });
 
     // Initialize LVGL
     lv_init();
@@ -343,7 +351,7 @@ int main(int argc, char *argv[]) {
     std::thread lvgl_thread_upd([&ipcmsg_handle]() {
         static char ip_buffer[32];
         static char time_buffer[16];
-        static char cpu_buffer[8];
+        static char cpu_buffer[10];
 
         while (!send_stop) {
             usleep(1000000);
@@ -362,23 +370,26 @@ int main(int argc, char *argv[]) {
 
             // Set Linux CPU load on display
             int cpu_load = utils::get_linux_cpu_load();
-            snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", cpu_load);
-            lv_label_set_text(ui_cpu1, cpu_buffer);
-
             // Set RT-Thread CPU load on display (request from big core via IPC)
+            std::optional<uint8_t> rt_cpu_load;
             k_s32 handle = ipcmsg_handle.load();
             if (handle != 0) {
                 auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_GET_CPU_USAGE, nullptr, 0);
                 k_ipcmsg_message_t *resp = nullptr;
                 auto ret = kd_ipcmsg_send_sync(handle, pReq, &resp, 1000);
                 if (ret == K_SUCCESS && resp && resp->s32RetVal == K_SUCCESS && resp->u32BodyLen == sizeof(uint8_t)) {
-                    uint8_t rt_cpu = *reinterpret_cast<uint8_t*>(resp->pBody);
-                    snprintf(cpu_buffer, sizeof(cpu_buffer), "%d", rt_cpu);
-                    lv_label_set_text(ui_cpu0, cpu_buffer);
+                    *rt_cpu_load = *reinterpret_cast<uint8_t*>(resp->pBody);
                 }
                 if (resp) kd_ipcmsg_destroy_message(resp);
                 kd_ipcmsg_destroy_message(pReq);
             }
+            if (rt_cpu_load.has_value())
+                snprintf(cpu_buffer, sizeof(cpu_buffer), "%d/%d", *rt_cpu_load, cpu_load);
+            else
+                snprintf(cpu_buffer, sizeof(cpu_buffer), "--/%d", cpu_load);
+            lv_label_set_text(ui_cpu, cpu_buffer);
+
+            lv_label_set_text(ui_moving, is_moving ? "M" : "");
 
             //lv_refr_now(NULL);
             lv_unlock();

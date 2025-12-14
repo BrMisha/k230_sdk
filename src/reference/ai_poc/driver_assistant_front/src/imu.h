@@ -77,7 +77,7 @@ public:
     bool load_calibration(const std::string& path);
 
     // Default calibration file path
-    static constexpr const char* DEFAULT_CALIBRATION_FILE = "/sharefs/driver_assistant_detector/imu_calibration.txt";
+    static constexpr const char* DEFAULT_CALIBRATION_FILE = "imu_calibration.txt";
 
     bool is_initialized() const { return initialized_; }
     bool is_calibrated() const { return calibrated_; }
