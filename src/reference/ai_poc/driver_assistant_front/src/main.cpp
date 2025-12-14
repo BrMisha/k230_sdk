@@ -293,26 +293,23 @@ int main(int argc, char *argv[]) {
             // Run VESC-style calibration if --imuc flag is set
             if (imu_calibrate) {
                 imu.calibrate();
+            } else {
+                // Try to load saved calibration
+                imu.load_calibration(Imu::DEFAULT_CALIBRATION_FILE);
             }
 
-            std::cout << "IMU initialized. Starting test loop (Ctrl+C to exit)..." << std::endl;
-            auto last_time = std::chrono::steady_clock::now();
+            std::cout << "IMU initialized (accel-only). Starting test loop (Ctrl+C to exit)..." << std::endl;
 
             while (true) {
-                auto now = std::chrono::steady_clock::now();
-                float delta_time = std::chrono::duration<float>(now - last_time).count();
-                last_time = now;
-
                 auto data = imu.read();
                 if (data) {
-                    RpyAngles rpy = imu.update(*data, delta_time);
+                    RpyAngles rpy = imu.update(*data);
                     std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
                               << "  Pitch: " << rpy.pitch
-                              << "  Yaw: " << rpy.yaw
                     << std::endl;
                 }
 
-                usleep(10000);  // 10ms = 100Hz
+                usleep(50000);  // 50ms = 20Hz (sufficient for accel-only)
             }
         } else {
             std::cerr << "IMU initialization failed, continuing without IMU test" << std::endl;

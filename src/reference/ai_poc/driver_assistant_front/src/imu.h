@@ -3,14 +3,8 @@
 #include <string>
 #include <optional>
 
-// Fusion AHRS library
-extern "C" {
-#include "Fusion.h"
-}
-
 struct ImuData {
     float accel_x, accel_y, accel_z;  // m/s^2
-    float gyro_x, gyro_y, gyro_z;     // deg/s
 };
 
 struct RpyAngles {
@@ -19,12 +13,8 @@ struct RpyAngles {
     float yaw;    // degrees
 };
 
-// Calibration values for accelerometer and gyroscope
+// Calibration values for accelerometer
 struct ImuCalibration {
-    // Gyro offsets (subtracted from raw readings)
-    float gyro_offset_x = 0.0f;
-    float gyro_offset_y = 0.0f;
-    float gyro_offset_z = 0.0f;
     // Accel scale factors (multiply raw readings to normalize to 1g)
     float accel_scale_x = 1.0f;
     float accel_scale_y = 1.0f;
@@ -62,21 +52,16 @@ public:
     Imu();
     ~Imu() = default;
 
-    // Initialize IMU - find IIO devices and set up Fusion
+    // Initialize IMU - find accelerometer IIO device
     bool init();
 
-    // Read raw IMU data from IIO sysfs (with calibration applied if set)
+    // Read accelerometer data from IIO sysfs (with calibration applied if set)
     std::optional<ImuData> read();
 
-    // Update AHRS with new IMU data and get RPY angles
-    RpyAngles update(const ImuData& data, float delta_time_sec);
+    // Calculate roll/pitch from accelerometer data (gravity-based)
+    RpyAngles update(const ImuData& data);
 
-    // Get current RPY angles without new data
-    RpyAngles get_rpy() const;
-
-    // VESC-style interactive calibration:
-    // 1. Gyro: show live values, user presses Enter when stable
-    // 2. Accel X/Y/Z: tilt to find max, user presses Enter when max found
+    // Interactive calibration: tilt to find accel max for each axis
     ImuCalibration calibrate();
 
     // Set calibration offsets (can load from saved values)
@@ -85,6 +70,15 @@ public:
     // Get current calibration
     const ImuCalibration& get_calibration() const { return calibration_; }
 
+    // Save calibration to file
+    bool save_calibration(const std::string& path);
+
+    // Load calibration from file
+    bool load_calibration(const std::string& path);
+
+    // Default calibration file path
+    static constexpr const char* DEFAULT_CALIBRATION_FILE = "/sharefs/driver_assistant_detector/imu_calibration.txt";
+
     bool is_initialized() const { return initialized_; }
     bool is_calibrated() const { return calibrated_; }
 
@@ -92,27 +86,19 @@ private:
     bool initialized_ = false;
     bool calibrated_ = false;
 
-    // IIO sysfs paths
+    // IIO sysfs path
     std::string accel_path_;
-    std::string gyro_path_;
 
-    // Scale factors (from IIO)
+    // Scale factor (from IIO)
     float accel_scale_ = 1.0f;
-    float gyro_scale_ = 1.0f;
 
-    // Calibration offsets
+    // Calibration
     ImuCalibration calibration_;
 
-    // Fusion AHRS
-    FusionOffset offset_;
-    FusionAhrs ahrs_;
-
-    // Software lowpass filters (VESC-style)
-    // Lower cutoff = more smoothing but more lag
-    static constexpr float FILTER_CUTOFF_HZ = 10.0f;  // Moderate filtering
-    static constexpr int SAMPLE_RATE_HZ = 52;         // 52 Hz - higher rates cause noise on this sensor
+    // Software lowpass filters
+    static constexpr float FILTER_CUTOFF_HZ = 10.0f;
+    static constexpr int SAMPLE_RATE_HZ = 52;
     BiquadFilter accel_filter_x_, accel_filter_y_, accel_filter_z_;
-    BiquadFilter gyro_filter_x_, gyro_filter_y_, gyro_filter_z_;
     bool filters_enabled_ = true;
 
     // Find IIO device by name

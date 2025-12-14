@@ -13,9 +13,6 @@
 // IIO base path
 static constexpr const char* IIO_BASE_PATH = "/sys/bus/iio/devices/";
 
-// Sample rate for Fusion (Hz) - now using 416Hz for better filter response
-static constexpr int SAMPLE_RATE = 416;
-
 // Gravity constant
 static constexpr float G = 9.80665f;
 
@@ -59,22 +56,7 @@ void BiquadFilter::reset() {
 }
 
 Imu::Imu() {
-    // Initialize Fusion offset (gyro calibration) with sample rate
-    FusionOffsetInitialise(&offset_, SAMPLE_RATE);
-
-    // Initialize Fusion AHRS
-    FusionAhrsInitialise(&ahrs_);
-
-    // Configure AHRS settings
-    const FusionAhrsSettings settings = {
-        .convention = FusionConventionNwu,  // North-West-Up (aviation standard)
-        .gain = 0.5f,                       // AHRS gain
-        .gyroscopeRange = 2000.0f,          // deg/s (LSM6DS3 max)
-        .accelerationRejection = 10.0f,    // g
-        .magneticRejection = 10.0f,        // not used (no magnetometer)
-        .recoveryTriggerPeriod = 5 * SAMPLE_RATE,  // 5 seconds
-    };
-    FusionAhrsSetSettings(&ahrs_, &settings);
+    // Nothing to initialize - accel-only mode
 }
 
 bool Imu::init() {
@@ -86,43 +68,23 @@ bool Imu::init() {
     }
     std::cout << "IMU: Found accelerometer at " << accel_path_ << std::endl;
 
-    // Find gyroscope device
-    gyro_path_ = find_iio_device("lsm6ds3_gyro");
-    if (gyro_path_.empty()) {
-        std::cerr << "IMU: Could not find lsm6ds3_gyro IIO device" << std::endl;
-        return false;
-    }
-    std::cout << "IMU: Found gyroscope at " << gyro_path_ << std::endl;
-
-    // Read scale factors
+    // Read scale factor
     accel_scale_ = read_sysfs_float(accel_path_ + "/in_accel_scale");
     if (accel_scale_ == 0.0f) {
         accel_scale_ = 0.000598f;  // Default for LSM6DS3 at +/-2g
     }
     std::cout << "IMU: Accel scale = " << accel_scale_ << std::endl;
 
-    gyro_scale_ = read_sysfs_float(gyro_path_ + "/in_anglvel_scale");
-    if (gyro_scale_ == 0.0f) {
-        gyro_scale_ = 0.001065f;  // Default for LSM6DS3 at +/-245dps
-    }
-    std::cout << "IMU: Gyro scale = " << gyro_scale_ << std::endl;
-
-    // Set sampling frequency to 416 Hz for better filter response
+    // Set sampling frequency
     std::string sample_rate_str = std::to_string(SAMPLE_RATE_HZ);
     if (write_sysfs_string(accel_path_ + "/sampling_frequency", sample_rate_str)) {
         std::cout << "IMU: Accel sample rate set to " << SAMPLE_RATE_HZ << " Hz" << std::endl;
     }
-    if (write_sysfs_string(gyro_path_ + "/sampling_frequency", sample_rate_str)) {
-        std::cout << "IMU: Gyro sample rate set to " << SAMPLE_RATE_HZ << " Hz" << std::endl;
-    }
 
-    // Configure software lowpass filters (VESC-style)
+    // Configure software lowpass filters
     accel_filter_x_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
     accel_filter_y_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
     accel_filter_z_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
-    gyro_filter_x_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
-    gyro_filter_y_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
-    gyro_filter_z_.configure_lowpass(FILTER_CUTOFF_HZ, SAMPLE_RATE_HZ);
     std::cout << "IMU: Software lowpass filters configured at " << FILTER_CUTOFF_HZ << " Hz" << std::endl;
 
     initialized_ = true;
@@ -146,32 +108,15 @@ std::optional<ImuData> Imu::read_raw() {
     float ay = accel_y_raw * accel_scale_;
     float az = accel_z_raw * accel_scale_;
 
-    // Read gyroscope (raw values in IIO units)
-    int gyro_x_raw = read_sysfs_int(gyro_path_ + "/in_anglvel_x_raw");
-    int gyro_y_raw = read_sysfs_int(gyro_path_ + "/in_anglvel_y_raw");
-    int gyro_z_raw = read_sysfs_int(gyro_path_ + "/in_anglvel_z_raw");
-
-    // Convert to deg/s (IIO scale is in rad/s, convert to deg/s)
-    constexpr float RAD_TO_DEG = 57.2957795f;
-    float gx = gyro_x_raw * gyro_scale_ * RAD_TO_DEG;
-    float gy = gyro_y_raw * gyro_scale_ * RAD_TO_DEG;
-    float gz = gyro_z_raw * gyro_scale_ * RAD_TO_DEG;
-
-    // Apply software lowpass filters (VESC-style)
+    // Apply software lowpass filters
     if (filters_enabled_) {
         data.accel_x = accel_filter_x_.process(ax);
         data.accel_y = accel_filter_y_.process(ay);
         data.accel_z = accel_filter_z_.process(az);
-        data.gyro_x = gyro_filter_x_.process(gx);
-        data.gyro_y = gyro_filter_y_.process(gy);
-        data.gyro_z = gyro_filter_z_.process(gz);
     } else {
         data.accel_x = ax;
         data.accel_y = ay;
         data.accel_z = az;
-        data.gyro_x = gx;
-        data.gyro_y = gy;
-        data.gyro_z = gz;
     }
 
     return data;
@@ -185,10 +130,6 @@ std::optional<ImuData> Imu::read() {
 
     // Apply calibration if calibrated
     if (calibrated_) {
-        // Gyro: subtract offset
-        raw->gyro_x -= calibration_.gyro_offset_x;
-        raw->gyro_y -= calibration_.gyro_offset_y;
-        raw->gyro_z -= calibration_.gyro_offset_z;
         // Accel: multiply by scale factor to normalize to 1g
         raw->accel_x *= calibration_.accel_scale_x;
         raw->accel_y *= calibration_.accel_scale_y;
@@ -227,74 +168,27 @@ ImuCalibration Imu::calibrate() {
 
     ImuCalibration cal;
 
-    std::cout << "\n========== IMU Calibration (VESC-style) ==========" << std::endl;
+    std::cout << "\n========== Accelerometer Calibration ==========" << std::endl;
 
     // Reset filters before calibration
     accel_filter_x_.reset();
     accel_filter_y_.reset();
     accel_filter_z_.reset();
-    gyro_filter_x_.reset();
-    gyro_filter_y_.reset();
-    gyro_filter_z_.reset();
 
-    // Warm-up period: run filters for ~5 seconds to let them settle
-    // Read rate must be <= sensor rate (52 Hz = 19.2ms)
-    std::cout << "\nWarming up filters (keep device STILL)..." << std::endl;
-    for (int i = 0; i < 250; i++) {  // ~250 samples at 20ms = 5 seconds
-        auto data = read_raw();
-        if (i % 25 == 0 && data) {  // Print every 500ms
-            printf("\r  Settling [%d%%]: Gx=%7.2f  Gy=%7.2f  Gz=%7.2f deg/s   ",
-                   (i * 100) / 250, data->gyro_x, data->gyro_y, data->gyro_z);
+    // Warm-up period: run filters for ~2 seconds to let them settle
+    std::cout << "\nWarming up filters..." << std::endl;
+    for (int i = 0; i < 100; i++) {  // ~100 samples at 20ms = 2 seconds
+        read_raw();
+        if (i % 25 == 0) {
+            printf("\r  Settling [%d%%]   ", (i * 100) / 100);
             fflush(stdout);
         }
-        usleep(20000);  // 20ms - match sensor rate (52 Hz = 19.2ms)
+        usleep(20000);
     }
     std::cout << "\nFilter warm-up complete.\n" << std::endl;
 
-    // === Step 1: Gyro calibration ===
-    std::cout << "[1/4] GYRO CALIBRATION" << std::endl;
-    std::cout << "Keep device STILL. Press ENTER when values stabilize.\n" << std::endl;
-
-    flush_stdin();
-
-    // Phase 1: Show live values until user presses Enter (NOT accumulating yet)
-    while (!enter_pressed()) {
-        auto data = read_raw();
-        if (data) {
-            printf("\rLive: Gx=%7.2f  Gy=%7.2f  Gz=%7.2f deg/s   ",
-                   data->gyro_x, data->gyro_y, data->gyro_z);
-            fflush(stdout);
-        }
-        usleep(20000);  // 20ms - match sensor rate
-    }
-
-    // Phase 2: NOW sample for 1 second (like VESC)
-    std::cout << "\nSampling..." << std::flush;
-    double gx_sum = 0, gy_sum = 0, gz_sum = 0;
-    int gyro_samples = 0;
-
-    for (int i = 0; i < 50; i++) {  // 50 samples at 20ms = 1 second
-        auto data = read_raw();
-        if (data) {
-            gx_sum += data->gyro_x;
-            gy_sum += data->gyro_y;
-            gz_sum += data->gyro_z;
-            gyro_samples++;
-        }
-        usleep(20000);  // 20ms - match sensor rate
-    }
-
-    if (gyro_samples > 0) {
-        cal.gyro_offset_x = static_cast<float>(gx_sum / gyro_samples);
-        cal.gyro_offset_y = static_cast<float>(gy_sum / gyro_samples);
-        cal.gyro_offset_z = static_cast<float>(gz_sum / gyro_samples);
-    }
-    std::cout << " done!" << std::endl;
-    std::cout << "Gyro offset saved: X=" << cal.gyro_offset_x
-              << ", Y=" << cal.gyro_offset_y << ", Z=" << cal.gyro_offset_z << std::endl;
-
-    // === Step 2: Accel X calibration ===
-    std::cout << "\n[2/4] ACCEL X CALIBRATION" << std::endl;
+    // === Step 1: Accel X calibration ===
+    std::cout << "[1/3] ACCEL X CALIBRATION" << std::endl;
     std::cout << "Tilt device so X axis points UP. Press ENTER when max found.\n" << std::endl;
 
     flush_stdin();
@@ -316,8 +210,8 @@ ImuCalibration Imu::calibrate() {
     cal.accel_scale_x = (std::fabs(max_x) > 0.1f) ? (G / std::fabs(max_x)) : 1.0f;
     std::cout << "\nX max: " << max_x << " m/s², scale: " << cal.accel_scale_x << std::endl;
 
-    // === Step 3: Accel Y calibration ===
-    std::cout << "\n[3/4] ACCEL Y CALIBRATION" << std::endl;
+    // === Step 2: Accel Y calibration ===
+    std::cout << "\n[2/3] ACCEL Y CALIBRATION" << std::endl;
     std::cout << "Tilt device so Y axis points UP. Press ENTER when max found.\n" << std::endl;
 
     flush_stdin();
@@ -339,8 +233,8 @@ ImuCalibration Imu::calibrate() {
     cal.accel_scale_y = (std::fabs(max_y) > 0.1f) ? (G / std::fabs(max_y)) : 1.0f;
     std::cout << "\nY max: " << max_y << " m/s², scale: " << cal.accel_scale_y << std::endl;
 
-    // === Step 4: Accel Z calibration ===
-    std::cout << "\n[4/4] ACCEL Z CALIBRATION" << std::endl;
+    // === Step 3: Accel Z calibration ===
+    std::cout << "\n[3/3] ACCEL Z CALIBRATION" << std::endl;
     std::cout << "Place device FLAT (Z axis points UP). Press ENTER when max found.\n" << std::endl;
 
     flush_stdin();
@@ -364,17 +258,14 @@ ImuCalibration Imu::calibrate() {
 
     // === Summary ===
     std::cout << "\n========== Calibration Complete ==========" << std::endl;
-    std::cout << "Gyro offsets (deg/s): X=" << cal.gyro_offset_x
-              << ", Y=" << cal.gyro_offset_y << ", Z=" << cal.gyro_offset_z << std::endl;
-    std::cout << "Accel scales:         X=" << cal.accel_scale_x
+    std::cout << "Accel scales: X=" << cal.accel_scale_x
               << ", Y=" << cal.accel_scale_y << ", Z=" << cal.accel_scale_z << std::endl;
 
-    std::cout << "\nTo save calibration, use:" << std::endl;
-    std::cout << "  ImuCalibration cal = {"
-              << cal.gyro_offset_x << "f, " << cal.gyro_offset_y << "f, " << cal.gyro_offset_z << "f, "
-              << cal.accel_scale_x << "f, " << cal.accel_scale_y << "f, " << cal.accel_scale_z << "f};" << std::endl;
-
     set_calibration(cal);
+
+    // Auto-save calibration to file
+    save_calibration(DEFAULT_CALIBRATION_FILE);
+
     return cal;
 }
 
@@ -384,37 +275,74 @@ void Imu::set_calibration(const ImuCalibration& cal) {
     std::cout << "IMU: Calibration applied" << std::endl;
 }
 
-RpyAngles Imu::update(const ImuData& data, float delta_time_sec) {
-    // Convert accel from m/s^2 to g for Fusion
-    FusionVector accel = {
-        data.accel_x / G,
-        data.accel_y / G,
-        data.accel_z / G
-    };
+bool Imu::save_calibration(const std::string& path) {
+    std::ofstream file(path);
+    if (!file) {
+        std::cerr << "IMU: Failed to open calibration file for writing: " << path << std::endl;
+        return false;
+    }
 
-    // Gyro already in deg/s
-    FusionVector gyro = {
-        data.gyro_x,
-        data.gyro_y,
-        data.gyro_z
-    };
+    file << "# IMU Calibration File (Accel only)\n";
+    file << "accel_scale_x=" << calibration_.accel_scale_x << "\n";
+    file << "accel_scale_y=" << calibration_.accel_scale_y << "\n";
+    file << "accel_scale_z=" << calibration_.accel_scale_z << "\n";
 
-    // Apply gyroscope offset correction (calibration)
-    gyro = FusionOffsetUpdate(&offset_, gyro);
-
-    // Update AHRS (no magnetometer)
-    FusionAhrsUpdateNoMagnetometer(&ahrs_, gyro, accel, delta_time_sec);
-
-    return get_rpy();
+    if (file.good()) {
+        std::cout << "IMU: Calibration saved to " << path << std::endl;
+        return true;
+    }
+    std::cerr << "IMU: Failed to write calibration file" << std::endl;
+    return false;
 }
 
-RpyAngles Imu::get_rpy() const {
-    FusionEuler euler = FusionEulerFrom(FusionAhrsGetQuaternion(&ahrs_));
-    return RpyAngles{
-        .roll = euler.angle.roll,
-        .pitch = euler.angle.pitch,
-        .yaw = euler.angle.yaw
-    };
+bool Imu::load_calibration(const std::string& path) {
+    std::ifstream file(path);
+    if (!file) {
+        std::cout << "IMU: No calibration file found at " << path << std::endl;
+        return false;
+    }
+
+    ImuCalibration cal;
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+
+        size_t eq_pos = line.find('=');
+        if (eq_pos == std::string::npos) continue;
+
+        std::string key = line.substr(0, eq_pos);
+        float value = std::stof(line.substr(eq_pos + 1));
+
+        if (key == "accel_scale_x") cal.accel_scale_x = value;
+        else if (key == "accel_scale_y") cal.accel_scale_y = value;
+        else if (key == "accel_scale_z") cal.accel_scale_z = value;
+    }
+
+    set_calibration(cal);
+    std::cout << "IMU: Calibration loaded from " << path << std::endl;
+    std::cout << "  Accel scales: X=" << cal.accel_scale_x << ", Y=" << cal.accel_scale_y << ", Z=" << cal.accel_scale_z << std::endl;
+    return true;
+}
+
+RpyAngles Imu::update(const ImuData& data) {
+    // Calculate roll/pitch from accelerometer (gravity vector)
+    // Convert to g units
+    float ax = data.accel_x / G;
+    float ay = data.accel_y / G;
+    float az = data.accel_z / G;
+
+    constexpr float RAD_TO_DEG = 57.2957795f;
+
+    // Roll: rotation around X axis (positive = right side down)
+    float roll = std::atan2(ay, az) * RAD_TO_DEG;
+
+    // Pitch: rotation around Y axis (positive = nose up)
+    float pitch = std::atan2(-ax, std::sqrt(ay * ay + az * az)) * RAD_TO_DEG;
+
+    // Yaw cannot be determined from accelerometer alone
+    float yaw = 0.0f;
+
+    return RpyAngles{roll, pitch, yaw};
 }
 
 std::string Imu::find_iio_device(const std::string& name) {
