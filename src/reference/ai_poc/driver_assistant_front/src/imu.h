@@ -82,6 +82,9 @@ public:
     bool is_initialized() const { return initialized_; }
     bool is_calibrated() const { return calibrated_; }
 
+    // Motion detection: returns true if acceleration differs from gravity
+    bool is_moving(const ImuData& data, float threshold_ms2 = 0.5f) const;
+
 private:
     bool initialized_ = false;
     bool calibrated_ = false;

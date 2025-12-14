@@ -1,5 +1,6 @@
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <unistd.h>
@@ -304,8 +305,13 @@ int main(int argc, char *argv[]) {
                 auto data = imu.read();
                 if (data) {
                     RpyAngles rpy = imu.update(*data);
+                    float mag = std::sqrt(data->accel_x * data->accel_x +
+                                          data->accel_y * data->accel_y);
+                    bool moving = imu.is_moving(*data, 1.0f);  // X+Y magnitude threshold
                     std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
                               << "  Pitch: " << rpy.pitch
+                              << "  Mag: " << std::setprecision(2) << mag
+                              << "  " << (moving ? "MOVING" : "STILL")
                     << std::endl;
                 }
 

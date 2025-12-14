@@ -402,3 +402,11 @@ bool Imu::write_sysfs_string(const std::string& path, const std::string& value) 
     file << value;
     return file.good();
 }
+
+bool Imu::is_moving(const ImuData& data, float threshold_ms2) const {
+    // Use only X and Y to detect horizontal movement (ignore Z/vertical)
+    // When flat and stationary, X and Y are ~0 (gravity is on Z axis)
+    float mag = std::sqrt(data.accel_x * data.accel_x +
+                          data.accel_y * data.accel_y);
+    return mag > threshold_ms2;
+}
