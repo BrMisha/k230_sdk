@@ -318,12 +318,12 @@ int main(int argc, char *argv[]) {
             {
                 RpyAngles rpy = imu.update(*data);
                 float mag = std::sqrt(data->accel_x * data->accel_x + data->accel_y * data->accel_y);
-                is_moving = imu.is_moving(*data, 1.0f); // X+Y magnitude threshold
-                std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
+                is_moving = imu.is_moving(*data, 2.0f); // X+Y magnitude threshold
+                /*std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
                     << "  Pitch: " << rpy.pitch
                     << "  Mag: " << std::setprecision(2) << mag
                     << "  " << (is_moving ? "MOVING" : "STILL")
-                    << std::endl;
+                    << std::endl;*/
             }
 
             usleep(50000); // 50ms = 20Hz (sufficient for accel-only)
@@ -378,7 +378,7 @@ int main(int argc, char *argv[]) {
                 k_ipcmsg_message_t *resp = nullptr;
                 auto ret = kd_ipcmsg_send_sync(handle, pReq, &resp, 1000);
                 if (ret == K_SUCCESS && resp && resp->s32RetVal == K_SUCCESS && resp->u32BodyLen == sizeof(uint8_t)) {
-                    *rt_cpu_load = *reinterpret_cast<uint8_t*>(resp->pBody);
+                    rt_cpu_load = *reinterpret_cast<uint8_t*>(resp->pBody);
                 }
                 if (resp) kd_ipcmsg_destroy_message(resp);
                 kd_ipcmsg_destroy_message(pReq);
