@@ -6,13 +6,22 @@ project(driver_assistant_front C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Fetch argparse from GitHub (after project() so toolchain is set up)
+# Fetch dependencies from GitHub (after project() so toolchain is set up)
 include(FetchContent)
+
 FetchContent_Declare(
     argparse
     URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
 )
-FetchContent_MakeAvailable(argparse)
+
+FetchContent_Declare(
+    fusion
+    GIT_REPOSITORY https://github.com/xioTechnologies/Fusion.git
+    GIT_TAG        v1.2.11
+    SOURCE_SUBDIR  Fusion  # Only include the Fusion library, not examples
+)
+
+FetchContent_MakeAvailable(argparse fusion)
 
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
@@ -92,6 +101,9 @@ include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
 include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl/src)
 include_directories(${ui_root})
 
+# Fusion AHRS library includes
+include_directories(${fusion_SOURCE_DIR}/Fusion)
+
 link_directories(${k230_sdk}/src/common/cdk/user/component/datafifo/slave/lib)
 link_directories(${k230_sdk}/src/big/mpp/userapps/lib)
 link_directories(${CDK_SRC_DIR}/user/middleware/mp4_format/lib)
@@ -126,7 +138,10 @@ get_target_property(LVGL_SOURCES lvgl SOURCES)
 list(FILTER LVGL_SOURCES EXCLUDE REGEX ".*lv_blend_(neon|helium)\\.S$")
 set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
 
-add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES})
+# Fusion AHRS library sources (multiple .c files)
+file(GLOB FUSION_SOURCES ${fusion_SOURCE_DIR}/Fusion/*.c)
+
+add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES} ${FUSION_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
     media_streaming
     datafifo
@@ -147,6 +162,7 @@ target_link_libraries(${BIN} -Wl,--start-group
     pcre
     lvgl
     argparse
+    m
     -Wl,--end-group)
 
 install(TARGETS ${BIN} DESTINATION out)

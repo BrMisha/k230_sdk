@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <atomic>
 #include <chrono>
 #include <unistd.h>
@@ -18,6 +19,7 @@
 #include <argparse/argparse.hpp>
 
 #include "utils.h"
+#include "imu.h"
 #include "black_box.h"
 #include "fb_display.h"
 #include "datafifo_helper.h"
@@ -258,6 +260,7 @@ int main(int argc, char *argv[]) {
     // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;
     bool daemon_mode = false;
+    bool imu_calibrate = false;
 
     argparse::ArgumentParser program("driver_assistant_front");
 
@@ -270,12 +273,50 @@ int main(int argc, char *argv[]) {
         .help("Run in daemon mode")
         .store_into(daemon_mode);
 
+    program.add_argument("--imuc")
+        .flag()
+        .help("Run IMU manual calibration at startup")
+        .store_into(imu_calibrate);
+
     try {
         program.parse_args(argc, argv);
     } catch (const std::exception& err) {
         std::cerr << err.what() << std::endl;
         std::cerr << program;
         return 1;
+    }
+
+    // IMU Test Loop - prints Roll/Pitch/Yaw to console
+    {
+        Imu imu;
+        if (imu.init()) {
+            // Run VESC-style calibration if --imuc flag is set
+            if (imu_calibrate) {
+                imu.calibrate();
+            }
+
+            std::cout << "IMU initialized. Starting test loop (Ctrl+C to exit)..." << std::endl;
+            auto last_time = std::chrono::steady_clock::now();
+
+            while (true) {
+                auto now = std::chrono::steady_clock::now();
+                float delta_time = std::chrono::duration<float>(now - last_time).count();
+                last_time = now;
+
+                auto data = imu.read();
+                if (data) {
+                    RpyAngles rpy = imu.update(*data, delta_time);
+                    std::cout << "Roll: " << std::fixed << std::setprecision(1) << rpy.roll
+                              << "  Pitch: " << rpy.pitch
+                              << "  Yaw: " << rpy.yaw
+                    << std::endl;
+                }
+
+                usleep(10000);  // 10ms = 100Hz
+            }
+        } else {
+            std::cerr << "IMU initialization failed, continuing without IMU test" << std::endl;
+        }
     }
 
     // Initialize LVGL
