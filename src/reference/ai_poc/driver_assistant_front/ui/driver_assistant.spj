@@ -925,7 +925,7 @@
               {
                 "nid": 10,
                 "strtype": "OBJECT/Name",
-                "strval": "cpu0",
+                "strval": "cpu",
                 "InheritedType": 10
               },
               {
@@ -948,7 +948,6 @@
               },
               {
                 "nid": 40,
-                "flags": 1048576,
                 "strtype": "OBJECT/Transform",
                 "InheritedType": 1
               },
@@ -958,7 +957,7 @@
                 "strtype": "OBJECT/Position",
                 "intarray": [
                   0,
-                  -6
+                  -20
                 ],
                 "InheritedType": 7
               },
@@ -1040,7 +1039,7 @@
               {
                 "nid": 1030,
                 "strtype": "LABEL/Text",
-                "strval": "000",
+                "strval": "00/00",
                 "InheritedType": 10
               },
               {
@@ -1054,7 +1053,7 @@
                       {
                         "nid": 10450,
                         "strtype": "_style/Text_Font",
-                        "strval": "montserrat_48",
+                        "strval": "montserrat_36",
                         "InheritedType": 3
                       }
                     ],
@@ -1070,15 +1069,15 @@
             "saved_objtypeKey": "LABEL"
           },
           {
-            "guid": "GUID63795628-891864S3244334",
-            "deepid": -750300869,
+            "guid": "GUID75352318-971206S5964348",
+            "deepid": 325005900,
             "dont_export": false,
             "locked": false,
             "properties": [
               {
                 "nid": 10,
                 "strtype": "OBJECT/Name",
-                "strval": "cpu1",
+                "strval": "moving",
                 "InheritedType": 10
               },
               {
@@ -1101,7 +1100,6 @@
               },
               {
                 "nid": 40,
-                "flags": 1048576,
                 "strtype": "OBJECT/Transform",
                 "InheritedType": 1
               },
@@ -1110,8 +1108,8 @@
                 "flags": 17,
                 "strtype": "OBJECT/Position",
                 "intarray": [
-                  -1,
-                  41
+                  0,
+                  0
                 ],
                 "InheritedType": 7
               },
@@ -1128,7 +1126,7 @@
               {
                 "nid": 70,
                 "strtype": "OBJECT/Align",
-                "strval": "LEFT_MID",
+                "strval": "BOTTOM_LEFT",
                 "InheritedType": 3
               },
               {
@@ -1193,7 +1191,7 @@
               {
                 "nid": 1030,
                 "strtype": "LABEL/Text",
-                "strval": "000",
+                "strval": "M",
                 "InheritedType": 10
               },
               {
@@ -1376,7 +1374,7 @@
     "theme_color1": 5,
     "theme_color2": 0,
     "custom_variable_prefix": "uic",
-    "backup_cnt": 14,
+    "backup_cnt": 15,
     "autosave_cnt": 0,
     "group_color_cnt": 2,
     "lvgl_version": "9.2.2",
