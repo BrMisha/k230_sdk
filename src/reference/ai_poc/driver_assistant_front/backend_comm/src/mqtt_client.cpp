@@ -7,7 +7,6 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
-#include <ctime>
 #include <iomanip>
 #include <regex>
 #include <stdexcept>
@@ -86,7 +85,7 @@ bool MqttClient::connect() {
     }
 
     try {
-        // Build connection options (Paho MQTT C++ v1.1 API)
+        // Build connection options (MQTT 3.1.1)
         mqtt::connect_options conn_opts;
         conn_opts.set_clean_session(true);
         conn_opts.set_keep_alive_interval(config_.keep_alive_sec);
@@ -151,7 +150,9 @@ void MqttClient::disconnect() {
 }
 
 bool MqttClient::is_connected() const {
-    return connected_ && client_ && client_->is_connected();
+    // Don't call client_->is_connected() - it can deadlock in Paho C++ 1.1
+    // Just use our own connected_ flag which is set in callbacks
+    return connected_ && client_;
 }
 
 void MqttClient::set_command_callback(CommandCallback callback) {
@@ -201,22 +202,22 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
 
     // Check if it's a command
     if (topic == topic_commands()) {
-        // Parse command JSON: {"id": "...", "type": "...", "params": {...}}
+        // Parse command JSON: {"command": "...", "request_id": "...", "params": {...}}
         // Simple parsing without external JSON library
-        std::string cmd_id, cmd_type, params;
+        std::string request_id, command, params;
 
-        // Extract "id" field
-        std::regex id_regex("\"id\"\\s*:\\s*\"([^\"]+)\"");
+        // Extract "request_id" field
+        std::regex id_regex("\"request_id\"\\s*:\\s*\"([^\"]+)\"");
         std::smatch id_match;
         if (std::regex_search(payload, id_match, id_regex)) {
-            cmd_id = id_match[1].str();
+            request_id = id_match[1].str();
         }
 
-        // Extract "type" field
-        std::regex type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
-        std::smatch type_match;
-        if (std::regex_search(payload, type_match, type_regex)) {
-            cmd_type = type_match[1].str();
+        // Extract "command" field
+        std::regex cmd_regex("\"command\"\\s*:\\s*\"([^\"]+)\"");
+        std::smatch cmd_match;
+        if (std::regex_search(payload, cmd_match, cmd_regex)) {
+            command = cmd_match[1].str();
         }
 
         // Extract "params" field (as raw JSON)
@@ -229,8 +230,8 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
         }
 
         std::lock_guard<std::mutex> lock(callback_mutex_);
-        if (command_callback_ && !cmd_id.empty() && !cmd_type.empty()) {
-            command_callback_(cmd_id, cmd_type, params);
+        if (command_callback_ && !request_id.empty() && !command.empty()) {
+            command_callback_(request_id, command, params);
         }
         return;
     }
@@ -269,7 +270,6 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload,
         auto msg = mqtt::make_message(topic, payload);
         msg->set_qos(qos);
         msg->set_retained(retained);
-
         client_->publish(msg);
         return true;
 
@@ -295,49 +295,58 @@ bool MqttClient::subscribe(const std::string& topic, int qos) {
     }
 }
 
-bool MqttClient::publish_status(bool online, const std::string& firmware_version,
-                                uint64_t uptime_seconds) {
+bool MqttClient::publish_status(bool online, const std::string& firmware,
+                                int64_t uptime) {
     std::ostringstream json;
     json << R"({"online":)" << (online ? "true" : "false");
-    if (!firmware_version.empty()) {
-        json << R"(,"firmware_version":")" << firmware_version << "\"";
+    json << R"(,"timestamp":)" << get_timestamp_unix();
+    if (uptime > 0) {
+        json << R"(,"uptime":)" << uptime;
     }
-    if (uptime_seconds > 0) {
-        json << R"(,"uptime_seconds":)" << uptime_seconds;
+    if (!firmware.empty()) {
+        json << R"(,"firmware":")" << firmware << "\"";
     }
-    json << R"(,"timestamp":")" << get_timestamp_iso8601() << "\"}";
+    json << "}";
 
     return publish(topic_status(), json.str(), config_.qos_status, true);
 }
 
 bool MqttClient::publish_telemetry(float cpu_percent, float memory_percent,
-                                   float temperature_celsius) {
+                                   float temperature, float disk_percent,
+                                   uint64_t network_rx_bytes, uint64_t network_tx_bytes) {
     std::ostringstream json;
     json << std::fixed << std::setprecision(1);
-    json << R"({"cpu_percent":)" << cpu_percent;
+    json << R"({"timestamp":)" << get_timestamp_unix();
+    json << R"(,"cpu_percent":)" << cpu_percent;
     json << R"(,"memory_percent":)" << memory_percent;
-    json << R"(,"temperature_celsius":)" << temperature_celsius;
-    json << R"(,"timestamp":")" << get_timestamp_iso8601() << "\"}";
+    json << R"(,"temperature":)" << temperature;
+    json << R"(,"disk_percent":)" << disk_percent;
+    json << R"(,"network":{"rx_bytes":)" << network_rx_bytes;
+    json << R"(,"tx_bytes":)" << network_tx_bytes << "}}";
 
     return publish(topic_telemetry(), json.str(), config_.qos_telemetry, false);
 }
 
-bool MqttClient::publish_event(const std::string& event_type, const std::string& data_json) {
+bool MqttClient::publish_event(const std::string& event_type,
+                               const std::string& severity,
+                               const std::string& data_json) {
     std::ostringstream json;
     json << R"({"type":")" << event_type << "\"";
-    json << R"(,"data":)" << data_json;
-    json << R"(,"timestamp":")" << get_timestamp_iso8601() << "\"}";
+    json << R"(,"severity":")" << severity << "\"";
+    json << R"(,"timestamp":)" << get_timestamp_unix();
+    json << R"(,"data":)" << data_json << "}";
 
     return publish(topic_events(), json.str(), config_.qos_events, false);
 }
 
-bool MqttClient::publish_command_response(const std::string& command_id,
+bool MqttClient::publish_command_response(const std::string& request_id,
                                           const std::string& status,
-                                          const std::string& result_json) {
+                                          const std::string& data_json) {
     std::ostringstream json;
-    json << R"({"command_id":")" << command_id << "\"";
+    json << R"({"request_id":")" << request_id << "\"";
     json << R"(,"status":")" << status << "\"";
-    json << R"(,"result":)" << result_json << "}";
+    json << R"(,"timestamp":)" << get_timestamp_unix();
+    json << R"(,"data":)" << data_json << "}";
 
     return publish(topic_commands_response(), json.str(), config_.qos_commands, false);
 }
@@ -402,14 +411,10 @@ std::string MqttClient::extract_serial_from_cert(const std::string& cert_path) {
     return std::string(cn);
 }
 
-std::string MqttClient::get_timestamp_iso8601() {
+int64_t MqttClient::get_timestamp_unix() {
     auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    auto tm = *std::gmtime(&time_t_now);
-
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
-    return oss.str();
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        now.time_since_epoch()).count();
 }
 
 // Topic helper methods

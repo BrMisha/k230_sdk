@@ -30,6 +30,7 @@
 #include "media_streamer_file.h"  // From media_streaming module
 #include "media_streamer_rtsp.h"  // From media_streaming module
 #include "websocket_server.h"
+#include "mqtt_client.h"          // From backend_comm module
 
 // LVGL includes
 extern "C" {
@@ -261,6 +262,7 @@ int main(int argc, char *argv[]) {
 
     // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;
+    std::optional<std::string> mqtt_broker;
     bool daemon_mode = false;
     bool imu_calibrate = false;
 
@@ -279,6 +281,10 @@ int main(int argc, char *argv[]) {
         .flag()
         .help("Run IMU manual calibration at startup")
         .store_into(imu_calibrate);
+
+    program.add_argument("--mqtt")
+        .help("MQTT broker URI (e.g., ssl://emqx.example.com:8883)")
+        .action([&](const std::string& value) { mqtt_broker = value; });
 
     try {
         program.parse_args(argc, argv);
@@ -451,6 +457,76 @@ int main(int argc, char *argv[]) {
         ws_server.run();
     });
 
+    // MQTT Client (optional - only if --mqtt is specified)
+    std::unique_ptr<backend_comm::MqttClient> mqtt_client;
+    if (mqtt_broker.has_value()) {
+        backend_comm::MqttConfig mqtt_config;
+        mqtt_config.broker_uri = mqtt_broker.value();
+        // Serial will be extracted from cert/device.pem CN field
+
+        mqtt_client = std::make_unique<backend_comm::MqttClient>(mqtt_config);
+
+        // Set command handler
+        mqtt_client->set_command_callback([&](const std::string& cmd_id,
+                                              const std::string& cmd_type,
+                                              const std::string& params) {
+            std::cout << "[MQTT] Command received: " << cmd_type << " (id=" << cmd_id << ")" << std::endl;
+
+            if (cmd_type == "reboot") {
+                mqtt_client->publish_command_response(cmd_id, "success");
+                system("reboot");
+            } else if (cmd_type == "stream_start") {
+                // TODO: Start WebRTC stream
+                mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
+            } else if (cmd_type == "stream_stop") {
+                // TODO: Stop WebRTC stream
+                mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
+            } else {
+                mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"unknown_command"})");
+            }
+        });
+
+        // Set connection handler
+        mqtt_client->set_connection_callback([&](bool connected) {
+            if (connected) {
+                std::cout << "[MQTT] Connected to broker" << std::endl;
+                // Publish online status
+                mqtt_client->publish_status(true, "1.0.0", 0);
+            } else {
+                std::cout << "[MQTT] Disconnected from broker" << std::endl;
+            }
+        });
+
+        // Connect to broker
+        if (!mqtt_client->connect()) {
+            std::cerr << "[MQTT] Failed to connect to broker, continuing without MQTT" << std::endl;
+            mqtt_client.reset();
+        }
+    }
+
+    // Start status publishing thread (every 60 seconds)
+    auto start_time = std::chrono::steady_clock::now();
+    std::thread status_thread;
+    if (mqtt_client) {
+        status_thread = std::thread([&mqtt_client, start_time]() {
+            while (!send_stop.load()) {
+                // Sleep for 60 seconds (checking send_stop every second)
+                for (int i = 0; i < 60 && !send_stop.load(); i++) {
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                }
+                if (send_stop.load()) break;
+
+                // Calculate uptime in seconds
+                auto now = std::chrono::steady_clock::now();
+                auto uptime = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+
+                if (mqtt_client && mqtt_client->is_connected()) {
+                    mqtt_client->publish_status(true, "1.0.0", uptime);
+                }
+            }
+        });
+    }
+
     asio::io_context io_context;
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
@@ -488,6 +564,17 @@ int main(int argc, char *argv[]) {
     websocket_thread.join();
     // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
+
+    // Wait for status thread to stop
+    if (status_thread.joinable()) {
+        status_thread.join();
+    }
+
+    // Disconnect MQTT
+    if (mqtt_client) {
+        mqtt_client->disconnect();
+        mqtt_client.reset();
+    }
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);

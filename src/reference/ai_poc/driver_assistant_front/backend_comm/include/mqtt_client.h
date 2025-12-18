@@ -5,6 +5,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <cstdint>
 
 // Forward declarations to avoid exposing Paho headers
 namespace mqtt {
@@ -38,8 +39,8 @@ struct MqttConfig {
 };
 
 // Callback types
-using CommandCallback = std::function<void(const std::string& command_id,
-                                            const std::string& command_type,
+using CommandCallback = std::function<void(const std::string& request_id,
+                                            const std::string& command,
                                             const std::string& params_json)>;
 using ConnectionCallback = std::function<void(bool connected)>;
 using SignalingCallback = std::function<void(const std::string& session_id,
@@ -66,14 +67,17 @@ public:
     void set_signaling_callback(SignalingCallback callback);
 
     // Publishing methods
-    bool publish_status(bool online, const std::string& firmware_version,
-                       uint64_t uptime_seconds);
+    bool publish_status(bool online, const std::string& firmware,
+                       int64_t uptime);
     bool publish_telemetry(float cpu_percent, float memory_percent,
-                          float temperature_celsius);
-    bool publish_event(const std::string& event_type, const std::string& data_json);
-    bool publish_command_response(const std::string& command_id,
+                          float temperature, float disk_percent,
+                          uint64_t network_rx_bytes, uint64_t network_tx_bytes);
+    bool publish_event(const std::string& event_type,
+                      const std::string& severity,
+                      const std::string& data_json);
+    bool publish_command_response(const std::string& request_id,
                                   const std::string& status,
-                                  const std::string& result_json = "{}");
+                                  const std::string& data_json = "{}");
 
     // WebRTC signaling
     bool subscribe_signaling(const std::string& session_id);
@@ -97,7 +101,7 @@ private:
     bool subscribe(const std::string& topic, int qos);
 
     std::string extract_serial_from_cert(const std::string& cert_path);
-    std::string get_timestamp_iso8601();
+    int64_t get_timestamp_unix();
 
     // Topic helpers
     std::string topic_status() const;
