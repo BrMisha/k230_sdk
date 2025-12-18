@@ -57,6 +57,9 @@ endif()
 # Add media streaming submodule
 add_subdirectory(media_streaming)
 
+# Add backend communication submodule (MQTT, WebRTC signaling)
+add_subdirectory(backend_comm)
+
 file(GLOB APP_SOURCES ${src_root}/*.cpp ${src_root}/*.c)
 
 # LVGL and UI sources
@@ -144,6 +147,7 @@ file(GLOB FUSION_SOURCES ${fusion_SOURCE_DIR}/Fusion/*.c)
 add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES} ${FUSION_SOURCES})
 target_link_libraries(${BIN} -Wl,--start-group
     media_streaming
+    backend_comm
     datafifo
     pthread
     sys

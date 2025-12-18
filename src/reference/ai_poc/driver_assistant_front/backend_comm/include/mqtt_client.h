@@ -1,0 +1,125 @@
+#pragma once
+
+#include <string>
+#include <functional>
+#include <memory>
+#include <atomic>
+#include <mutex>
+
+// Forward declarations to avoid exposing Paho headers
+namespace mqtt {
+    class async_client;
+    class connect_options;
+}
+
+namespace backend_comm {
+
+struct MqttConfig {
+    std::string broker_uri;          // e.g., "ssl://emqx.example.com:8883"
+    std::string client_id;           // Device serial number
+
+    // Certificate paths (relative to working directory)
+    std::string cert_path = "cert/device.pem";
+    std::string key_path = "cert/device.key";
+    std::string trust_cert_path = "cert/server.pem";  // Server or CA certificate
+
+    // Reconnect settings
+    int reconnect_min_interval_sec = 1;
+    int reconnect_max_interval_sec = 60;
+
+    // Keep alive
+    int keep_alive_sec = 60;
+
+    // QoS levels
+    int qos_status = 1;      // Retained status messages
+    int qos_telemetry = 0;   // Fire-and-forget telemetry
+    int qos_events = 1;      // Important events
+    int qos_commands = 1;    // Commands need delivery guarantee
+};
+
+// Callback types
+using CommandCallback = std::function<void(const std::string& command_id,
+                                            const std::string& command_type,
+                                            const std::string& params_json)>;
+using ConnectionCallback = std::function<void(bool connected)>;
+using SignalingCallback = std::function<void(const std::string& session_id,
+                                              const std::string& message_type,
+                                              const std::string& payload)>;
+
+class MqttClient {
+public:
+    explicit MqttClient(const MqttConfig& config);
+    ~MqttClient();
+
+    // Non-copyable
+    MqttClient(const MqttClient&) = delete;
+    MqttClient& operator=(const MqttClient&) = delete;
+
+    // Connection management
+    bool connect();
+    void disconnect();
+    bool is_connected() const;
+
+    // Set callbacks
+    void set_command_callback(CommandCallback callback);
+    void set_connection_callback(ConnectionCallback callback);
+    void set_signaling_callback(SignalingCallback callback);
+
+    // Publishing methods
+    bool publish_status(bool online, const std::string& firmware_version,
+                       uint64_t uptime_seconds);
+    bool publish_telemetry(float cpu_percent, float memory_percent,
+                          float temperature_celsius);
+    bool publish_event(const std::string& event_type, const std::string& data_json);
+    bool publish_command_response(const std::string& command_id,
+                                  const std::string& status,
+                                  const std::string& result_json = "{}");
+
+    // WebRTC signaling
+    bool subscribe_signaling(const std::string& session_id);
+    bool unsubscribe_signaling(const std::string& session_id);
+    bool publish_signaling(const std::string& session_id,
+                          const std::string& message_type,
+                          const std::string& payload);
+
+    // Get device serial (extracted from certificate CN)
+    const std::string& get_serial() const { return serial_; }
+
+private:
+    class CallbackHandler;
+
+    void on_connected();
+    void on_connection_lost(const std::string& cause);
+    void on_message(const std::string& topic, const std::string& payload);
+
+    bool publish(const std::string& topic, const std::string& payload,
+                int qos, bool retained = false);
+    bool subscribe(const std::string& topic, int qos);
+
+    std::string extract_serial_from_cert(const std::string& cert_path);
+    std::string get_timestamp_iso8601();
+
+    // Topic helpers
+    std::string topic_status() const;
+    std::string topic_telemetry() const;
+    std::string topic_events() const;
+    std::string topic_commands() const;
+    std::string topic_commands_response() const;
+    std::string topic_signaling_to_device(const std::string& session_id) const;
+    std::string topic_signaling_from_device(const std::string& session_id) const;
+
+    MqttConfig config_;
+    std::string serial_;
+
+    std::unique_ptr<mqtt::async_client> client_;
+    std::unique_ptr<CallbackHandler> callback_handler_;
+
+    std::atomic<bool> connected_{false};
+
+    std::mutex callback_mutex_;
+    CommandCallback command_callback_;
+    ConnectionCallback connection_callback_;
+    SignalingCallback signaling_callback_;
+};
+
+} // namespace backend_comm
