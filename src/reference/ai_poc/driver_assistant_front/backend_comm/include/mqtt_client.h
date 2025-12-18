@@ -21,7 +21,7 @@ struct MqttConfig {
     // Certificate paths (relative to working directory)
     std::string cert_path = "cert/device.pem";
     std::string key_path = "cert/device.key";
-    std::string trust_cert_path = "cert/server.pem";  // Server or CA certificate
+    std::string ca_path = "cert/ca.pem";
 
     // Reconnect settings
     int reconnect_min_interval_sec = 1;

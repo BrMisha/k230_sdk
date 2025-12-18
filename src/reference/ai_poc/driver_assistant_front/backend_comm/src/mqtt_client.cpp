@@ -100,10 +100,10 @@ bool MqttClient::connect() {
             config_.broker_uri.find("mqtts://") == 0) {
 
             mqtt::ssl_options ssl_opts;
-            ssl_opts.set_trust_store(config_.trust_cert_path);
+            ssl_opts.set_trust_store(config_.ca_path);
             ssl_opts.set_key_store(config_.cert_path);
             ssl_opts.set_private_key(config_.key_path);
-            ssl_opts.set_enable_server_cert_auth(false);
+            ssl_opts.set_enable_server_cert_auth(true);
 
             conn_opts.set_ssl(ssl_opts);
         }
