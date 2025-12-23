@@ -363,7 +363,7 @@ int main(int argc, char *argv[]) {
             usleep(1000000);
 
             lv_lock();
-
+/*
             // Set IP address on display
             std::string ip = utils::get_ip_address();
             snprintf(ip_buffer, sizeof(ip_buffer), "%s", ip.c_str());
@@ -396,7 +396,7 @@ int main(int argc, char *argv[]) {
             lv_label_set_text(ui_cpu, cpu_buffer);
 
             lv_label_set_text(ui_moving, is_moving ? "M" : "");
-
+*/
             //lv_refr_now(NULL);
             lv_unlock();
         }
@@ -412,7 +412,7 @@ int main(int argc, char *argv[]) {
         .u32Port = 101,
         .u32Priority = 0
     };
-
+/*
     ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_add_service failed: %d\n", ret);
@@ -456,7 +456,7 @@ int main(int argc, char *argv[]) {
     std::thread websocket_thread([&ws_server]() {
         ws_server.run();
     });
-
+*/
     // MQTT Client (optional - only if --mqtt is specified)
     std::unique_ptr<backend_comm::MqttClient> mqtt_client;
     if (mqtt_broker.has_value()) {
@@ -476,10 +476,12 @@ int main(int argc, char *argv[]) {
                 mqtt_client->publish_command_response(cmd_id, "success");
                 system("reboot");
             } else if (cmd_type == "stream_start") {
-                // TODO: Start WebRTC stream
+                // TODO: Stop WebRTC stream
+                std::cout << "[MQTT] stream_start params: " << params << std::endl;
                 mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
             } else if (cmd_type == "stream_stop") {
                 // TODO: Stop WebRTC stream
+                std::cout << "[MQTT] stream_stop params: " << params << std::endl;
                 mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
             } else {
                 mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"unknown_command"})");
@@ -497,14 +499,13 @@ int main(int argc, char *argv[]) {
             }
         });
 
-        // Connect to broker
+        // Connect to broker (will retry in background if fails)
         if (!mqtt_client->connect()) {
-            std::cerr << "[MQTT] Failed to connect to broker, continuing without MQTT" << std::endl;
-            mqtt_client.reset();
+            std::cerr << "[MQTT] Failed to connect to broker, will retry in background" << std::endl;
         }
     }
 
-    // Start status publishing thread (every 60 seconds)
+    // Start status publishing thread (every 60 seconds) + reconnection
     auto start_time = std::chrono::steady_clock::now();
     std::thread status_thread;
     if (mqtt_client) {
@@ -516,6 +517,13 @@ int main(int argc, char *argv[]) {
                 }
                 if (send_stop.load()) break;
 
+                // Try to reconnect if not connected
+                if (mqtt_client && !mqtt_client->is_connected()) {
+                    std::cout << "[MQTT] Attempting reconnection..." << std::endl;
+                    mqtt_client->connect();
+                    continue;  // Skip status publish this cycle
+                }
+
                 // Calculate uptime in seconds
                 auto now = std::chrono::steady_clock::now();
                 auto uptime = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
@@ -526,7 +534,7 @@ int main(int argc, char *argv[]) {
             }
         });
     }
-
+/*
     asio::io_context io_context;
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
@@ -540,7 +548,7 @@ int main(int argc, char *argv[]) {
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
-
+*/
     if (!daemon_mode) {
         printf("Input q to exit: \n");
         while (getchar() != 'q') {
@@ -548,12 +556,12 @@ int main(int argc, char *argv[]) {
         }
 
         send_stop = true;
-
+/*
         auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_APP_CLOSED, "", 1);
         auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-        kd_ipcmsg_destroy_message(pReq);
+        kd_ipcmsg_destroy_message(pReq);*/
     }
-
+/*
     socket.close();
     acceptor.close();
 
@@ -564,7 +572,7 @@ int main(int argc, char *argv[]) {
     websocket_thread.join();
     // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
-
+*/
     // Wait for status thread to stop
     if (status_thread.joinable()) {
         status_thread.join();
@@ -575,11 +583,11 @@ int main(int argc, char *argv[]) {
         mqtt_client->disconnect();
         mqtt_client.reset();
     }
-
+/*
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
     ipcmsg_thread.join();
-
+*/
     // Cleanup LVGL
     lvgl_thread_upd.join();
     lvgl_thread.join();

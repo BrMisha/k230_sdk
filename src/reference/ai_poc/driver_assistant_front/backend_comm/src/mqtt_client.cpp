@@ -108,7 +108,7 @@ bool MqttClient::connect() {
         }
 
         // Set Last Will Testament (LWT) - offline status
-        std::string lwt_topic = topic_status();
+        std::string lwt_topic = topic_from_device("status");
         std::string lwt_payload = "{\"online\":false}";
         mqtt::message_ptr lwt_msg = mqtt::make_message(lwt_topic, lwt_payload);
         lwt_msg->set_qos(config_.qos_status);
@@ -173,8 +173,8 @@ void MqttClient::set_signaling_callback(SignalingCallback callback) {
 void MqttClient::on_connected() {
     connected_ = true;
 
-    // Subscribe to commands topic
-    subscribe(topic_commands(), config_.qos_commands);
+    // Subscribe to to-device topic (receives commands from backend)
+    subscribe(topic_to_device(), config_.qos_commands);
 
     // Notify connection callback
     {
@@ -200,8 +200,9 @@ void MqttClient::on_connection_lost(const std::string& cause) {
 void MqttClient::on_message(const std::string& topic, const std::string& payload) {
     std::cout << "[MQTT] Message on " << topic << ": " << payload << std::endl;
 
-    // Check if it's a command
-    if (topic == topic_commands()) {
+    // Check if it's a command (topic starts with v1/devices/{serial}/to-device/)
+    std::string commands_prefix = "v1/devices/" + serial_ + "/to-device/";
+    if (topic.find(commands_prefix) == 0) {
         // Parse command JSON: {"command": "...", "request_id": "...", "params": {...}}
         // Simple parsing without external JSON library
         std::string request_id, command, params;
@@ -237,11 +238,12 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
     }
 
     // Check if it's a signaling message
-    // Topic format: v1/sessions/{id}/signaling/to-device
-    std::regex signaling_regex("v1/sessions/([^/]+)/signaling/to-device");
+    // Topic format: v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-client[/...]
+    std::regex signaling_regex("v1/sessions/[^/]+/([^/]+)/([^/]+)/signaling/from-client(/.*)?");
     std::smatch signaling_match;
     if (std::regex_match(topic, signaling_match, signaling_regex)) {
-        std::string session_id = signaling_match[1].str();
+        std::string user_id = signaling_match[1].str();
+        std::string session_id = signaling_match[2].str();
 
         // Extract message type from payload
         std::regex msg_type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
@@ -253,7 +255,7 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
 
         std::lock_guard<std::mutex> lock(callback_mutex_);
         if (signaling_callback_) {
-            signaling_callback_(session_id, msg_type, payload);
+            signaling_callback_(user_id, session_id, msg_type, payload);
         }
         return;
     }
@@ -308,23 +310,7 @@ bool MqttClient::publish_status(bool online, const std::string& firmware,
     }
     json << "}";
 
-    return publish(topic_status(), json.str(), config_.qos_status, true);
-}
-
-bool MqttClient::publish_telemetry(float cpu_percent, float memory_percent,
-                                   float temperature, float disk_percent,
-                                   uint64_t network_rx_bytes, uint64_t network_tx_bytes) {
-    std::ostringstream json;
-    json << std::fixed << std::setprecision(1);
-    json << R"({"timestamp":)" << get_timestamp_unix();
-    json << R"(,"cpu_percent":)" << cpu_percent;
-    json << R"(,"memory_percent":)" << memory_percent;
-    json << R"(,"temperature":)" << temperature;
-    json << R"(,"disk_percent":)" << disk_percent;
-    json << R"(,"network":{"rx_bytes":)" << network_rx_bytes;
-    json << R"(,"tx_bytes":)" << network_tx_bytes << "}}";
-
-    return publish(topic_telemetry(), json.str(), config_.qos_telemetry, false);
+    return publish(topic_from_device("status"), json.str(), config_.qos_status, true);
 }
 
 bool MqttClient::publish_event(const std::string& event_type,
@@ -336,7 +322,7 @@ bool MqttClient::publish_event(const std::string& event_type,
     json << R"(,"timestamp":)" << get_timestamp_unix();
     json << R"(,"data":)" << data_json << "}";
 
-    return publish(topic_events(), json.str(), config_.qos_events, false);
+    return publish(topic_from_device("events"), json.str(), config_.qos_events, false);
 }
 
 bool MqttClient::publish_command_response(const std::string& request_id,
@@ -348,20 +334,20 @@ bool MqttClient::publish_command_response(const std::string& request_id,
     json << R"(,"timestamp":)" << get_timestamp_unix();
     json << R"(,"data":)" << data_json << "}";
 
-    return publish(topic_commands_response(), json.str(), config_.qos_commands, false);
+    return publish(topic_from_device("commands/response"), json.str(), config_.qos_commands, false);
 }
 
-bool MqttClient::subscribe_signaling(const std::string& session_id) {
-    return subscribe(topic_signaling_to_device(session_id), config_.qos_commands);
+bool MqttClient::subscribe_signaling(const std::string& user_id, const std::string& session_id) {
+    return subscribe(topic_signaling_from_client(user_id, session_id), config_.qos_commands);
 }
 
-bool MqttClient::unsubscribe_signaling(const std::string& session_id) {
+bool MqttClient::unsubscribe_signaling(const std::string& user_id, const std::string& session_id) {
     if (!client_) {
         return false;
     }
 
     try {
-        client_->unsubscribe(topic_signaling_to_device(session_id));
+        client_->unsubscribe(topic_signaling_from_client(user_id, session_id));
         return true;
     } catch (const mqtt::exception& e) {
         std::cerr << "[MQTT] Unsubscribe failed: " << e.what() << std::endl;
@@ -369,11 +355,11 @@ bool MqttClient::unsubscribe_signaling(const std::string& session_id) {
     }
 }
 
-bool MqttClient::publish_signaling(const std::string& session_id,
+bool MqttClient::publish_signaling(const std::string& user_id, const std::string& session_id,
                                    const std::string& message_type,
                                    const std::string& payload) {
     // Payload should already be the full JSON message
-    return publish(topic_signaling_from_device(session_id), payload,
+    return publish(topic_signaling_from_device(user_id, session_id), payload,
                    config_.qos_commands, false);
 }
 
@@ -418,32 +404,25 @@ int64_t MqttClient::get_timestamp_unix() {
 }
 
 // Topic helper methods
-std::string MqttClient::topic_status() const {
-    return "v1/devices/" + serial_ + "/status";
+std::string MqttClient::topic_to_device() const {
+    // Device subscribes to this topic to receive commands from backend
+    return "v1/devices/" + serial_ + "/to-device/#";
 }
 
-std::string MqttClient::topic_telemetry() const {
-    return "v1/devices/" + serial_ + "/telemetry";
+std::string MqttClient::topic_from_device(const std::string& subtopic) const {
+    // Device publishes to this topic to send messages to backend
+    return "v1/devices/" + serial_ + "/from-device/" + subtopic;
 }
 
-std::string MqttClient::topic_events() const {
-    return "v1/devices/" + serial_ + "/events";
+std::string MqttClient::topic_signaling_from_client(const std::string& user_id, const std::string& session_id) const {
+    // Device subscribes to from-client (messages from mobile app)
+    // v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-client/#
+    return "v1/sessions/" + serial_ + "/" + user_id + "/" + session_id + "/signaling/from-client/#";
 }
 
-std::string MqttClient::topic_commands() const {
-    return "v1/devices/" + serial_ + "/commands";
-}
-
-std::string MqttClient::topic_commands_response() const {
-    return "v1/devices/" + serial_ + "/commands/response";
-}
-
-std::string MqttClient::topic_signaling_to_device(const std::string& session_id) const {
-    return "v1/sessions/" + session_id + "/signaling/to-device";
-}
-
-std::string MqttClient::topic_signaling_from_device(const std::string& session_id) const {
-    return "v1/sessions/" + session_id + "/signaling/from-device";
+std::string MqttClient::topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const {
+    // v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-device
+    return "v1/sessions/" + serial_ + "/" + user_id + "/" + session_id + "/signaling/from-device";
 }
 
 } // namespace backend_comm

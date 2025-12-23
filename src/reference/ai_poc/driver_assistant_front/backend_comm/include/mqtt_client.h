@@ -43,7 +43,8 @@ using CommandCallback = std::function<void(const std::string& request_id,
                                             const std::string& command,
                                             const std::string& params_json)>;
 using ConnectionCallback = std::function<void(bool connected)>;
-using SignalingCallback = std::function<void(const std::string& session_id,
+using SignalingCallback = std::function<void(const std::string& user_id,
+                                              const std::string& session_id,
                                               const std::string& message_type,
                                               const std::string& payload)>;
 
@@ -69,9 +70,6 @@ public:
     // Publishing methods
     bool publish_status(bool online, const std::string& firmware,
                        int64_t uptime);
-    bool publish_telemetry(float cpu_percent, float memory_percent,
-                          float temperature, float disk_percent,
-                          uint64_t network_rx_bytes, uint64_t network_tx_bytes);
     bool publish_event(const std::string& event_type,
                       const std::string& severity,
                       const std::string& data_json);
@@ -79,10 +77,10 @@ public:
                                   const std::string& status,
                                   const std::string& data_json = "{}");
 
-    // WebRTC signaling
-    bool subscribe_signaling(const std::string& session_id);
-    bool unsubscribe_signaling(const std::string& session_id);
-    bool publish_signaling(const std::string& session_id,
+    // WebRTC signaling (topic: v1/sessions/{serial}/{user_id}/{session_id}/signaling/...)
+    bool subscribe_signaling(const std::string& user_id, const std::string& session_id);
+    bool unsubscribe_signaling(const std::string& user_id, const std::string& session_id);
+    bool publish_signaling(const std::string& user_id, const std::string& session_id,
                           const std::string& message_type,
                           const std::string& payload);
 
@@ -104,13 +102,10 @@ private:
     int64_t get_timestamp_unix();
 
     // Topic helpers
-    std::string topic_status() const;
-    std::string topic_telemetry() const;
-    std::string topic_events() const;
-    std::string topic_commands() const;
-    std::string topic_commands_response() const;
-    std::string topic_signaling_to_device(const std::string& session_id) const;
-    std::string topic_signaling_from_device(const std::string& session_id) const;
+    std::string topic_to_device() const;  // Device subscribes: v1/devices/{serial}/to-device/#
+    std::string topic_from_device(const std::string& subtopic) const;  // Device publishes: v1/devices/{serial}/from-device/{subtopic}
+    std::string topic_signaling_from_client(const std::string& user_id, const std::string& session_id) const;
+    std::string topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const;
 
     MqttConfig config_;
     std::string serial_;
