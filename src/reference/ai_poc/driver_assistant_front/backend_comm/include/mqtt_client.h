@@ -75,15 +75,13 @@ public:
                                   const std::string& status,
                                   const std::string& data_json = "{}");
 
-    // WebRTC signaling (topic: v1/sessions/{serial}/{user_id}/{session_id}/signaling/...)
-    bool subscribe_signaling(const std::string& user_id, const std::string& session_id);
-    bool unsubscribe_signaling(const std::string& user_id, const std::string& session_id);
-    bool publish_signaling(const std::string& user_id, const std::string& session_id,
-                          const std::string& message_type,
-                          const std::string& payload);
-
     // Get device serial (extracted from certificate CN)
     const std::string& get_serial() const { return serial_; }
+
+    // Generic MQTT operations (used by StreamSession)
+    bool subscribe(const std::string& topic, int qos);
+    bool unsubscribe(const std::string& topic);
+    bool publish(const std::string& topic, const std::string& payload, int qos, bool retained = false);
 
 private:
     class CallbackHandler;
@@ -92,18 +90,12 @@ private:
     void on_connection_lost(const std::string& cause);
     void on_message(const std::string& topic, const std::string& payload);
 
-    bool publish(const std::string& topic, const std::string& payload,
-                int qos, bool retained = false);
-    bool subscribe(const std::string& topic, int qos);
-
     std::string extract_serial_from_cert(const std::string& cert_path);
     int64_t get_timestamp_unix();
 
     // Topic helpers
     std::string topic_to_device() const;  // Device subscribes: v1/devices/{serial}/to-device/#
     std::string topic_from_device(const std::string& subtopic) const;  // Device publishes: v1/devices/{serial}/from-device/{subtopic}
-    std::string topic_signaling_from_client(const std::string& user_id, const std::string& session_id) const;
-    std::string topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const;
 
     // Stream session handlers
     void handle_stream_start(const std::string& cmd_id, const std::string& params);

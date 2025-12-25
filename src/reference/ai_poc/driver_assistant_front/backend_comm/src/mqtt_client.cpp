@@ -198,11 +198,25 @@ void MqttClient::on_connection_lost(const std::string& cause) {
 void MqttClient::on_message(const std::string& topic, const std::string& payload) {
     std::cout << "[MQTT] Message on " << topic << ": " << payload << std::endl;
 
-    // Check if it's a command (topic: v1/devices/{serial}/to-device/{command})
-    std::string commands_prefix = "v1/devices/" + serial_ + "/to-device/";
-    if (topic.find(commands_prefix) == 0) {
-        // Extract command name from topic suffix
-        std::string command = topic.substr(commands_prefix.length());
+    // Split topic by "/"
+    std::vector<std::string> parts;
+    std::istringstream iss(topic);
+    std::string part;
+    while (std::getline(iss, part, '/')) {
+        parts.push_back(part);
+    }
+
+    // All topics start with "v1"
+    if (parts.size() < 2 || parts[0] != "v1") {
+        return;
+    }
+
+    // v1/devices/{serial}/to-device/{command}
+    // [0]=v1, [1]=devices, [2]=serial, [3]=to-device, [4]=command
+    if (parts.size() >= 5 && parts[1] == "devices" &&
+        parts[2] == serial_ && parts[3] == "to-device") {
+
+        std::string command = parts[4];
 
         // Payload is the params directly (or may contain request_id at top level)
         std::string request_id;
@@ -210,13 +224,12 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
         try {
             auto json = nlohmann::json::parse(payload);
             request_id = json.value("request_id", "");
-            // If no request_id in payload, use command as fallback
             if (request_id.empty()) {
                 request_id = command;
             }
         } catch (const nlohmann::json::exception& e) {
             std::cerr << "[MQTT] Command JSON parse error: " << e.what() << std::endl;
-            request_id = command;  // fallback
+            request_id = command;
         }
 
         std::cout << "[MQTT] Command: " << command << " (request_id=" << request_id << ")" << std::endl;
@@ -236,33 +249,26 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
         if (command_callback_) {
             command_callback_(request_id, command, params);
         }
-        return;
     }
 
-    // Check if it's a signaling message
-    // Topic format: v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-client[/...]
-    std::regex signaling_regex("v1/sessions/[^/]+/([^/]+)/([^/]+)/signaling/from-client(/.*)?");
-    std::smatch signaling_match;
-    if (std::regex_match(topic, signaling_match, signaling_regex)) {
-        std::string user_id = signaling_match[1].str();
-        std::string session_id = signaling_match[2].str();
+    // v1/sessions/{serial}/{user_id}/{session_id}/from-client/{path...}
+    // [0]=v1, [1]=sessions, [2]=serial, [3]=user_id, [4]=session_id, [5]=from-client, [6+]=path
+    else if (parts.size() >= 7 && parts[1] == "sessions" &&
+        parts[2] == serial_ && parts[5] == "from-client") {
+
+        std::string user_id = parts[3];
+        std::string session_id = parts[4];
 
         // Find session and route message
         auto session = find_session(user_id, session_id);
         if (!session) {
-            std::cout << "[MQTT] No session for signaling message, ignoring" << std::endl;
+            std::cout << "[MQTT] No session for message, ignoring" << std::endl;
             return;
         }
 
-        // Extract message type from payload
-        try {
-            auto json = nlohmann::json::parse(payload);
-            std::string msg_type = json.value("type", "");
-            session->on_message(msg_type, payload);
-        } catch (const nlohmann::json::exception& e) {
-            std::cerr << "[MQTT] Signaling JSON parse error: " << e.what() << std::endl;
-        }
-        return;
+        // Pass path parts after /from-client/ (parts[6], parts[7], ...)
+        std::vector<std::string> path_parts(parts.begin() + 6, parts.end());
+        session->on_message(path_parts, payload);
     }
 }
 
@@ -342,30 +348,19 @@ bool MqttClient::publish_command_response(const std::string& request_id,
     return publish(topic_from_device("commands/response"), json.str(), config_.qos_commands, false);
 }
 
-bool MqttClient::subscribe_signaling(const std::string& user_id, const std::string& session_id) {
-    return subscribe(topic_signaling_from_client(user_id, session_id), config_.qos_commands);
-}
-
-bool MqttClient::unsubscribe_signaling(const std::string& user_id, const std::string& session_id) {
+bool MqttClient::unsubscribe(const std::string& topic) {
     if (!client_) {
         return false;
     }
 
     try {
-        client_->unsubscribe(topic_signaling_from_client(user_id, session_id));
+        std::cout << "[MQTT] Unsubscribing from " << topic << std::endl;
+        client_->unsubscribe(topic);
         return true;
     } catch (const mqtt::exception& e) {
         std::cerr << "[MQTT] Unsubscribe failed: " << e.what() << std::endl;
         return false;
     }
-}
-
-bool MqttClient::publish_signaling(const std::string& user_id, const std::string& session_id,
-                                   const std::string& message_type,
-                                   const std::string& payload) {
-    // Payload should already be the full JSON message
-    return publish(topic_signaling_from_device(user_id, session_id), payload,
-                   config_.qos_commands, false);
 }
 
 std::string MqttClient::extract_serial_from_cert(const std::string& cert_path) {
@@ -417,17 +412,6 @@ std::string MqttClient::topic_to_device() const {
 std::string MqttClient::topic_from_device(const std::string& subtopic) const {
     // Device publishes to this topic to send messages to backend
     return "v1/devices/" + serial_ + "/from-device/" + subtopic;
-}
-
-std::string MqttClient::topic_signaling_from_client(const std::string& user_id, const std::string& session_id) const {
-    // Device subscribes to from-client (messages from mobile app)
-    // v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-client/#
-    return "v1/sessions/" + serial_ + "/" + user_id + "/" + session_id + "/signaling/from-client/#";
-}
-
-std::string MqttClient::topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const {
-    // v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-device
-    return "v1/sessions/" + serial_ + "/" + user_id + "/" + session_id + "/signaling/from-device";
 }
 
 // Stream session handlers

@@ -26,9 +26,10 @@ bool StreamSession::start()
     std::cout << "[StreamSession] Starting - user: " << user_id
               << ", session: " << session_id << std::endl;
 
-    // Subscribe to signaling topic from app
-    if (!mqtt_->subscribe_signaling(user_id, session_id)) {
-        std::cerr << "[StreamSession] Failed to subscribe to signaling topic" << std::endl;
+    // Subscribe to all messages from client
+    std::string topic = topic_from_client();
+    if (!mqtt_->subscribe(topic, 1)) {
+        std::cerr << "[StreamSession] Failed to subscribe to " << topic << std::endl;
         return false;
     }
 
@@ -46,32 +47,48 @@ void StreamSession::stop()
     std::cout << "[StreamSession] Stopping - user: " << user_id
               << ", session: " << session_id << std::endl;
 
-    // Unsubscribe from signaling topic
-    mqtt_->unsubscribe_signaling(user_id, session_id);
+    mqtt_->unsubscribe(topic_from_client());
 
     active_.store(false);
     std::cout << "[StreamSession] Stopped" << std::endl;
 }
 
-void StreamSession::on_message(const std::string& type, const std::string& payload)
+void StreamSession::on_message(const std::vector<std::string>& path_parts, const std::string& payload)
 {
     if (!active_.load()) {
         std::cout << "[StreamSession] Ignoring message - session not active" << std::endl;
         return;
     }
 
-    std::cout << "[StreamSession] Received message - type: " << type << std::endl;
+    if (path_parts.empty()) {
+        std::cout << "[StreamSession] Empty path" << std::endl;
+        return;
+    }
 
-    if (type == "watch") {
-        handle_watch(payload);
-    } else if (type == "answer") {
-        handle_answer(payload);
-    } else if (type == "ice") {
-        handle_ice(payload);
-    } else if (type == "stop") {
-        handle_stop(payload);
+    const std::string& category = path_parts[0];
+    const std::string type = path_parts.size() > 1 ? path_parts[1] : "";
+
+    std::cout << "[StreamSession] Received message - category: " << category << ", type: " << type << std::endl;
+
+    if (category == "signaling") {
+        // Handle signaling messages
+        if (type == "watch") {
+            handle_watch(payload);
+        } else if (type == "answer") {
+            handle_answer(payload);
+        } else if (type == "ice") {
+            handle_ice(payload);
+        } else if (type == "stop") {
+            handle_stop(payload);
+        } else {
+            std::cout << "[StreamSession] Unknown signaling type: " << type << std::endl;
+        }
+    } else if (category == "ping") {
+        // Respond with pong
+        send_message("pong", payload);
     } else {
-        std::cout << "[StreamSession] Unknown message type: " << type << std::endl;
+        // Future: handle other categories (commands, state, etc.)
+        std::cout << "[StreamSession] Unknown category: " << category << std::endl;
     }
 }
 
@@ -116,5 +133,28 @@ bool StreamSession::send_message(const std::string& type, const std::string& pay
     }
 
     std::cout << "[StreamSession] Sending message - type: " << type << std::endl;
-    return mqtt_->publish_signaling(user_id, session_id, type, payload);
+    return mqtt_->publish(topic_from_device(type), payload, 1, false);
+}
+
+bool StreamSession::send_signaling_message(const std::string& type, const std::string& payload)
+{
+    if (!active_.load()) {
+        std::cerr << "[StreamSession] Cannot send signaling - session not active" << std::endl;
+        return false;
+    }
+
+    std::cout << "[StreamSession] Sending signaling - type: " << type << std::endl;
+    return mqtt_->publish(topic_from_device("signaling/" + type), payload, 1, false);
+}
+
+std::string StreamSession::topic_from_client() const
+{
+    // v1/sessions/{serial}/{user_id}/{session_id}/from-client/#
+    return "v1/sessions/" + mqtt_->get_serial() + "/" + user_id + "/" + session_id + "/from-client/#";
+}
+
+std::string StreamSession::topic_from_device(const std::string& path) const
+{
+    // v1/sessions/{serial}/{user_id}/{session_id}/from-device/{path}
+    return "v1/sessions/" + mqtt_->get_serial() + "/" + user_id + "/" + session_id + "/from-device/" + path;
 }

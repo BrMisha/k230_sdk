@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <atomic>
+#include <vector>
 #include "mqtt_client.h"
 
 /**
@@ -44,10 +45,12 @@ public:
     void stop();
 
     /**
-     * Handle incoming signaling message from MQTT
+     * Handle incoming message from MQTT
      * Called by MqttClient when message matches this session
+     * @param path_parts Path parts after /from-client/ (e.g., {"signaling", "watch"})
+     * @param payload JSON payload
      */
-    void on_message(const std::string& type, const std::string& payload);
+    void on_message(const std::vector<std::string>& path_parts, const std::string& payload);
 
     /**
      * Check if session is active
@@ -61,8 +64,15 @@ private:
     void handle_ice(const std::string& payload);
     void handle_stop(const std::string& payload);
 
-    // Send signaling message to app
+    // Send generic message (e.g., "pong" → .../from-device/pong)
     bool send_message(const std::string& type, const std::string& payload);
+
+    // Send signaling message (e.g., "offer" → .../from-device/signaling/offer)
+    bool send_signaling_message(const std::string& type, const std::string& payload);
+
+    // Topic construction
+    std::string topic_from_client() const;  // .../from-client/#
+    std::string topic_from_device(const std::string& path) const;  // .../from-device/{path}
 
     std::shared_ptr<backend_comm::MqttClient> mqtt_;
     std::atomic<bool> active_{false};
