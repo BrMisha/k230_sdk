@@ -1,0 +1,69 @@
+#pragma once
+
+#include <string>
+#include <memory>
+#include <atomic>
+#include "mqtt_client.h"
+
+/**
+ * StreamSession - Handles streaming session over MQTT (signaling + WebRTC)
+ *
+ * Lifecycle:
+ *   1. stream_start command received with {user_id, session_id}
+ *   2. MqttClient creates StreamSession, subscribes to signaling topic
+ *   3. App sends 'watch' message
+ *   4. Device sends 'offer' with SDP
+ *   5. App sends 'answer' with SDP
+ *   6. ICE candidates exchanged
+ *   7. stream_stop command ends session
+ */
+class StreamSession {
+public:
+    // Session identifiers (immutable after construction)
+    const std::string user_id;
+    const std::string session_id;
+
+    StreamSession(std::shared_ptr<backend_comm::MqttClient> mqtt,
+                  std::string user_id,
+                  std::string session_id);
+    ~StreamSession();
+
+    // Non-copyable
+    StreamSession(const StreamSession&) = delete;
+    StreamSession& operator=(const StreamSession&) = delete;
+
+    /**
+     * Start signaling session - subscribe to signaling topic
+     * @return true if subscribed successfully
+     */
+    bool start();
+
+    /**
+     * Stop signaling session - unsubscribe from signaling topic
+     */
+    void stop();
+
+    /**
+     * Handle incoming signaling message from MQTT
+     * Called by MqttClient when message matches this session
+     */
+    void on_message(const std::string& type, const std::string& payload);
+
+    /**
+     * Check if session is active
+     */
+    bool is_active() const { return active_.load(); }
+
+private:
+    // Message handlers
+    void handle_watch(const std::string& payload);
+    void handle_answer(const std::string& payload);
+    void handle_ice(const std::string& payload);
+    void handle_stop(const std::string& payload);
+
+    // Send signaling message to app
+    bool send_message(const std::string& type, const std::string& payload);
+
+    std::shared_ptr<backend_comm::MqttClient> mqtt_;
+    std::atomic<bool> active_{false};
+};

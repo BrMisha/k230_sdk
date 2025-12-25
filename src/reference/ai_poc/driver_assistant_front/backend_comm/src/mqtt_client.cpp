@@ -1,4 +1,5 @@
 #include "mqtt_client.h"
+#include "stream_session.h"
 
 #include <mqtt/async_client.h>
 #include <mqtt/ssl_options.h>
@@ -10,9 +11,11 @@
 #include <iomanip>
 #include <regex>
 #include <stdexcept>
+#include <algorithm>
 
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <nlohmann/json.hpp>
 
 // Stub for Paho MQTT C Log function (missing when PAHO_HIGH_PERFORMANCE=TRUE)
 extern "C" {
@@ -165,11 +168,6 @@ void MqttClient::set_connection_callback(ConnectionCallback callback) {
     connection_callback_ = std::move(callback);
 }
 
-void MqttClient::set_signaling_callback(SignalingCallback callback) {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    signaling_callback_ = std::move(callback);
-}
-
 void MqttClient::on_connected() {
     connected_ = true;
 
@@ -200,38 +198,42 @@ void MqttClient::on_connection_lost(const std::string& cause) {
 void MqttClient::on_message(const std::string& topic, const std::string& payload) {
     std::cout << "[MQTT] Message on " << topic << ": " << payload << std::endl;
 
-    // Check if it's a command (topic starts with v1/devices/{serial}/to-device/)
+    // Check if it's a command (topic: v1/devices/{serial}/to-device/{command})
     std::string commands_prefix = "v1/devices/" + serial_ + "/to-device/";
     if (topic.find(commands_prefix) == 0) {
-        // Parse command JSON: {"command": "...", "request_id": "...", "params": {...}}
-        // Simple parsing without external JSON library
-        std::string request_id, command, params;
+        // Extract command name from topic suffix
+        std::string command = topic.substr(commands_prefix.length());
 
-        // Extract "request_id" field
-        std::regex id_regex("\"request_id\"\\s*:\\s*\"([^\"]+)\"");
-        std::smatch id_match;
-        if (std::regex_search(payload, id_match, id_regex)) {
-            request_id = id_match[1].str();
+        // Payload is the params directly (or may contain request_id at top level)
+        std::string request_id;
+        std::string params = payload;
+        try {
+            auto json = nlohmann::json::parse(payload);
+            request_id = json.value("request_id", "");
+            // If no request_id in payload, use command as fallback
+            if (request_id.empty()) {
+                request_id = command;
+            }
+        } catch (const nlohmann::json::exception& e) {
+            std::cerr << "[MQTT] Command JSON parse error: " << e.what() << std::endl;
+            request_id = command;  // fallback
         }
 
-        // Extract "command" field
-        std::regex cmd_regex("\"command\"\\s*:\\s*\"([^\"]+)\"");
-        std::smatch cmd_match;
-        if (std::regex_search(payload, cmd_match, cmd_regex)) {
-            command = cmd_match[1].str();
+        std::cout << "[MQTT] Command: " << command << " (request_id=" << request_id << ")" << std::endl;
+
+        // Handle stream commands internally
+        if (command == "stream_start") {
+            handle_stream_start(request_id, params);
+            return;
+        }
+        if (command == "stream_stop") {
+            handle_stream_stop(request_id, params);
+            return;
         }
 
-        // Extract "params" field (as raw JSON)
-        std::regex params_regex("\"params\"\\s*:\\s*(\\{[^}]*\\})");
-        std::smatch params_match;
-        if (std::regex_search(payload, params_match, params_regex)) {
-            params = params_match[1].str();
-        } else {
-            params = "{}";
-        }
-
+        // Pass other commands to external callback
         std::lock_guard<std::mutex> lock(callback_mutex_);
-        if (command_callback_ && !request_id.empty() && !command.empty()) {
+        if (command_callback_) {
             command_callback_(request_id, command, params);
         }
         return;
@@ -245,17 +247,20 @@ void MqttClient::on_message(const std::string& topic, const std::string& payload
         std::string user_id = signaling_match[1].str();
         std::string session_id = signaling_match[2].str();
 
-        // Extract message type from payload
-        std::regex msg_type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
-        std::smatch msg_type_match;
-        std::string msg_type;
-        if (std::regex_search(payload, msg_type_match, msg_type_regex)) {
-            msg_type = msg_type_match[1].str();
+        // Find session and route message
+        auto session = find_session(user_id, session_id);
+        if (!session) {
+            std::cout << "[MQTT] No session for signaling message, ignoring" << std::endl;
+            return;
         }
 
-        std::lock_guard<std::mutex> lock(callback_mutex_);
-        if (signaling_callback_) {
-            signaling_callback_(user_id, session_id, msg_type, payload);
+        // Extract message type from payload
+        try {
+            auto json = nlohmann::json::parse(payload);
+            std::string msg_type = json.value("type", "");
+            session->on_message(msg_type, payload);
+        } catch (const nlohmann::json::exception& e) {
+            std::cerr << "[MQTT] Signaling JSON parse error: " << e.what() << std::endl;
         }
         return;
     }
@@ -423,6 +428,94 @@ std::string MqttClient::topic_signaling_from_client(const std::string& user_id, 
 std::string MqttClient::topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const {
     // v1/sessions/{serial}/{user_id}/{session_id}/signaling/from-device
     return "v1/sessions/" + serial_ + "/" + user_id + "/" + session_id + "/signaling/from-device";
+}
+
+// Stream session handlers
+void MqttClient::handle_stream_start(const std::string& cmd_id, const std::string& params) {
+    std::cout << "[MQTT] stream_start params: " << params << std::endl;
+
+    std::string user_id, session_id;
+    try {
+        auto json = nlohmann::json::parse(params);
+        user_id = json.value("user_id", "");
+        session_id = json.value("session_id", "");
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "[MQTT] stream_start JSON parse error: " << e.what() << std::endl;
+        publish_command_response(cmd_id, "error",
+            R"({"error":"invalid_json","message":")" + std::string(e.what()) + R"("})");
+        return;
+    }
+
+    if (user_id.empty() || session_id.empty()) {
+        std::cerr << "[MQTT] stream_start missing user_id or session_id" << std::endl;
+        publish_command_response(cmd_id, "error",
+            R"({"error":"missing_params","message":"user_id and session_id required"})");
+        return;
+    }
+
+    // Check if session already exists
+    if (find_session(user_id, session_id)) {
+        std::cout << "[MQTT] Session already exists for user: " << user_id << std::endl;
+        publish_command_response(cmd_id, "success");
+        return;
+    }
+
+    // Create new session
+    // Note: We need shared_from_this, but MqttClient doesn't inherit from enable_shared_from_this
+    // So we pass 'this' wrapped in a shared_ptr with a no-op deleter for now
+    // This is safe because sessions_ is owned by MqttClient and cleaned up before destruction
+    auto session = std::make_shared<StreamSession>(
+        std::shared_ptr<MqttClient>(this, [](MqttClient*){}),  // non-owning shared_ptr
+        user_id, session_id);
+
+    if (session->start()) {
+        sessions_.push_back(session);
+        publish_command_response(cmd_id, "success");
+    } else {
+        publish_command_response(cmd_id, "error", R"({"error":"session_failed"})");
+    }
+}
+
+void MqttClient::handle_stream_stop(const std::string& cmd_id, const std::string& params) {
+    std::cout << "[MQTT] stream_stop params: " << params << std::endl;
+
+    std::string user_id, session_id;
+    try {
+        auto json = nlohmann::json::parse(params);
+        user_id = json.value("user_id", "");
+        session_id = json.value("session_id", "");
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "[MQTT] stream_stop JSON parse error: " << e.what() << std::endl;
+        publish_command_response(cmd_id, "error",
+            R"({"error":"invalid_json","message":")" + std::string(e.what()) + R"("})");
+        return;
+    }
+
+    if (user_id.empty() || session_id.empty()) {
+        std::cerr << "[MQTT] stream_stop missing user_id or session_id" << std::endl;
+        publish_command_response(cmd_id, "error",
+            R"({"error":"missing_params","message":"user_id and session_id required"})");
+        return;
+    }
+
+    remove_session(user_id, session_id);
+    publish_command_response(cmd_id, "success");
+}
+
+std::shared_ptr<StreamSession> MqttClient::find_session(const std::string& user_id, const std::string& session_id) {
+    auto it = std::find_if(sessions_.begin(), sessions_.end(),
+        [&](const auto& s) { return s->user_id == user_id && s->session_id == session_id; });
+    return (it != sessions_.end()) ? *it : nullptr;
+}
+
+void MqttClient::remove_session(const std::string& user_id, const std::string& session_id) {
+    auto it = std::find_if(sessions_.begin(), sessions_.end(),
+        [&](const auto& s) { return s->user_id == user_id && s->session_id == session_id; });
+    if (it != sessions_.end()) {
+        (*it)->stop();
+        sessions_.erase(it);
+        std::cout << "[MQTT] Removed session for user: " << user_id << std::endl;
+    }
 }
 
 } // namespace backend_comm

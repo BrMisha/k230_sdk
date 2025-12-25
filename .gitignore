@@ -19,3 +19,4 @@ board/common/post_copy_rootfs/app/
 board/common/post_copy_rootfs/etc/version/
 board/common/post_copy_rootfs/lib/
 tools/tuning-tool-client/
+CLAUDE.local.md

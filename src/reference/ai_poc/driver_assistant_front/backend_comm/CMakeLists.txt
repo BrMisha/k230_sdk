@@ -22,6 +22,7 @@ set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
 # Source files
 set(SOURCES
     src/mqtt_client.cpp
+    src/stream_session.cpp
 )
 
 # Create static library
@@ -41,11 +42,12 @@ target_link_directories(backend_comm
         ${BUILDROOT_DIR}/target/usr/lib
 )
 
-# Link Paho MQTT C++ library (and its C dependency) + OpenSSL
+# Link Paho MQTT C++ library (and its C dependency) + OpenSSL + JSON
 target_link_libraries(backend_comm
     PUBLIC
         paho-mqttpp3
         paho-mqtt3as
         ssl
         crypto
+        nlohmann_json::nlohmann_json
 )

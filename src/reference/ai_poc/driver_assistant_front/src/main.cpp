@@ -466,7 +466,7 @@ int main(int argc, char *argv[]) {
 
         mqtt_client = std::make_unique<backend_comm::MqttClient>(mqtt_config);
 
-        // Set command handler
+        // Set command handler (stream_start/stream_stop handled internally by MqttClient)
         mqtt_client->set_command_callback([&](const std::string& cmd_id,
                                               const std::string& cmd_type,
                                               const std::string& params) {
@@ -475,14 +475,6 @@ int main(int argc, char *argv[]) {
             if (cmd_type == "reboot") {
                 mqtt_client->publish_command_response(cmd_id, "success");
                 system("reboot");
-            } else if (cmd_type == "stream_start") {
-                // TODO: Stop WebRTC stream
-                std::cout << "[MQTT] stream_start params: " << params << std::endl;
-                mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
-            } else if (cmd_type == "stream_stop") {
-                // TODO: Stop WebRTC stream
-                std::cout << "[MQTT] stream_stop params: " << params << std::endl;
-                mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"not_implemented"})");
             } else {
                 mqtt_client->publish_command_response(cmd_id, "error", R"({"error":"unknown_command"})");
             }

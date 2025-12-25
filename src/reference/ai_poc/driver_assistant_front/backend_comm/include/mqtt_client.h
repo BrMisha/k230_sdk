@@ -6,12 +6,15 @@
 #include <atomic>
 #include <mutex>
 #include <cstdint>
+#include <vector>
 
-// Forward declarations to avoid exposing Paho headers
+// Forward declarations
 namespace mqtt {
     class async_client;
     class connect_options;
 }
+
+class StreamSession;
 
 namespace backend_comm {
 
@@ -43,10 +46,6 @@ using CommandCallback = std::function<void(const std::string& request_id,
                                             const std::string& command,
                                             const std::string& params_json)>;
 using ConnectionCallback = std::function<void(bool connected)>;
-using SignalingCallback = std::function<void(const std::string& user_id,
-                                              const std::string& session_id,
-                                              const std::string& message_type,
-                                              const std::string& payload)>;
 
 class MqttClient {
 public:
@@ -62,10 +61,9 @@ public:
     void disconnect();
     bool is_connected() const;
 
-    // Set callbacks
+    // Set callbacks (command_callback only receives non-stream commands)
     void set_command_callback(CommandCallback callback);
     void set_connection_callback(ConnectionCallback callback);
-    void set_signaling_callback(SignalingCallback callback);
 
     // Publishing methods
     bool publish_status(bool online, const std::string& firmware,
@@ -107,6 +105,12 @@ private:
     std::string topic_signaling_from_client(const std::string& user_id, const std::string& session_id) const;
     std::string topic_signaling_from_device(const std::string& user_id, const std::string& session_id) const;
 
+    // Stream session handlers
+    void handle_stream_start(const std::string& cmd_id, const std::string& params);
+    void handle_stream_stop(const std::string& cmd_id, const std::string& params);
+    std::shared_ptr<StreamSession> find_session(const std::string& user_id, const std::string& session_id);
+    void remove_session(const std::string& user_id, const std::string& session_id);
+
     MqttConfig config_;
     std::string serial_;
 
@@ -118,7 +122,9 @@ private:
     std::mutex callback_mutex_;
     CommandCallback command_callback_;
     ConnectionCallback connection_callback_;
-    SignalingCallback signaling_callback_;
+
+    // Stream sessions (managed internally)
+    std::vector<std::shared_ptr<StreamSession>> sessions_;
 };
 
 } // namespace backend_comm

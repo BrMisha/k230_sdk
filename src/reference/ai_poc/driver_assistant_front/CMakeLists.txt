@@ -21,7 +21,12 @@ FetchContent_Declare(
     SOURCE_SUBDIR  Fusion  # Only include the Fusion library, not examples
 )
 
-FetchContent_MakeAvailable(argparse fusion)
+FetchContent_Declare(
+    json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+)
+
+FetchContent_MakeAvailable(argparse fusion json)
 
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
@@ -145,6 +150,7 @@ set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
 file(GLOB FUSION_SOURCES ${fusion_SOURCE_DIR}/Fusion/*.c)
 
 add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES} ${FUSION_SOURCES})
+target_link_libraries(${BIN} nlohmann_json::nlohmann_json)
 target_link_libraries(${BIN} -Wl,--start-group
     media_streaming
     backend_comm
