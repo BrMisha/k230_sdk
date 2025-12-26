@@ -1,6 +1,64 @@
 #include "gst_webrtc_peer.h"
 #include <iostream>
 #include <sstream>
+#include <condition_variable>
+
+// Helper struct for dispatching operations to GLib thread
+struct GLibDispatchData {
+    std::function<void()> func;
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool done = false;
+};
+
+static gboolean glib_dispatch_callback(gpointer user_data) {
+    auto* data = static_cast<GLibDispatchData*>(user_data);
+    data->func();
+    {
+        std::lock_guard<std::mutex> lock(data->mtx);
+        data->done = true;
+    }
+    data->cv.notify_one();
+    return G_SOURCE_REMOVE;
+}
+
+void GstWebRTCPeer::invoke_on_glib_thread(std::function<void()> func)
+{
+    // If called from the GLib thread, just run directly
+    if (g_main_context_is_owner(main_context_)) {
+        func();
+        return;
+    }
+
+    GLibDispatchData data;
+    data.func = std::move(func);
+
+    GSource* source = g_idle_source_new();
+    g_source_set_callback(source, glib_dispatch_callback, &data, nullptr);
+    g_source_attach(source, main_context_);
+    g_source_unref(source);
+
+    // Wait for completion
+    std::unique_lock<std::mutex> lock(data.mtx);
+    data.cv.wait(lock, [&data] { return data.done; });
+}
+
+// Helper struct for signaling loop readiness
+struct LoopReadyData {
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool ready = false;
+};
+
+static gboolean loop_ready_callback(gpointer user_data) {
+    auto* data = static_cast<LoopReadyData*>(user_data);
+    {
+        std::lock_guard<std::mutex> lock(data->mtx);
+        data->ready = true;
+    }
+    data->cv.notify_one();
+    return G_SOURCE_REMOVE;
+}
 
 GstWebRTCPeer::GstWebRTCPeer(const std::vector<IceServer>& ice_servers,
                                int video_width, int video_height)
@@ -8,15 +66,90 @@ GstWebRTCPeer::GstWebRTCPeer(const std::vector<IceServer>& ice_servers,
     , video_width_(video_width)
     , video_height_(video_height)
 {
-    setup_pipeline();
+    // Create GLib main context and loop for proper GStreamer threading
+    main_context_ = g_main_context_new();
+    main_loop_ = g_main_loop_new(main_context_, FALSE);
+
+    // Synchronization for waiting until main loop is running
+    LoopReadyData ready_data;
+
+    // Start GLib main loop in dedicated thread
+    gst_thread_ = std::thread([this, &ready_data]() {
+        g_main_context_push_thread_default(main_context_);
+
+        // Add idle source to signal when loop is running
+        GSource* ready_source = g_idle_source_new();
+        g_source_set_callback(ready_source, loop_ready_callback, &ready_data, nullptr);
+        g_source_attach(ready_source, main_context_);
+        g_source_unref(ready_source);
+
+        std::cout << "[WebRTC] GLib main loop starting..." << std::endl;
+        g_main_loop_run(main_loop_);
+        std::cout << "[WebRTC] GLib main loop stopped" << std::endl;
+        g_main_context_pop_thread_default(main_context_);
+    });
+
+    // Wait for the main loop to actually start running
+    {
+        std::unique_lock<std::mutex> lock(ready_data.mtx);
+        ready_data.cv.wait(lock, [&ready_data] { return ready_data.ready; });
+    }
+
+    // Now dispatch setup_pipeline() to the GLib thread
+    // This ensures all GStreamer elements are created in the correct thread context
+    invoke_on_glib_thread([this]() {
+        setup_pipeline();
+    });
 }
 
 GstWebRTCPeer::~GstWebRTCPeer()
 {
-    if (pipeline_) {
-        gst_element_set_state(pipeline_, GST_STATE_NULL);
-        gst_object_unref(pipeline_);
-        pipeline_ = nullptr;
+    // Set shutdown flag first to stop callbacks from running
+    shutting_down_.store(true);
+
+    // 1. Disconnect signals ON THE GLIB THREAD to ensure no callbacks are in-flight
+    //    This is critical: signals must be disconnected from the same thread context
+    if (main_loop_ && g_main_loop_is_running(main_loop_)) {
+        invoke_on_glib_thread([this]() {
+            if (webrtc_) {
+                g_signal_handlers_disconnect_by_data(webrtc_, this);
+            }
+        });
+    }
+
+    // 2. Clear all callbacks under lock to prevent any late invocations
+    {
+        std::lock_guard<std::mutex> lock(callback_mutex_);
+        on_local_description_ = nullptr;
+        on_ice_candidate_ = nullptr;
+        on_state_change_ = nullptr;
+        on_data_channel_message_ = nullptr;
+    }
+
+    // 3. Stop pipeline
+    {
+        std::lock_guard<std::recursive_mutex> lock(gst_mutex_);
+        if (pipeline_) {
+            gst_element_set_state(pipeline_, GST_STATE_NULL);
+            gst_object_unref(pipeline_);
+            pipeline_ = nullptr;
+        }
+    }
+
+    // 4. Stop GLib main loop and wait for thread
+    if (main_loop_) {
+        g_main_loop_quit(main_loop_);
+    }
+    if (gst_thread_.joinable()) {
+        gst_thread_.join();
+    }
+    if (main_loop_) {
+        g_main_loop_unref(main_loop_);
+        main_loop_ = nullptr;
+    }
+    if (main_context_) {
+        g_main_context_unref(main_context_);
+        main_context_ = nullptr;
     }
 }
 
@@ -163,137 +296,188 @@ void GstWebRTCPeer::setup_webrtc_signals()
 
 void GstWebRTCPeer::create_offer()
 {
-    if (!webrtc_) {
-        std::cerr << "[WebRTC] Cannot create offer - webrtcbin not initialized" << std::endl;
+    if (shutting_down_.load()) {
+        std::cerr << "[WebRTC] Cannot create offer - shutting down" << std::endl;
         return;
     }
 
-    std::cout << "[WebRTC] create_offer() called - setting pipeline to PLAYING" << std::endl;
-    std::cout.flush();
+    // Dispatch to GLib thread to ensure thread safety
+    invoke_on_glib_thread([this]() {
+        if (!webrtc_ || shutting_down_.load()) {
+            std::cerr << "[WebRTC] Cannot create offer - webrtcbin not initialized or shutting down" << std::endl;
+            return;
+        }
 
-    // Set pipeline to PLAYING
-    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
-    std::cout << "[WebRTC] set_state(PLAYING) returned " << ret << std::endl;
-    std::cout.flush();
+        std::cout << "[WebRTC] create_offer() called - setting pipeline to PLAYING" << std::endl;
+        std::cout.flush();
 
-    if (ret == GST_STATE_CHANGE_FAILURE) {
-        std::cerr << "[WebRTC] Failed to set pipeline to PLAYING" << std::endl;
-        return;
-    }
+        // Set pipeline to PLAYING
+        GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+        std::cout << "[WebRTC] set_state(PLAYING) returned " << ret << std::endl;
+        std::cout.flush();
 
-    // Create offer synchronously (no GLib main loop available)
-    std::cout << "[WebRTC] Creating offer..." << std::endl;
-    std::cout.flush();
+        if (ret == GST_STATE_CHANGE_FAILURE) {
+            std::cerr << "[WebRTC] Failed to set pipeline to PLAYING" << std::endl;
+            return;
+        }
 
-    GstPromise* promise = gst_promise_new();
-    g_signal_emit_by_name(webrtc_, "create-offer", NULL, promise);
+        // Create offer synchronously
+        std::cout << "[WebRTC] Creating offer..." << std::endl;
+        std::cout.flush();
 
-    // Wait for offer to be created
-    gst_promise_wait(promise);
+        GstPromise* promise = gst_promise_new();
+        g_signal_emit_by_name(webrtc_, "create-offer", NULL, promise);
 
-    const GstStructure* reply = gst_promise_get_reply(promise);
-    if (!reply) {
-        std::cerr << "[WebRTC] Failed to get promise reply" << std::endl;
+        // Wait for offer to be created
+        gst_promise_wait(promise);
+
+        const GstStructure* reply = gst_promise_get_reply(promise);
+        if (!reply) {
+            std::cerr << "[WebRTC] Failed to get promise reply" << std::endl;
+            gst_promise_unref(promise);
+            return;
+        }
+
+        GstWebRTCSessionDescription* offer = nullptr;
+        gst_structure_get(reply, "offer", GST_TYPE_WEBRTC_SESSION_DESCRIPTION, &offer, NULL);
+
+        if (!offer) {
+            std::cerr << "[WebRTC] Failed to create offer" << std::endl;
+            gst_promise_unref(promise);
+            return;
+        }
+
+        // Set local description
+        GstPromise* local_promise = gst_promise_new();
+        g_signal_emit_by_name(webrtc_, "set-local-description", offer, local_promise);
+        gst_promise_wait(local_promise);
+        gst_promise_unref(local_promise);
+
+        // Get SDP text
+        gchar* sdp_text = gst_sdp_message_as_text(offer->sdp);
+        std::string sdp_str(sdp_text);
+        g_free(sdp_text);
+
+        std::cout << "[WebRTC] Created offer with video" << std::endl;
+        std::cout.flush();
+
+        // Notify callback
+        if (on_local_description_) {
+            on_local_description_("offer", sdp_str);
+        }
+
+        gst_webrtc_session_description_free(offer);
         gst_promise_unref(promise);
-        return;
-    }
-
-    GstWebRTCSessionDescription* offer = nullptr;
-    gst_structure_get(reply, "offer", GST_TYPE_WEBRTC_SESSION_DESCRIPTION, &offer, NULL);
-
-    if (!offer) {
-        std::cerr << "[WebRTC] Failed to create offer" << std::endl;
-        gst_promise_unref(promise);
-        return;
-    }
-
-    // Set local description
-    GstPromise* local_promise = gst_promise_new();
-    g_signal_emit_by_name(webrtc_, "set-local-description", offer, local_promise);
-    gst_promise_wait(local_promise);
-    gst_promise_unref(local_promise);
-
-    // Get SDP text
-    gchar* sdp_text = gst_sdp_message_as_text(offer->sdp);
-    std::string sdp_str(sdp_text);
-    g_free(sdp_text);
-
-    std::cout << "[WebRTC] Created offer with video" << std::endl;
-    std::cout.flush();
-
-    // Notify callback
-    if (on_local_description_) {
-        on_local_description_("offer", sdp_str);
-    }
-
-    gst_webrtc_session_description_free(offer);
-    gst_promise_unref(promise);
+    });
 }
 
 void GstWebRTCPeer::set_remote_description(const std::string& type, const std::string& sdp)
 {
-    if (!webrtc_) {
-        std::cerr << "[WebRTC] Cannot set remote description - webrtcbin not initialized" << std::endl;
+    if (shutting_down_.load()) {
+        std::cerr << "[WebRTC] Cannot set remote description - shutting down" << std::endl;
         return;
     }
 
-    std::cout << "[WebRTC] Parsing SDP..." << std::endl;
-    std::cout.flush();
+    // Dispatch to GLib thread to ensure thread safety
+    invoke_on_glib_thread([this, type, sdp]() {
+        if (!webrtc_ || shutting_down_.load()) {
+            std::cerr << "[WebRTC] Cannot set remote description - webrtcbin not initialized or shutting down" << std::endl;
+            return;
+        }
 
-    GstSDPMessage* sdp_msg;
-    GstSDPResult result = gst_sdp_message_new(&sdp_msg);
-    if (result != GST_SDP_OK) {
-        std::cerr << "[WebRTC] Failed to create SDP message" << std::endl;
-        return;
-    }
+        std::cout << "[WebRTC] Parsing SDP..." << std::endl;
+        std::cout.flush();
 
-    result = gst_sdp_message_parse_buffer(
-        reinterpret_cast<const guint8*>(sdp.c_str()), sdp.size(), sdp_msg);
-    if (result != GST_SDP_OK) {
-        std::cerr << "[WebRTC] Failed to parse SDP" << std::endl;
-        gst_sdp_message_free(sdp_msg);
-        return;
-    }
+        GstSDPMessage* sdp_msg;
+        GstSDPResult result = gst_sdp_message_new(&sdp_msg);
+        if (result != GST_SDP_OK) {
+            std::cerr << "[WebRTC] Failed to create SDP message" << std::endl;
+            return;
+        }
 
-    std::cout << "[WebRTC] Creating session description..." << std::endl;
-    std::cout.flush();
+        result = gst_sdp_message_parse_buffer(
+            reinterpret_cast<const guint8*>(sdp.c_str()), sdp.size(), sdp_msg);
+        if (result != GST_SDP_OK) {
+            std::cerr << "[WebRTC] Failed to parse SDP" << std::endl;
+            gst_sdp_message_free(sdp_msg);
+            return;
+        }
 
-    GstWebRTCSDPType sdp_type = (type == "answer") ?
-        GST_WEBRTC_SDP_TYPE_ANSWER : GST_WEBRTC_SDP_TYPE_OFFER;
+        std::cout << "[WebRTC] Creating session description..." << std::endl;
+        std::cout.flush();
 
-    GstWebRTCSessionDescription* desc =
-        gst_webrtc_session_description_new(sdp_type, sdp_msg);
+        GstWebRTCSDPType sdp_type = (type == "answer") ?
+            GST_WEBRTC_SDP_TYPE_ANSWER : GST_WEBRTC_SDP_TYPE_OFFER;
 
-    std::cout << "[WebRTC] Emitting set-remote-description..." << std::endl;
-    std::cout.flush();
+        GstWebRTCSessionDescription* desc =
+            gst_webrtc_session_description_new(sdp_type, sdp_msg);
 
-    // Use synchronous wait like create_offer
-    GstPromise* promise = gst_promise_new();
-    g_signal_emit_by_name(webrtc_, "set-remote-description", desc, promise);
-    gst_promise_wait(promise);
-    gst_promise_unref(promise);
-    gst_webrtc_session_description_free(desc);
+        std::cout << "[WebRTC] Emitting set-remote-description..." << std::endl;
+        std::cout.flush();
 
-    std::cout << "[WebRTC] Set remote " << type << std::endl;
-    std::cout.flush();
+        // Use fire-and-forget approach - GStreamer will handle it internally
+        g_signal_emit_by_name(webrtc_, "set-remote-description", desc, NULL);
+
+        std::cout << "[WebRTC] Set remote " << type << " - done" << std::endl;
+        std::cout.flush();
+    });
 }
 
 void GstWebRTCPeer::add_ice_candidate(guint mlineindex, const std::string& candidate)
 {
-    if (!webrtc_) {
-        std::cerr << "[WebRTC] Cannot add ICE candidate - webrtcbin not initialized" << std::endl;
+    std::cout << "[WebRTC] add_ice_candidate called: mline=" << mlineindex << std::endl;
+    std::cout.flush();
+
+    if (shutting_down_.load()) {
+        std::cout << "[WebRTC] Skipping - shutting down" << std::endl;
         return;
     }
 
-    g_signal_emit_by_name(webrtc_, "add-ice-candidate", mlineindex, candidate.c_str());
-    std::cout << "[WebRTC] Added ICE candidate" << std::endl;
+    // Filter out problematic candidate types that may crash libnice on RISC-V
+    // Skip IPv6 candidates (contain "::")
+    if (candidate.find("::") != std::string::npos) {
+        std::cout << "[WebRTC] Skipping IPv6 candidate" << std::endl;
+        return;
+    }
+
+    // Skip TCP candidates (may have issues with libnice)
+    if (candidate.find(" tcp ") != std::string::npos) {
+        std::cout << "[WebRTC] Skipping TCP candidate" << std::endl;
+        return;
+    }
+
+    std::cout << "[WebRTC] Dispatching to GLib thread..." << std::endl;
+    std::cout.flush();
+
+    // Dispatch to GLib thread to ensure thread safety
+    invoke_on_glib_thread([this, mlineindex, candidate]() {
+        std::cout << "[WebRTC] In GLib thread, adding ICE candidate" << std::endl;
+        std::cout.flush();
+
+        if (!webrtc_ || shutting_down_.load()) {
+            std::cout << "[WebRTC] Skipping - webrtc null or shutting down" << std::endl;
+            return;
+        }
+
+        g_signal_emit_by_name(webrtc_, "add-ice-candidate", mlineindex, candidate.c_str());
+        std::cout << "[WebRTC] g_signal_emit_by_name returned" << std::endl;
+        std::cout.flush();
+    });
+
+    std::cout << "[WebRTC] add_ice_candidate returning" << std::endl;
+    std::cout.flush();
 }
 
 void GstWebRTCPeer::push_video_frame(const uint8_t* data, size_t size,
                                        uint64_t pts_us, bool is_keyframe)
 {
-    if (!appsrc_) {
-        std::cerr << "[WebRTC] Cannot push video - appsrc not initialized" << std::endl;
+    // Lock to protect appsrc_ access during potential destruction
+    std::lock_guard<std::recursive_mutex> lock(gst_mutex_);
+
+    if (!appsrc_ || shutting_down_.load()) {
+        if (!shutting_down_.load()) {
+            std::cerr << "[WebRTC] Cannot push video - appsrc not initialized" << std::endl;
+        }
         return;
     }
 
@@ -342,6 +526,12 @@ void GstWebRTCPeer::send_data(const std::string& message)
 void GstWebRTCPeer::on_negotiation_needed(GstElement* webrtc, gpointer user_data)
 {
     auto* self = static_cast<GstWebRTCPeer*>(user_data);
+
+    // Check if we're shutting down (early check - detailed check in callback)
+    if (self->shutting_down_.load()) {
+        return;
+    }
+
     std::cout << "[WebRTC] Negotiation needed - creating offer" << std::endl;
 
     GstPromise* promise = gst_promise_new_with_change_func(
@@ -352,6 +542,12 @@ void GstWebRTCPeer::on_negotiation_needed(GstElement* webrtc, gpointer user_data
 void GstWebRTCPeer::on_offer_created(GstPromise* promise, gpointer user_data)
 {
     auto* self = static_cast<GstWebRTCPeer*>(user_data);
+
+    // Check if we're shutting down
+    if (self->shutting_down_.load()) {
+        gst_promise_unref(promise);
+        return;
+    }
 
     const GstStructure* reply = gst_promise_get_reply(promise);
     GstWebRTCSessionDescription* offer = nullptr;
@@ -376,10 +572,19 @@ void GstWebRTCPeer::on_offer_created(GstPromise* promise, gpointer user_data)
 
     std::cout << "[WebRTC] Created offer" << std::endl;
 
-    // Notify callback
-    if (self->on_local_description_) {
-        self->on_local_description_("offer", sdp_str);
+    // Get callback under lock, checking shutdown state atomically
+    OnLocalDescription callback;
+    {
+        std::lock_guard<std::mutex> lock(self->callback_mutex_);
+        if (self->shutting_down_.load() || !self->on_local_description_) {
+            gst_webrtc_session_description_free(offer);
+            gst_promise_unref(promise);
+            return;
+        }
+        callback = self->on_local_description_;
     }
+
+    callback("offer", sdp_str);
 
     gst_webrtc_session_description_free(offer);
     gst_promise_unref(promise);
@@ -388,12 +593,44 @@ void GstWebRTCPeer::on_offer_created(GstPromise* promise, gpointer user_data)
 void GstWebRTCPeer::on_ice_candidate(GstElement* webrtc, guint mlineindex,
                                       gchar* candidate, gpointer user_data)
 {
-    auto* self = static_cast<GstWebRTCPeer*>(user_data);
-    std::cout << "[WebRTC] ICE candidate: " << candidate << std::endl;
+    // Copy candidate string immediately (GStreamer owns original memory)
+    std::string candidate_str(candidate ? candidate : "");
 
-    if (self->on_ice_candidate_) {
-        self->on_ice_candidate_(mlineindex, std::string(candidate));
+    auto* self = static_cast<GstWebRTCPeer*>(user_data);
+
+    // Filter outgoing candidates - don't send IPv6 or TCP to the app
+    // IPv6 and TCP candidates can cause issues with libnice on RISC-V
+    if (candidate_str.find("::") != std::string::npos ||
+        candidate_str.find("fe80:") != std::string::npos ||
+        candidate_str.find("fd79:") != std::string::npos ||
+        candidate_str.find("fec0:") != std::string::npos) {
+        std::cout << "[WebRTC] Skipping outgoing IPv6 candidate" << std::endl;
+        return;
     }
+    if (candidate_str.find(" TCP ") != std::string::npos ||
+        candidate_str.find(" tcp ") != std::string::npos) {
+        std::cout << "[WebRTC] Skipping outgoing TCP candidate" << std::endl;
+        return;
+    }
+
+    std::cout << "[WebRTC] ICE candidate: " << candidate_str << std::endl;
+    std::cout.flush();
+
+    // Get callback under lock, checking shutdown state atomically
+    OnIceCandidate callback;
+    {
+        std::lock_guard<std::mutex> lock(self->callback_mutex_);
+        if (self->shutting_down_.load() || !self->on_ice_candidate_) {
+            return;
+        }
+        callback = self->on_ice_candidate_;
+    }
+
+    std::cout << "[WebRTC] Invoking ICE callback..." << std::endl;
+    std::cout.flush();
+    callback(mlineindex, candidate_str);
+    std::cout << "[WebRTC] ICE callback returned" << std::endl;
+    std::cout.flush();
 }
 
 void GstWebRTCPeer::on_ice_connection_state_notify(GstElement* webrtc, GParamSpec* pspec,
@@ -405,31 +642,39 @@ void GstWebRTCPeer::on_ice_connection_state_notify(GstElement* webrtc, GParamSpe
     g_object_get(webrtc, "ice-connection-state", &state, NULL);
 
     const char* state_str = "unknown";
+    bool should_notify = false;
     bool connected = false;
 
     switch (state) {
         case GST_WEBRTC_ICE_CONNECTION_STATE_NEW:
             state_str = "new";
+            // Don't notify - initial state
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_CHECKING:
             state_str = "checking";
+            // Don't notify - transitional state, connection in progress
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_CONNECTED:
             state_str = "connected";
             connected = true;
+            should_notify = true;
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_COMPLETED:
             state_str = "completed";
             connected = true;
+            should_notify = true;
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_FAILED:
             state_str = "failed";
+            should_notify = true;  // Notify about failure
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_DISCONNECTED:
             state_str = "disconnected";
+            should_notify = true;  // Notify about disconnection
             break;
         case GST_WEBRTC_ICE_CONNECTION_STATE_CLOSED:
             state_str = "closed";
+            should_notify = true;  // Notify about close
             break;
     }
 
@@ -437,8 +682,19 @@ void GstWebRTCPeer::on_ice_connection_state_notify(GstElement* webrtc, GParamSpe
 
     self->connected_.store(connected);
 
-    if (self->on_state_change_) {
-        self->on_state_change_(connected);
+    // Only notify on meaningful state changes (connected/disconnected/failed/closed)
+    if (should_notify) {
+        // Get callback under lock, checking shutdown state atomically
+        OnStateChange callback;
+        {
+            std::lock_guard<std::mutex> lock(self->callback_mutex_);
+            if (self->shutting_down_.load() || !self->on_state_change_) {
+                return;
+            }
+            callback = self->on_state_change_;
+        }
+
+        callback(connected);
     }
 }
 
@@ -467,6 +723,12 @@ void GstWebRTCPeer::on_ice_gathering_state_notify(GstElement* webrtc, GParamSpec
 void GstWebRTCPeer::on_data_channel(GstElement* webrtc, GObject* channel, gpointer user_data)
 {
     auto* self = static_cast<GstWebRTCPeer*>(user_data);
+
+    // Check if we're shutting down (early check)
+    if (self->shutting_down_.load()) {
+        return;
+    }
+
     std::cout << "[WebRTC] Incoming data channel" << std::endl;
 
     // Connect signals for incoming channel
@@ -485,9 +747,18 @@ void GstWebRTCPeer::on_data_channel_message(GstWebRTCDataChannel* channel, gchar
                                              gpointer user_data)
 {
     auto* self = static_cast<GstWebRTCPeer*>(user_data);
+
     std::cout << "[WebRTC] Received: " << message << std::endl;
 
-    if (self->on_data_channel_message_) {
-        self->on_data_channel_message_(std::string(message));
+    // Get callback under lock, checking shutdown state atomically
+    OnDataChannelMessage callback;
+    {
+        std::lock_guard<std::mutex> lock(self->callback_mutex_);
+        if (self->shutting_down_.load() || !self->on_data_channel_message_) {
+            return;
+        }
+        callback = self->on_data_channel_message_;
     }
+
+    callback(std::string(message));
 }

@@ -9,6 +9,8 @@
 #include <vector>
 #include <atomic>
 #include <cstdint>
+#include <thread>
+#include <mutex>
 
 struct IceServer {
     std::vector<std::string> urls;
@@ -54,6 +56,9 @@ private:
     void setup_pipeline();
     void setup_webrtc_signals();
 
+    // Helper to invoke a function synchronously on the GLib main loop thread
+    void invoke_on_glib_thread(std::function<void()> func);
+
     // GStreamer signal handlers (static callbacks)
     static void on_negotiation_needed(GstElement* webrtc, gpointer user_data);
     static void on_ice_candidate(GstElement* webrtc, guint mlineindex,
@@ -80,6 +85,20 @@ private:
     int video_height_;
     std::atomic<bool> connected_{false};
     uint64_t frame_count_ = 0;
+
+    // GLib main loop for proper GStreamer threading
+    GMainContext* main_context_ = nullptr;
+    GMainLoop* main_loop_ = nullptr;
+    std::thread gst_thread_;
+
+    // Mutex for thread-safe GStreamer operations (recursive to allow re-entry)
+    mutable std::recursive_mutex gst_mutex_;
+
+    // Mutex for thread-safe callback invocation
+    mutable std::mutex callback_mutex_;
+
+    // Flag to indicate shutdown in progress
+    std::atomic<bool> shutting_down_{false};
 
     // Callbacks
     OnLocalDescription on_local_description_;
