@@ -101,8 +101,11 @@ include_directories(${LIVE555_ROOT}/UsageEnvironment/include)
 # libwebsockets includes
 include_directories(${LIBWEBSOCKETS_ROOT}/include)
 
-# Buildroot staging includes (OpenSSL, GLib, etc.)
+# Buildroot staging includes (OpenSSL, GLib, GStreamer, etc.)
 include_directories(${BUILDROOT_STAGING}/usr/include)
+include_directories(${BUILDROOT_STAGING}/usr/include/gstreamer-1.0)
+include_directories(${BUILDROOT_STAGING}/usr/include/glib-2.0)
+include_directories(${BUILDROOT_STAGING}/usr/lib/glib-2.0/include)
 
 # LVGL includes
 include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
@@ -167,7 +170,17 @@ target_link_libraries(${BIN} -Wl,--start-group
     websockets
     ssl
     crypto
+    gstreamer-1.0
+    gstbase-1.0
+    gstapp-1.0
+    gstwebrtc-1.0
+    gstsdp-1.0
+    gstrtp-1.0
+    gobject-2.0
+    gmodule-2.0
+    gio-2.0
     glib-2.0
+    ffi
     z
     pcre
     lvgl

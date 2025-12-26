@@ -31,6 +31,7 @@
 #include "media_streamer_rtsp.h"  // From media_streaming module
 #include "websocket_server.h"
 #include "mqtt_client.h"          // From backend_comm module
+#include <gst/gst.h>              // GStreamer initialization
 
 // LVGL includes
 extern "C" {
@@ -259,6 +260,9 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 
 int main(int argc, char *argv[]) {
     std::cout << "Built at " << __DATE__ << " " << __TIME__ << std::endl;
+
+    // Initialize GStreamer (required for WebRTC)
+    gst_init(&argc, &argv);
 
     // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;

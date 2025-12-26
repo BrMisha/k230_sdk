@@ -419,10 +419,28 @@ void MqttClient::handle_stream_start(const std::string& cmd_id, const std::strin
     std::cout << "[MQTT] stream_start params: " << params << std::endl;
 
     std::string user_id, session_id;
+    std::vector<IceServer> ice_servers;
+
     try {
         auto json = nlohmann::json::parse(params);
         user_id = json.value("user_id", "");
         session_id = json.value("session_id", "");
+
+        // Parse ICE servers
+        if (json.contains("ice_servers")) {
+            for (const auto& server : json["ice_servers"]) {
+                IceServer ice;
+                if (server.contains("urls")) {
+                    for (const auto& url : server["urls"]) {
+                        ice.urls.push_back(url.get<std::string>());
+                    }
+                }
+                ice.username = server.value("username", "");
+                ice.credential = server.value("credential", "");
+                ice_servers.push_back(ice);
+            }
+            std::cout << "[MQTT] Parsed " << ice_servers.size() << " ICE servers" << std::endl;
+        }
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[MQTT] stream_start JSON parse error: " << e.what() << std::endl;
         publish_command_response(cmd_id, "error",
@@ -444,13 +462,13 @@ void MqttClient::handle_stream_start(const std::string& cmd_id, const std::strin
         return;
     }
 
-    // Create new session
+    // Create new session with ICE servers
     // Note: We need shared_from_this, but MqttClient doesn't inherit from enable_shared_from_this
     // So we pass 'this' wrapped in a shared_ptr with a no-op deleter for now
     // This is safe because sessions_ is owned by MqttClient and cleaned up before destruction
     auto session = std::make_shared<StreamSession>(
         std::shared_ptr<MqttClient>(this, [](MqttClient*){}),  // non-owning shared_ptr
-        user_id, session_id);
+        user_id, session_id, std::move(ice_servers));
 
     if (session->start()) {
         sessions_.push_back(session);

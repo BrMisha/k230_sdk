@@ -5,18 +5,20 @@
 #include <atomic>
 #include <vector>
 #include "mqtt_client.h"
+#include "gst_webrtc_peer.h"
 
 /**
  * StreamSession - Handles streaming session over MQTT (signaling + WebRTC)
  *
  * Lifecycle:
- *   1. stream_start command received with {user_id, session_id}
+ *   1. stream_start command received with {user_id, session_id, ice_servers}
  *   2. MqttClient creates StreamSession, subscribes to signaling topic
  *   3. App sends 'watch' message
- *   4. Device sends 'offer' with SDP
+ *   4. Device creates WebRTC offer and sends via MQTT
  *   5. App sends 'answer' with SDP
- *   6. ICE candidates exchanged
- *   7. stream_stop command ends session
+ *   6. ICE candidates exchanged via MQTT
+ *   7. WebRTC connection established
+ *   8. stream_stop command ends session
  */
 class StreamSession {
 public:
@@ -26,7 +28,8 @@ public:
 
     StreamSession(std::shared_ptr<backend_comm::MqttClient> mqtt,
                   std::string user_id,
-                  std::string session_id);
+                  std::string session_id,
+                  std::vector<IceServer> ice_servers);
     ~StreamSession();
 
     // Non-copyable
@@ -76,4 +79,8 @@ private:
 
     std::shared_ptr<backend_comm::MqttClient> mqtt_;
     std::atomic<bool> active_{false};
+
+    // WebRTC
+    std::vector<IceServer> ice_servers_;
+    std::unique_ptr<GstWebRTCPeer> webrtc_peer_;
 };

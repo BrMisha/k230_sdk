@@ -1,12 +1,15 @@
 #include "stream_session.h"
 #include <iostream>
+#include <nlohmann/json.hpp>
 
 StreamSession::StreamSession(std::shared_ptr<backend_comm::MqttClient> mqtt,
                              std::string user_id,
-                             std::string session_id)
+                             std::string session_id,
+                             std::vector<IceServer> ice_servers)
     : user_id(std::move(user_id))
     , session_id(std::move(session_id))
     , mqtt_(std::move(mqtt))
+    , ice_servers_(std::move(ice_servers))
 {
 }
 
@@ -46,6 +49,9 @@ void StreamSession::stop()
 
     std::cout << "[StreamSession] Stopping - user: " << user_id
               << ", session: " << session_id << std::endl;
+
+    // Clean up WebRTC peer
+    webrtc_peer_.reset();
 
     mqtt_->unsubscribe(topic_from_client());
 
@@ -95,28 +101,87 @@ void StreamSession::on_message(const std::vector<std::string>& path_parts, const
 void StreamSession::handle_watch(const std::string& payload)
 {
     std::cout << "[StreamSession] Received 'watch' - app wants to start streaming" << std::endl;
-    std::cout << "[StreamSession] Payload: " << payload << std::endl;
 
-    // TODO: Generate SDP offer and send it
-    std::cout << "[StreamSession] TODO: Generate SDP offer and send 'offer' message" << std::endl;
+    // Create WebRTC peer if not already created
+    if (!webrtc_peer_) {
+        webrtc_peer_ = std::make_unique<GstWebRTCPeer>(ice_servers_);
+
+        // Set up callbacks
+        webrtc_peer_->set_on_local_description([this](const std::string& type, const std::string& sdp) {
+            nlohmann::json j = {{"type", type}, {"sdp", sdp}};
+            send_signaling_message("offer", j.dump());
+        });
+
+        webrtc_peer_->set_on_ice_candidate([this](guint mlineindex, const std::string& candidate) {
+            nlohmann::json j = {{"mlineindex", mlineindex}, {"candidate", candidate}};
+            send_signaling_message("ice", j.dump());
+        });
+
+        webrtc_peer_->set_on_state_change([this](bool connected) {
+            std::cout << "[StreamSession] WebRTC " << (connected ? "connected" : "disconnected") << std::endl;
+        });
+
+        webrtc_peer_->set_on_data_channel_message([this](const std::string& message) {
+            std::cout << "[StreamSession] Data channel message: " << message << std::endl;
+            // Echo back for testing
+            if (webrtc_peer_) {
+                webrtc_peer_->send_data("echo: " + message);
+            }
+        });
+    }
+
+    // Create offer (this triggers negotiation)
+    webrtc_peer_->create_offer();
 }
 
 void StreamSession::handle_answer(const std::string& payload)
 {
     std::cout << "[StreamSession] Received 'answer' - app sent SDP answer" << std::endl;
-    std::cout << "[StreamSession] Payload: " << payload << std::endl;
 
-    // TODO: Apply remote SDP answer
-    std::cout << "[StreamSession] TODO: Apply remote SDP answer" << std::endl;
+    if (!webrtc_peer_) {
+        std::cerr << "[StreamSession] No WebRTC peer - ignoring answer" << std::endl;
+        return;
+    }
+
+    try {
+        auto j = nlohmann::json::parse(payload);
+        std::string type = j.value("type", "answer");
+        std::string sdp = j.value("sdp", "");
+
+        if (sdp.empty()) {
+            std::cerr << "[StreamSession] Empty SDP in answer" << std::endl;
+            return;
+        }
+
+        webrtc_peer_->set_remote_description(type, sdp);
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "[StreamSession] Failed to parse answer: " << e.what() << std::endl;
+    }
 }
 
 void StreamSession::handle_ice(const std::string& payload)
 {
     std::cout << "[StreamSession] Received 'ice' - ICE candidate from app" << std::endl;
-    std::cout << "[StreamSession] Payload: " << payload << std::endl;
 
-    // TODO: Add remote ICE candidate
-    std::cout << "[StreamSession] TODO: Add remote ICE candidate" << std::endl;
+    if (!webrtc_peer_) {
+        std::cerr << "[StreamSession] No WebRTC peer - ignoring ICE candidate" << std::endl;
+        return;
+    }
+
+    try {
+        auto j = nlohmann::json::parse(payload);
+        guint mlineindex = j.value("mlineindex", 0u);
+        std::string candidate = j.value("candidate", "");
+
+        if (candidate.empty()) {
+            std::cout << "[StreamSession] Empty ICE candidate (end of candidates)" << std::endl;
+            return;
+        }
+
+        webrtc_peer_->add_ice_candidate(mlineindex, candidate);
+    } catch (const nlohmann::json::exception& e) {
+        std::cerr << "[StreamSession] Failed to parse ICE candidate: " << e.what() << std::endl;
+    }
 }
 
 void StreamSession::handle_stop(const std::string& payload)

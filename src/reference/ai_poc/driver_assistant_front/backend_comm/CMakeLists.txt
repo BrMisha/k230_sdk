@@ -23,6 +23,7 @@ set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
 set(SOURCES
     src/mqtt_client.cpp
     src/stream_session.cpp
+    src/gst_webrtc_peer.cpp
 )
 
 # Create static library
@@ -34,15 +35,18 @@ target_include_directories(backend_comm
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${BUILDROOT_STAGING}/usr/include
+        ${BUILDROOT_STAGING}/usr/include/gstreamer-1.0
+        ${BUILDROOT_STAGING}/usr/include/glib-2.0
+        ${BUILDROOT_STAGING}/usr/lib/glib-2.0/include
 )
 
-# Link directories for Paho MQTT
+# Link directories for Paho MQTT and GStreamer
 target_link_directories(backend_comm
     PUBLIC
         ${BUILDROOT_DIR}/target/usr/lib
 )
 
-# Link Paho MQTT C++ library (and its C dependency) + OpenSSL + JSON
+# Link Paho MQTT C++ library (and its C dependency) + OpenSSL + JSON + GStreamer
 target_link_libraries(backend_comm
     PUBLIC
         paho-mqttpp3
@@ -50,4 +54,15 @@ target_link_libraries(backend_comm
         ssl
         crypto
         nlohmann_json::nlohmann_json
+        gstreamer-1.0
+        gstbase-1.0
+        gstapp-1.0
+        gstwebrtc-1.0
+        gstsdp-1.0
+        gstrtp-1.0
+        gobject-2.0
+        gmodule-2.0
+        gio-2.0
+        glib-2.0
+        ffi
 )
