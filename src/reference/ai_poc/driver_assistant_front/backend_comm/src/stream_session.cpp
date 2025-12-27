@@ -128,6 +128,15 @@ void StreamSession::handle_watch(const std::string& payload)
         webrtc_peer_->set_on_state_change([weak_self](bool connected) {
             if (auto self = weak_self.lock()) {
                 std::cout << "[StreamSession] WebRTC " << (connected ? "connected" : "disconnected") << std::endl;
+
+                // Test: push fake video data when connected
+                if (connected && self->webrtc_peer_) {
+                    // Minimal H.265 NAL unit (VPS header - tests pipeline flow)
+                    uint8_t fake_data[] = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01,
+                                           0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00};
+                    self->webrtc_peer_->push_video_frame(fake_data, sizeof(fake_data), 0, true);
+                    std::cout << "[StreamSession] Pushed test video frame" << std::endl;
+                }
             }
         });
 
@@ -174,6 +183,7 @@ void StreamSession::handle_answer(const std::string& payload)
 void StreamSession::handle_ice(const std::string& payload)
 {
     std::cout << "[StreamSession] Received 'ice' - ICE candidate from app" << std::endl;
+    std::cout << "[StreamSession] ICE JSON: " << payload << std::endl;
 
     if (!webrtc_peer_) {
         std::cerr << "[StreamSession] No WebRTC peer - ignoring ICE candidate" << std::endl;
@@ -182,7 +192,8 @@ void StreamSession::handle_ice(const std::string& payload)
 
     try {
         auto j = nlohmann::json::parse(payload);
-        guint mlineindex = j.value("mlineindex", 0u);
+        guint mlineindex = j.value("sdpMLineIndex", 0u);
+        std::cout << "[StreamSession] payload " << payload << std::endl;
         std::string candidate = j.value("candidate", "");
 
         if (candidate.empty()) {

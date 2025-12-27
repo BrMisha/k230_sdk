@@ -452,13 +452,6 @@ void GstWebRTCPeer::add_ice_candidate(guint mlineindex, const std::string& candi
         return;
     }
 
-    // Filter out problematic candidate types that may crash libnice on RISC-V
-    // Skip IPv6 candidates (contain "::")
-    if (candidate.find("::") != std::string::npos) {
-        std::cout << "[WebRTC] Skipping IPv6 candidate" << std::endl;
-        return;
-    }
-
     // Skip TCP candidates (may have issues with libnice)
     if (candidate.find(" tcp ") != std::string::npos) {
         std::cout << "[WebRTC] Skipping TCP candidate" << std::endl;
@@ -617,15 +610,7 @@ void GstWebRTCPeer::on_ice_candidate(GstElement* webrtc, guint mlineindex,
 
     auto* self = static_cast<GstWebRTCPeer*>(user_data);
 
-    // Filter outgoing candidates - don't send IPv6 or TCP to the app
-    // IPv6 and TCP candidates can cause issues with libnice on RISC-V
-    if (candidate_str.find("::") != std::string::npos ||
-        candidate_str.find("fe80:") != std::string::npos ||
-        candidate_str.find("fd79:") != std::string::npos ||
-        candidate_str.find("fec0:") != std::string::npos) {
-        std::cout << "[WebRTC] Skipping outgoing IPv6 candidate" << std::endl;
-        return;
-    }
+    // Filter outgoing TCP candidates (may have issues)
     if (candidate_str.find(" TCP ") != std::string::npos ||
         candidate_str.find(" tcp ") != std::string::npos) {
         std::cout << "[WebRTC] Skipping outgoing TCP candidate" << std::endl;
