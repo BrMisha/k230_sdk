@@ -18,15 +18,6 @@ StreamSession::~StreamSession()
     if (active_.load()) {
         stop();
     }
-
-    // Stop publish thread
-    if (publish_thread_running_.load()) {
-        publish_thread_running_.store(false);
-        queue_cv_.notify_all();
-        if (publish_thread_.joinable()) {
-            publish_thread_.join();
-        }
-    }
 }
 
 bool StreamSession::start()
@@ -37,10 +28,6 @@ bool StreamSession::start()
 
     std::cout << "[StreamSession] Starting - user: " << user_id
               << ", session: " << session_id << std::endl;
-
-    // Start publish thread
-    publish_thread_running_.store(true);
-    publish_thread_ = std::thread(&StreamSession::publish_thread_func, this);
 
     // Subscribe to all messages from client
     std::string topic = topic_from_client();
@@ -65,15 +52,6 @@ void StreamSession::stop()
 
     // Clean up WebRTC peer first
     webrtc_peer_.reset();
-
-    // Stop publish thread
-    if (publish_thread_running_.load()) {
-        publish_thread_running_.store(false);
-        queue_cv_.notify_all();
-        if (publish_thread_.joinable()) {
-            publish_thread_.join();
-        }
-    }
 
     mqtt_->unsubscribe(topic_from_client());
 
@@ -237,16 +215,15 @@ bool StreamSession::send_message(const std::string& type, const std::string& pay
 
 bool StreamSession::send_signaling_message(const std::string& type, const std::string& payload)
 {
-    if (!active_.load() && !publish_thread_running_.load()) {
+    if (!active_.load()) {
         std::cerr << "[StreamSession] Cannot send signaling - session not active" << std::endl;
         return false;
     }
 
     std::string topic = topic_from_device("signaling/" + type);
-    std::cout << "[StreamSession] Queuing signaling: " << type << std::endl;
+    std::cout << "[StreamSession] Sending signaling: " << type << std::endl;
 
-    queue_publish(topic, payload);
-    return true;
+    return mqtt_->publish(topic, payload, 1, false);
 }
 
 std::string StreamSession::topic_from_client() const
@@ -259,49 +236,4 @@ std::string StreamSession::topic_from_device(const std::string& path) const
 {
     // v1/sessions/{serial}/{user_id}/{session_id}/from-device/{path}
     return "v1/sessions/" + mqtt_->get_serial() + "/" + user_id + "/" + session_id + "/from-device/" + path;
-}
-
-void StreamSession::queue_publish(const std::string& topic, const std::string& payload)
-{
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        publish_queue_.push({topic, payload});
-    }
-    queue_cv_.notify_one();
-}
-
-void StreamSession::publish_thread_func()
-{
-    std::cout << "[StreamSession] Publish thread started" << std::endl;
-
-    while (publish_thread_running_.load()) {
-        QueuedMessage msg;
-
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex_);
-            queue_cv_.wait(lock, [this] {
-                return !publish_queue_.empty() || !publish_thread_running_.load();
-            });
-
-            if (!publish_thread_running_.load() && publish_queue_.empty()) {
-                break;
-            }
-
-            if (!publish_queue_.empty()) {
-                msg = std::move(publish_queue_.front());
-                publish_queue_.pop();
-            } else {
-                continue;
-            }
-        }
-
-        // Publish outside the lock
-        std::cout << "[StreamSession] Publishing: " << msg.topic << std::endl;
-        if (mqtt_) {
-            mqtt_->publish(msg.topic, msg.payload, 1, false);
-            std::cout << "[StreamSession] Published successfully" << std::endl;
-        }
-    }
-
-    std::cout << "[StreamSession] Publish thread stopped" << std::endl;
 }

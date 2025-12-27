@@ -3,10 +3,6 @@
 #include <string>
 #include <memory>
 #include <atomic>
-#include <mutex>
-#include <queue>
-#include <thread>
-#include <condition_variable>
 #include <vector>
 #include "mqtt_client.h"
 #include "gst_webrtc_peer.h"
@@ -83,20 +79,6 @@ private:
 
     std::shared_ptr<backend_comm::MqttClient> mqtt_;
     std::atomic<bool> active_{false};
-
-    // Message queue for thread-safe MQTT publishing
-    struct QueuedMessage {
-        std::string topic;
-        std::string payload;
-    };
-    std::queue<QueuedMessage> publish_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
-    std::thread publish_thread_;
-    std::atomic<bool> publish_thread_running_{false};
-
-    void publish_thread_func();
-    void queue_publish(const std::string& topic, const std::string& payload);
 
     // WebRTC
     std::vector<IceServer> ice_servers_;

@@ -308,8 +308,27 @@ void GstWebRTCPeer::create_offer()
             return;
         }
 
-        std::cout << "[WebRTC] create_offer() called - setting pipeline to PLAYING" << std::endl;
+        std::cout << "[WebRTC] create_offer() called" << std::endl;
         std::cout.flush();
+
+        // Create data channel (must be before offer for it to be included in SDP)
+        if (!data_channel_) {
+            GstStructure* options = gst_structure_new("options",
+                "ordered", G_TYPE_BOOLEAN, TRUE,
+                NULL);
+            g_signal_emit_by_name(webrtc_, "create-data-channel", "data", options, &data_channel_);
+            gst_structure_free(options);
+
+            if (data_channel_) {
+                std::cout << "[WebRTC] Created outgoing data channel" << std::endl;
+                g_signal_connect(data_channel_, "on-open",
+                    G_CALLBACK(on_data_channel_open), this);
+                g_signal_connect(data_channel_, "on-message-string",
+                    G_CALLBACK(on_data_channel_message), this);
+            } else {
+                std::cerr << "[WebRTC] Failed to create data channel" << std::endl;
+            }
+        }
 
         // Set pipeline to PLAYING
         GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
@@ -358,7 +377,7 @@ void GstWebRTCPeer::create_offer()
         std::string sdp_str(sdp_text);
         g_free(sdp_text);
 
-        std::cout << "[WebRTC] Created offer with video" << std::endl;
+        std::cout << "[WebRTC] Created offer with video + data channel" << std::endl;
         std::cout.flush();
 
         // Notify callback
@@ -730,6 +749,9 @@ void GstWebRTCPeer::on_data_channel(GstElement* webrtc, GObject* channel, gpoint
     }
 
     std::cout << "[WebRTC] Incoming data channel" << std::endl;
+
+    // Store the channel so send_data() works
+    self->data_channel_ = GST_WEBRTC_DATA_CHANNEL(g_object_ref(channel));
 
     // Connect signals for incoming channel
     g_signal_connect(channel, "on-open",

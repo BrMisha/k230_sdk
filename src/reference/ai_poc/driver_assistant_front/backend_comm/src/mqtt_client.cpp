@@ -16,6 +16,7 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <nlohmann/json.hpp>
+#include <thread>
 
 // Stub for Paho MQTT C Log function (missing when PAHO_HIGH_PERFORMANCE=TRUE)
 extern "C" {
@@ -279,17 +280,22 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload,
         return false;
     }
 
-    try {
-        auto msg = mqtt::make_message(topic, payload);
-        msg->set_qos(qos);
-        msg->set_retained(retained);
-        client_->publish(msg);
-        return true;
+    // Fire-and-forget async publish to avoid GLib thread deadlock
+    // Paho MQTT's publish() blocks when called from GLib main loop thread
+    // Note: Using detached thread because std::async's returned future blocks on destruction
+    std::thread([this, topic, payload, qos, retained]() {
+        try {
+            auto msg = mqtt::make_message(topic, payload);
+            msg->set_qos(qos);
+            msg->set_retained(retained);
+            client_->publish(msg);
+            std::cout << "[MQTT] Published: " << topic << std::endl;
+        } catch (const mqtt::exception& e) {
+            std::cerr << "[MQTT] Publish failed: " << e.what() << std::endl;
+        }
+    }).detach();
 
-    } catch (const mqtt::exception& e) {
-        std::cerr << "[MQTT] Publish failed: " << e.what() << std::endl;
-        return false;
-    }
+    return true;  // Optimistically return success
 }
 
 bool MqttClient::subscribe(const std::string& topic, int qos) {
