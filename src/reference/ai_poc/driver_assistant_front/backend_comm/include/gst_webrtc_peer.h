@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <thread>
 #include <mutex>
+#include <set>
 
 struct IceServer {
     std::vector<std::string> urls;
@@ -99,6 +100,9 @@ private:
 
     // Flag to indicate shutdown in progress
     std::atomic<bool> shutting_down_{false};
+
+    // Track rejected m-lines (port=0 in SDP answer)
+    std::set<guint> rejected_mlines_;
 
     // Callbacks
     OnLocalDescription on_local_description_;

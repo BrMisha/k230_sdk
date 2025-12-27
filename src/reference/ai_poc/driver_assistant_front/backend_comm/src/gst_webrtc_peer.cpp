@@ -422,6 +422,17 @@ void GstWebRTCPeer::set_remote_description(const std::string& type, const std::s
             return;
         }
 
+        // Detect rejected m-lines (port=0) to avoid crashes when adding ICE candidates
+        rejected_mlines_.clear();
+        guint num_medias = gst_sdp_message_medias_len(sdp_msg);
+        for (guint i = 0; i < num_medias; i++) {
+            const GstSDPMedia* media = gst_sdp_message_get_media(sdp_msg, i);
+            if (gst_sdp_media_get_port(media) == 0) {
+                rejected_mlines_.insert(i);
+                std::cout << "[WebRTC] Media m-line " << i << " rejected (port=0)" << std::endl;
+            }
+        }
+
         std::cout << "[WebRTC] Creating session description..." << std::endl;
         std::cout.flush();
 
@@ -455,6 +466,12 @@ void GstWebRTCPeer::add_ice_candidate(guint mlineindex, const std::string& candi
     // Skip TCP candidates (may have issues with libnice)
     if (candidate.find(" tcp ") != std::string::npos) {
         std::cout << "[WebRTC] Skipping TCP candidate" << std::endl;
+        return;
+    }
+
+    // Skip candidates for rejected m-lines (port=0 in SDP) - prevents crash
+    if (rejected_mlines_.count(mlineindex)) {
+        std::cout << "[WebRTC] Skipping candidate for rejected m-line " << mlineindex << std::endl;
         return;
     }
 
