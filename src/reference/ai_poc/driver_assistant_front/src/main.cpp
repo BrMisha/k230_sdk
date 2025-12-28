@@ -416,7 +416,7 @@ int main(int argc, char *argv[]) {
         .u32Port = 101,
         .u32Priority = 0
     };
-/*
+
     ret = kd_ipcmsg_add_service(IPCMSG_NAME, &stConnectAtt);
     if (ret != K_SUCCESS) {
         printf("kd_ipcmsg_add_service failed: %d\n", ret);
@@ -460,7 +460,7 @@ int main(int argc, char *argv[]) {
     std::thread websocket_thread([&ws_server]() {
         ws_server.run();
     });
-*/
+
     // MQTT Client (optional - only if --mqtt is specified)
     std::unique_ptr<backend_comm::MqttClient> mqtt_client;
     if (mqtt_broker.has_value()) {
@@ -530,13 +530,35 @@ int main(int argc, char *argv[]) {
             }
         });
     }
-/*
+
+    // Test video push thread (every 3 seconds)
+    std::thread video_test_thread;
+    if (mqtt_client) {
+        video_test_thread = std::thread([&mqtt_client]() {
+            // Minimal H.265 NAL unit (VPS header - tests pipeline flow)
+            uint8_t fake_data[] = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01,
+                                   0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00};
+            uint64_t pts = 0;
+
+            /*while (!send_stop.load()) {
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                if (send_stop.load()) break;
+
+                if (mqtt_client && mqtt_client->is_connected()) {
+                    mqtt_client->push_video_to_sessions(fake_data, sizeof(fake_data), pts, true);
+                    std::cout << "[Test] Pushed fake video frame, pts=" << pts << std::endl;
+                    pts += 3000000;  // 3 seconds in microseconds
+                }
+            }*/
+        });
+    }
+
     asio::io_context io_context;
     // UDP Server
     asio::ip::udp::socket socket(io_context, asio::ip::udp::endpoint(asio::ip::udp::v4(), 5555));
     std::thread udp_receiver_thread(udp_receiver, &socket);
 
-    auto fifo_helper = std::make_shared<DatafifoHelper>(datafifo_phy_addr_reader, datafifo_phy_addr_writer, std::move(bb_dir_path), &pending_detections, &socket, &ws_server);
+    auto fifo_helper = std::make_shared<DatafifoHelper>(datafifo_phy_addr_reader, datafifo_phy_addr_writer, std::move(bb_dir_path), &pending_detections, &socket, &ws_server, mqtt_client.get());
 
     // TCP Server
     asio::ip::tcp::acceptor acceptor(io_context, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 5555));
@@ -544,7 +566,7 @@ int main(int argc, char *argv[]) {
     std::thread io_context_thread([&io_context]() {
         io_context.run();
     });
-*/
+
     if (!daemon_mode) {
         printf("Input q to exit: \n");
         while (getchar() != 'q') {
@@ -552,12 +574,12 @@ int main(int argc, char *argv[]) {
         }
 
         send_stop = true;
-/*
+
         auto pReq = kd_ipcmsg_create_message(0, MSG_CMD_APP_CLOSED, "", 1);
         auto ret = kd_ipcmsg_send_only(ipcmsg_handle, pReq);
-        kd_ipcmsg_destroy_message(pReq);*/
+        kd_ipcmsg_destroy_message(pReq);
     }
-/*
+
     socket.close();
     acceptor.close();
 
@@ -568,8 +590,11 @@ int main(int argc, char *argv[]) {
     websocket_thread.join();
     // TODO: thread dost not stop!!!
     udp_receiver_thread.join();
-*/
-    // Wait for status thread to stop
+
+    // Wait for threads to stop
+    if (video_test_thread.joinable()) {
+        video_test_thread.join();
+    }
     if (status_thread.joinable()) {
         status_thread.join();
     }
@@ -579,11 +604,11 @@ int main(int argc, char *argv[]) {
         mqtt_client->disconnect();
         mqtt_client.reset();
     }
-/*
+
     kd_ipcmsg_disconnect(ipcmsg_handle);
     kd_ipcmsg_del_service(IPCMSG_NAME);
     ipcmsg_thread.join();
-*/
+
     // Cleanup LVGL
     lvgl_thread_upd.join();
     lvgl_thread.join();

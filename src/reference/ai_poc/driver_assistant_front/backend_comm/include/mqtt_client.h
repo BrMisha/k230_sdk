@@ -83,6 +83,9 @@ public:
     bool unsubscribe(const std::string& topic);
     bool publish(const std::string& topic, const std::string& payload, int qos, bool retained = false);
 
+    // Video streaming - push to all active WebRTC sessions
+    void push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe);
+
 private:
     class CallbackHandler;
 
@@ -116,6 +119,7 @@ private:
     ConnectionCallback connection_callback_;
 
     // Stream sessions (managed internally)
+    mutable std::mutex sessions_mutex_;
     std::vector<std::shared_ptr<StreamSession>> sessions_;
 };
 

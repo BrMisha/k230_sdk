@@ -8,6 +8,7 @@
 #include "black_box.h"
 #include "media_streamer_rtsp.h"
 #include "websocket_server.h"
+#include "mqtt_client.h"
 
 using namespace driver_assistant_detector;
 
@@ -15,12 +16,14 @@ static void release(void* stream) {
 }
 
 DatafifoHelper::DatafifoHelper(uint64_t reader_phy_addr, uint64_t writer_phy_addr, std::optional<std::string> bb_dir_path,
-                               PendingDetections* pending, asio::ip::udp::socket* udp_socket, websocket_server::WebSocketServer* ws_server)
+                               PendingDetections* pending, asio::ip::udp::socket* udp_socket,
+                               websocket_server::WebSocketServer* ws_server, backend_comm::MqttClient* mqtt_client)
     : reader_handle((k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE)
     , writer_handle((k_datafifo_handle)K_DATAFIFO_INVALID_HANDLE)
     , pending(pending)
     , udp_socket(udp_socket)
     , ws_server(ws_server)
+    , mqtt_client_(mqtt_client)
     , bb_dir_path(std::move(bb_dir_path))
 {
     k_datafifo_params_s params_reader = {10, DATAFIFO_DETECTOR_BLOCK_LEN, K_TRUE, DATAFIFO_READER};
@@ -197,6 +200,9 @@ void DatafifoHelper::read_fifo_task()
                         ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
                             true);
 
+                    if (mqtt_client_)
+                        mqtt_client_->push_video_to_sessions(combined.data(), combined.size(), frame->pts, true);
+
                     if (ret == 0) {
                         recording_started = true;
                         printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
@@ -227,6 +233,8 @@ void DatafifoHelper::read_fifo_task()
                         streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts, true);
                     if (streamer_rtsp.is_ready())
                         streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts, true);
+                    if (mqtt_client_)
+                        mqtt_client_->push_video_to_sessions(combined.data(), combined.size(), frame->pts, true);
 
                     periodic_header_buffer.clear();
                 }
@@ -236,6 +244,8 @@ void DatafifoHelper::read_fifo_task()
                         streamer_file->write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
                     if (streamer_rtsp.is_ready())
                         streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
+                    if (mqtt_client_)
+                        mqtt_client_->push_video_to_sessions(frame->data, frame->data_len, frame->pts, frame->type == 2);
 
                     // Log standalone I-frames (shouldn't happen)
                     if (frame->type == 2) {

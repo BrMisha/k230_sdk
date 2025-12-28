@@ -477,7 +477,10 @@ void MqttClient::handle_stream_start(const std::string& cmd_id, const std::strin
         user_id, session_id, std::move(ice_servers));
 
     if (session->start()) {
-        sessions_.push_back(session);
+        {
+            std::lock_guard<std::mutex> lock(sessions_mutex_);
+            sessions_.push_back(session);
+        }
         publish_command_response(cmd_id, "success");
     } else {
         publish_command_response(cmd_id, "error", R"({"error":"session_failed"})");
@@ -511,18 +514,29 @@ void MqttClient::handle_stream_stop(const std::string& cmd_id, const std::string
 }
 
 std::shared_ptr<StreamSession> MqttClient::find_session(const std::string& user_id, const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
     auto it = std::find_if(sessions_.begin(), sessions_.end(),
         [&](const auto& s) { return s->user_id == user_id && s->session_id == session_id; });
     return (it != sessions_.end()) ? *it : nullptr;
 }
 
 void MqttClient::remove_session(const std::string& user_id, const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
     auto it = std::find_if(sessions_.begin(), sessions_.end(),
         [&](const auto& s) { return s->user_id == user_id && s->session_id == session_id; });
     if (it != sessions_.end()) {
         (*it)->stop();
         sessions_.erase(it);
         std::cout << "[MQTT] Removed session for user: " << user_id << std::endl;
+    }
+}
+
+void MqttClient::push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    for (auto& session : sessions_) {
+        if (session && session->is_active()) {
+            session->push_video_frame(data, size, pts_us, is_keyframe);
+        }
     }
 }
 

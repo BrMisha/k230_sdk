@@ -128,15 +128,6 @@ void StreamSession::handle_watch(const std::string& payload)
         webrtc_peer_->set_on_state_change([weak_self](bool connected) {
             if (auto self = weak_self.lock()) {
                 std::cout << "[StreamSession] WebRTC " << (connected ? "connected" : "disconnected") << std::endl;
-
-                // Test: push fake video data when connected
-                if (connected && self->webrtc_peer_) {
-                    // Minimal H.265 NAL unit (VPS header - tests pipeline flow)
-                    uint8_t fake_data[] = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01,
-                                           0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00};
-                    self->webrtc_peer_->push_video_frame(fake_data, sizeof(fake_data), 0, true);
-                    std::cout << "[StreamSession] Pushed test video frame" << std::endl;
-                }
             }
         });
 
@@ -247,4 +238,25 @@ std::string StreamSession::topic_from_device(const std::string& path) const
 {
     // v1/sessions/{serial}/{user_id}/{session_id}/from-device/{path}
     return "v1/sessions/" + mqtt_->get_serial() + "/" + user_id + "/" + session_id + "/from-device/" + path;
+}
+
+void StreamSession::push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe)
+{
+    if (!webrtc_peer_ || !webrtc_peer_->is_connected()) {
+        return;
+    }
+
+    // h265parse needs VPS/SPS/PPS before it can parse P-frames
+    // Wait for first keyframe (which includes header) before pushing any frames
+    if (waiting_for_keyframe_.load()) {
+        if (!is_keyframe) {
+            // Skip P-frames until we get a keyframe
+            return;
+        }
+        // Got keyframe - stop waiting
+        waiting_for_keyframe_.store(false);
+        std::cout << "[StreamSession] First keyframe received, starting video push" << std::endl;
+    }
+
+    webrtc_peer_->push_video_frame(data, size, pts_us, is_keyframe);
 }

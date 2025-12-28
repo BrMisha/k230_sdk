@@ -104,6 +104,8 @@ GstWebRTCPeer::GstWebRTCPeer(const std::vector<IceServer>& ice_servers,
 
 GstWebRTCPeer::~GstWebRTCPeer()
 {
+    std::cout << "[WebRTC] Destructor starting..." << std::endl;
+
     // Set shutdown flag first to stop callbacks from running
     shutting_down_.store(true);
 
@@ -111,6 +113,10 @@ GstWebRTCPeer::~GstWebRTCPeer()
     //    This is critical: signals must be disconnected from the same thread context
     if (main_loop_ && g_main_loop_is_running(main_loop_)) {
         invoke_on_glib_thread([this]() {
+            // Disconnect data channel signals first
+            if (data_channel_) {
+                g_signal_handlers_disconnect_by_data(G_OBJECT(data_channel_), this);
+            }
             if (webrtc_) {
                 g_signal_handlers_disconnect_by_data(webrtc_, this);
             }
@@ -126,14 +132,27 @@ GstWebRTCPeer::~GstWebRTCPeer()
         on_data_channel_message_ = nullptr;
     }
 
-    // 3. Stop pipeline
+    // 3. Stop pipeline and clean up GStreamer objects
     {
         std::lock_guard<std::recursive_mutex> lock(gst_mutex_);
+
+        // Unref data channel (was ref'd in on_data_channel or create_offer)
+        if (data_channel_) {
+            g_object_unref(data_channel_);
+            data_channel_ = nullptr;
+            std::cout << "[WebRTC] Data channel unreferenced" << std::endl;
+        }
+
         if (pipeline_) {
             gst_element_set_state(pipeline_, GST_STATE_NULL);
             gst_object_unref(pipeline_);
             pipeline_ = nullptr;
+            std::cout << "[WebRTC] Pipeline destroyed" << std::endl;
         }
+
+        // Clear element pointers (they're owned by pipeline, already freed)
+        webrtc_ = nullptr;
+        appsrc_ = nullptr;
     }
 
     // 4. Stop GLib main loop and wait for thread
@@ -151,6 +170,8 @@ GstWebRTCPeer::~GstWebRTCPeer()
         g_main_context_unref(main_context_);
         main_context_ = nullptr;
     }
+
+    std::cout << "[WebRTC] Destructor complete" << std::endl;
 }
 
 void GstWebRTCPeer::setup_pipeline()
@@ -165,23 +186,39 @@ void GstWebRTCPeer::setup_pipeline()
         return;
     }
 
-    // Create elements: appsrc -> h265parse -> rtph265pay -> webrtcbin
+    // Create elements: appsrc -> h265parse -> queue -> rtph265pay -> webrtcbin
     appsrc_ = gst_element_factory_make("appsrc", "video-source");
     GstElement* h265parse = gst_element_factory_make("h265parse", "h265-parse");
+    GstElement* queue = gst_element_factory_make("queue", "video-queue");
     GstElement* rtppay = gst_element_factory_make("rtph265pay", "rtp-pay");
     webrtc_ = gst_element_factory_make("webrtcbin", "webrtc");
 
-    if (!appsrc_ || !h265parse || !rtppay || !webrtc_) {
+    if (!appsrc_ || !h265parse || !queue || !rtppay || !webrtc_) {
         std::cerr << "[WebRTC] Failed to create elements:" << std::endl;
         std::cerr << "  appsrc: " << (appsrc_ ? "OK" : "FAILED") << std::endl;
         std::cerr << "  h265parse: " << (h265parse ? "OK" : "FAILED") << std::endl;
+        std::cerr << "  queue: " << (queue ? "OK" : "FAILED") << std::endl;
         std::cerr << "  rtph265pay: " << (rtppay ? "OK" : "FAILED") << std::endl;
         std::cerr << "  webrtcbin: " << (webrtc_ ? "OK" : "FAILED") << std::endl;
+        // Clean up any successfully created elements (not yet added to pipeline)
+        if (appsrc_) { gst_object_unref(appsrc_); appsrc_ = nullptr; }
+        if (h265parse) gst_object_unref(h265parse);
+        if (queue) gst_object_unref(queue);
+        if (rtppay) gst_object_unref(rtppay);
+        if (webrtc_) { gst_object_unref(webrtc_); webrtc_ = nullptr; }
         if (pipeline_) gst_object_unref(pipeline_);
         pipeline_ = nullptr;
         return;
     }
     std::cout << "[WebRTC] All elements created successfully" << std::endl;
+
+    // Configure queue: leaky=downstream drops old buffers when full
+    g_object_set(G_OBJECT(queue),
+        "max-size-buffers", 3,      // Max 3 frames in queue
+        "max-size-bytes", 0,        // No byte limit
+        "max-size-time", (guint64)0, // No time limit
+        "leaky", 2,                 // 2 = downstream (drop old buffers)
+        NULL);
 
     // Configure appsrc for H.265 byte-stream
     GstCaps* caps = gst_caps_new_simple("video/x-h265",
@@ -195,6 +232,8 @@ void GstWebRTCPeer::setup_pipeline()
         "format", GST_FORMAT_TIME,
         "is-live", TRUE,
         "do-timestamp", FALSE,
+        "block", FALSE,                       // Don't block when queue is full
+        "max-bytes", (guint64)(1024 * 1024),  // 1MB max buffer - drop old when full
         NULL);
     gst_caps_unref(caps);
 
@@ -218,11 +257,10 @@ void GstWebRTCPeer::setup_pipeline()
             } else if (url.find("turn:") == 0) {
                 std::string turn_url = url;
                 if (!server.username.empty() && !server.credential.empty()) {
-                    size_t pos = url.find("turn:");
-                    if (pos != std::string::npos) {
-                        turn_url = "turn://" + server.username + ":" +
-                                   server.credential + "@" + url.substr(5);
-                    }
+                    // Handle both turn:// and turn: formats
+                    size_t host_start = (url.find("turn://") == 0) ? 7 : 5;
+                    turn_url = "turn://" + server.username + ":" +
+                               server.credential + "@" + url.substr(host_start);
                 }
                 g_object_set(G_OBJECT(webrtc_), "turn-server", turn_url.c_str(), NULL);
                 std::cout << "[WebRTC] Set TURN server: " << url << std::endl;
@@ -231,11 +269,11 @@ void GstWebRTCPeer::setup_pipeline()
     }
 
     // Add elements to pipeline
-    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, h265parse, rtppay, webrtc_, NULL);
+    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, h265parse, queue, rtppay, webrtc_, NULL);
 
-    // Link appsrc -> h265parse -> rtph265pay
-    if (!gst_element_link_many(appsrc_, h265parse, rtppay, NULL)) {
-        std::cerr << "[WebRTC] Failed to link appsrc -> h265parse -> rtppay" << std::endl;
+    // Link appsrc -> h265parse -> queue -> rtph265pay
+    if (!gst_element_link_many(appsrc_, h265parse, queue, rtppay, NULL)) {
+        std::cerr << "[WebRTC] Failed to link appsrc -> h265parse -> queue -> rtppay" << std::endl;
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
         return;
@@ -534,7 +572,7 @@ void GstWebRTCPeer::push_video_frame(const uint8_t* data, size_t size,
     }
 
     frame_count_++;
-    if (frame_count_ % 100 == 0) {
+    if (frame_count_ % 300 == 0) {  // Log every 10 seconds at 30fps
         std::cout << "[WebRTC] Pushed " << frame_count_ << " frames" << std::endl;
     }
 }

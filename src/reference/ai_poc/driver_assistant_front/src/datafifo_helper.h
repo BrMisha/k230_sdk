@@ -15,6 +15,7 @@ extern "C" {
 #include "../../driver_assistant_detector/common_ipc.h"
 
 namespace websocket_server { class WebSocketServer; }
+namespace backend_comm { class MqttClient; }
 
 class DatafifoHelper {
 public:
@@ -42,7 +43,9 @@ public:
     };
 
     DatafifoHelper(uint64_t reader_phy_addr, uint64_t writer_phy_addr, std::optional<std::string> bb_dir_path,
-                   PendingDetections* pending, asio::ip::udp::socket* udp_socket, websocket_server::WebSocketServer* ws_server = nullptr);
+                   PendingDetections* pending, asio::ip::udp::socket* udp_socket,
+                   websocket_server::WebSocketServer* ws_server = nullptr,
+                   backend_comm::MqttClient* mqtt_client = nullptr);
     ~DatafifoHelper();
 
     DatafifoHelper(const DatafifoHelper&) = delete;
@@ -63,6 +66,7 @@ private:
     PendingDetections* pending;
     asio::ip::udp::socket* udp_socket;
     websocket_server::WebSocketServer* ws_server;
+    backend_comm::MqttClient* mqtt_client_;
 
     void read_fifo_task();
 };
