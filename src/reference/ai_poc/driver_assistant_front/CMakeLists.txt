@@ -185,6 +185,7 @@ target_link_libraries(${BIN} -Wl,--start-group
     pcre
     lvgl
     argparse
+    atomic
     m
     -Wl,--end-group)
 

@@ -201,7 +201,9 @@ void StreamSession::handle_ice(const std::string& payload)
 void StreamSession::handle_stop(const std::string& payload)
 {
     std::cout << "[StreamSession] Received 'stop' - app wants to stop streaming" << std::endl;
-    stop();
+    // Remove session from MqttClient (this also calls stop())
+    // Note: mqtt_ holds a non-owning shared_ptr, so this is safe
+    mqtt_->remove_session(user_id, session_id);
 }
 
 bool StreamSession::send_message(const std::string& type, const std::string& payload)
@@ -240,23 +242,11 @@ std::string StreamSession::topic_from_device(const std::string& path) const
     return "v1/sessions/" + mqtt_->get_serial() + "/" + user_id + "/" + session_id + "/from-device/" + path;
 }
 
-void StreamSession::push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe)
+void StreamSession::push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, uint8_t type)
 {
     if (!webrtc_peer_ || !webrtc_peer_->is_connected()) {
         return;
     }
 
-    // h265parse needs VPS/SPS/PPS before it can parse P-frames
-    // Wait for first keyframe (which includes header) before pushing any frames
-    if (waiting_for_keyframe_.load()) {
-        if (!is_keyframe) {
-            // Skip P-frames until we get a keyframe
-            return;
-        }
-        // Got keyframe - stop waiting
-        waiting_for_keyframe_.store(false);
-        std::cout << "[StreamSession] First keyframe received, starting video push" << std::endl;
-    }
-
-    webrtc_peer_->push_video_frame(data, size, pts_us, is_keyframe);
+    webrtc_peer_->send_video_frame(data, size, pts_us, type);
 }

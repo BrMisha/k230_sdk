@@ -1,6 +1,7 @@
 #include "gst_webrtc_peer.h"
 #include <iostream>
 #include <sstream>
+#include <cstring>
 #include <condition_variable>
 
 // Helper struct for dispatching operations to GLib thread
@@ -60,11 +61,8 @@ static gboolean loop_ready_callback(gpointer user_data) {
     return G_SOURCE_REMOVE;
 }
 
-GstWebRTCPeer::GstWebRTCPeer(const std::vector<IceServer>& ice_servers,
-                               int video_width, int video_height)
+GstWebRTCPeer::GstWebRTCPeer(const std::vector<IceServer>& ice_servers)
     : ice_servers_(ice_servers)
-    , video_width_(video_width)
-    , video_height_(video_height)
 {
     // Create GLib main context and loop for proper GStreamer threading
     main_context_ = g_main_context_new();
@@ -152,7 +150,6 @@ GstWebRTCPeer::~GstWebRTCPeer()
 
         // Clear element pointers (they're owned by pipeline, already freed)
         webrtc_ = nullptr;
-        appsrc_ = nullptr;
     }
 
     // 4. Stop GLib main loop and wait for thread
@@ -179,69 +176,21 @@ void GstWebRTCPeer::setup_pipeline()
     std::cout << "[WebRTC] setup_pipeline() starting..." << std::endl;
     std::cout.flush();
 
-    // Create pipeline
+    // Create pipeline with just webrtcbin (data channel only, no video RTP)
     pipeline_ = gst_pipeline_new("webrtc-pipeline");
     if (!pipeline_) {
         std::cerr << "[WebRTC] Failed to create pipeline" << std::endl;
         return;
     }
 
-    // Create elements: appsrc -> h265parse -> queue -> rtph265pay -> webrtcbin
-    appsrc_ = gst_element_factory_make("appsrc", "video-source");
-    GstElement* h265parse = gst_element_factory_make("h265parse", "h265-parse");
-    GstElement* queue = gst_element_factory_make("queue", "video-queue");
-    GstElement* rtppay = gst_element_factory_make("rtph265pay", "rtp-pay");
     webrtc_ = gst_element_factory_make("webrtcbin", "webrtc");
-
-    if (!appsrc_ || !h265parse || !queue || !rtppay || !webrtc_) {
-        std::cerr << "[WebRTC] Failed to create elements:" << std::endl;
-        std::cerr << "  appsrc: " << (appsrc_ ? "OK" : "FAILED") << std::endl;
-        std::cerr << "  h265parse: " << (h265parse ? "OK" : "FAILED") << std::endl;
-        std::cerr << "  queue: " << (queue ? "OK" : "FAILED") << std::endl;
-        std::cerr << "  rtph265pay: " << (rtppay ? "OK" : "FAILED") << std::endl;
-        std::cerr << "  webrtcbin: " << (webrtc_ ? "OK" : "FAILED") << std::endl;
-        // Clean up any successfully created elements (not yet added to pipeline)
-        if (appsrc_) { gst_object_unref(appsrc_); appsrc_ = nullptr; }
-        if (h265parse) gst_object_unref(h265parse);
-        if (queue) gst_object_unref(queue);
-        if (rtppay) gst_object_unref(rtppay);
-        if (webrtc_) { gst_object_unref(webrtc_); webrtc_ = nullptr; }
-        if (pipeline_) gst_object_unref(pipeline_);
+    if (!webrtc_) {
+        std::cerr << "[WebRTC] Failed to create webrtcbin" << std::endl;
+        gst_object_unref(pipeline_);
         pipeline_ = nullptr;
         return;
     }
-    std::cout << "[WebRTC] All elements created successfully" << std::endl;
-
-    // Configure queue: leaky=downstream drops old buffers when full
-    g_object_set(G_OBJECT(queue),
-        "max-size-buffers", 3,      // Max 3 frames in queue
-        "max-size-bytes", 0,        // No byte limit
-        "max-size-time", (guint64)0, // No time limit
-        "leaky", 2,                 // 2 = downstream (drop old buffers)
-        NULL);
-
-    // Configure appsrc for H.265 byte-stream
-    GstCaps* caps = gst_caps_new_simple("video/x-h265",
-        "stream-format", G_TYPE_STRING, "byte-stream",
-        "alignment", G_TYPE_STRING, "au",
-        "width", G_TYPE_INT, video_width_,
-        "height", G_TYPE_INT, video_height_,
-        NULL);
-    g_object_set(G_OBJECT(appsrc_),
-        "caps", caps,
-        "format", GST_FORMAT_TIME,
-        "is-live", TRUE,
-        "do-timestamp", FALSE,
-        "block", FALSE,                       // Don't block when queue is full
-        "max-bytes", (guint64)(1024 * 1024),  // 1MB max buffer - drop old when full
-        NULL);
-    gst_caps_unref(caps);
-
-    // Configure RTP payloader
-    g_object_set(G_OBJECT(rtppay),
-        "config-interval", 1,  // Send SPS/PPS with every IDR
-        "pt", 96,              // Payload type
-        NULL);
+    std::cout << "[WebRTC] webrtcbin created successfully" << std::endl;
 
     // Configure webrtcbin
     g_object_set(G_OBJECT(webrtc_),
@@ -268,27 +217,8 @@ void GstWebRTCPeer::setup_pipeline()
         }
     }
 
-    // Add elements to pipeline
-    gst_bin_add_many(GST_BIN(pipeline_), appsrc_, h265parse, queue, rtppay, webrtc_, NULL);
-
-    // Link appsrc -> h265parse -> queue -> rtph265pay
-    if (!gst_element_link_many(appsrc_, h265parse, queue, rtppay, NULL)) {
-        std::cerr << "[WebRTC] Failed to link appsrc -> h265parse -> queue -> rtppay" << std::endl;
-        gst_object_unref(pipeline_);
-        pipeline_ = nullptr;
-        return;
-    }
-
-    // Get RTP pad from rtppay and link to webrtcbin
-    GstPad* rtp_src_pad = gst_element_get_static_pad(rtppay, "src");
-    GstPad* webrtc_sink_pad = gst_element_get_request_pad(webrtc_, "sink_%u");
-    if (gst_pad_link(rtp_src_pad, webrtc_sink_pad) != GST_PAD_LINK_OK) {
-        std::cerr << "[WebRTC] Failed to link rtppay to webrtcbin" << std::endl;
-    } else {
-        std::cout << "[WebRTC] Linked video pipeline to webrtcbin" << std::endl;
-    }
-    gst_object_unref(rtp_src_pad);
-    gst_object_unref(webrtc_sink_pad);
+    // Add webrtcbin to pipeline
+    gst_bin_add(GST_BIN(pipeline_), webrtc_);
 
     setup_webrtc_signals();
 
@@ -343,6 +273,12 @@ void GstWebRTCPeer::create_offer()
     invoke_on_glib_thread([this]() {
         if (!webrtc_ || shutting_down_.load()) {
             std::cerr << "[WebRTC] Cannot create offer - webrtcbin not initialized or shutting down" << std::endl;
+            return;
+        }
+
+        // Prevent duplicate offers (set flag early to prevent on_negotiation_needed race)
+        if (offer_sent_.exchange(true)) {
+            std::cout << "[WebRTC] Offer already sent, skipping" << std::endl;
             return;
         }
 
@@ -415,7 +351,7 @@ void GstWebRTCPeer::create_offer()
         std::string sdp_str(sdp_text);
         g_free(sdp_text);
 
-        std::cout << "[WebRTC] Created offer with video + data channel" << std::endl;
+        std::cout << "[WebRTC] Created offer with data channel" << std::endl;
         std::cout.flush();
 
         // Notify callback
@@ -483,8 +419,11 @@ void GstWebRTCPeer::set_remote_description(const std::string& type, const std::s
         std::cout << "[WebRTC] Emitting set-remote-description..." << std::endl;
         std::cout.flush();
 
-        // Use fire-and-forget approach - GStreamer will handle it internally
+        // Set remote description (GStreamer copies the data internally)
         g_signal_emit_by_name(webrtc_, "set-remote-description", desc, NULL);
+
+        // Free the description - GStreamer has copied what it needs
+        gst_webrtc_session_description_free(desc);
 
         std::cout << "[WebRTC] Set remote " << type << " - done" << std::endl;
         std::cout.flush();
@@ -535,46 +474,115 @@ void GstWebRTCPeer::add_ice_candidate(guint mlineindex, const std::string& candi
     std::cout.flush();
 }
 
-void GstWebRTCPeer::push_video_frame(const uint8_t* data, size_t size,
-                                       uint64_t pts_us, bool is_keyframe)
+void GstWebRTCPeer::send_video_frame(const uint8_t* data, size_t size,
+                                       uint64_t pts_us, uint8_t type)
 {
-    // Lock to protect appsrc_ access during potential destruction
-    std::lock_guard<std::recursive_mutex> lock(gst_mutex_);
-
-    if (!appsrc_ || shutting_down_.load()) {
-        if (!shutting_down_.load()) {
-            std::cerr << "[WebRTC] Cannot push video - appsrc not initialized" << std::endl;
-        }
+    if (!data_channel_ || shutting_down_.load()) {
         return;
     }
 
-    // Create buffer with copy of data
-    GstBuffer* buffer = gst_buffer_new_allocate(NULL, size, NULL);
-    GstMapInfo map;
-    if (gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
-        memcpy(map.data, data, size);
-        gst_buffer_unmap(buffer, &map);
+    // Flow control: check buffered amount to prevent unbounded queue growth
+    // If too much data is queued, skip this frame to prevent memory leak
+    guint64 buffered = 0;
+    g_object_get(data_channel_, "buffered-amount", &buffered, nullptr);
+
+    // Max 2MB buffered (about 1 second of video at 60KB/frame @ 30fps)
+    constexpr guint64 MAX_BUFFERED = 2 * 1024 * 1024;
+    if (buffered > MAX_BUFFERED) {
+        // Log occasionally to avoid spam
+        if (frame_count_ % 30 == 0) {
+            std::cerr << "[WebRTC] Dropping frame - buffer full (" << buffered << " bytes)" << std::endl;
+        }
+        frame_count_++;
+        return;
     }
 
-    // Set timestamps (convert microseconds to nanoseconds)
-    GST_BUFFER_PTS(buffer) = pts_us * 1000;
-    GST_BUFFER_DTS(buffer) = pts_us * 1000;
+    // Chunking protocol for WebRTC data channel (16KB limit)
+    // Chunk format: [4B frame_id][2B chunk_idx][2B total_chunks][payload]
+    // First chunk payload: [8B pts][4B len][1B type][video_data...]
+    // Subsequent chunks: [video_data...]
 
-    // Mark keyframes
-    if (!is_keyframe) {
-        GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-    }
+    const size_t CHUNK_HEADER_SIZE = 8;      // frame_id(4) + chunk_idx(2) + total_chunks(2)
+    const size_t FRAME_HEADER_SIZE = 13;     // pts(8) + len(4) + type(1)
+    const size_t MAX_CHUNK_SIZE = 15000;     // Safe limit below 16KB
+    const size_t MAX_PAYLOAD = MAX_CHUNK_SIZE - CHUNK_HEADER_SIZE;
 
-    // Push buffer to appsrc
-    GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(appsrc_), buffer);
-    if (ret != GST_FLOW_OK) {
-        std::cerr << "[WebRTC] Failed to push buffer: " << ret << std::endl;
+    // Total payload = frame header + video data
+    const size_t total_payload = FRAME_HEADER_SIZE + size;
+
+    // Calculate number of chunks needed
+    uint16_t total_chunks = static_cast<uint16_t>((total_payload + MAX_PAYLOAD - 1) / MAX_PAYLOAD);
+    uint32_t frame_id = static_cast<uint32_t>(frame_count_);
+
+    // Build frame header once
+    uint8_t frame_header[FRAME_HEADER_SIZE];
+    memcpy(frame_header, &pts_us, 8);          // PTS (8 bytes, little-endian)
+    uint32_t data_len = static_cast<uint32_t>(size);
+    memcpy(frame_header + 8, &data_len, 4);    // Data length (4 bytes)
+    frame_header[12] = type;                    // Type (1 byte)
+
+    size_t payload_offset = 0;  // Offset into logical payload (frame_header + video_data)
+
+    for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {
+        size_t remaining = total_payload - payload_offset;
+        size_t chunk_payload_size = (remaining > MAX_PAYLOAD) ? MAX_PAYLOAD : remaining;
+        size_t chunk_size = CHUNK_HEADER_SIZE + chunk_payload_size;
+
+        std::vector<uint8_t> chunk(chunk_size);
+        uint8_t* ptr = chunk.data();
+
+        // Chunk header
+        memcpy(ptr, &frame_id, 4);
+        ptr += 4;
+        memcpy(ptr, &chunk_idx, 2);
+        ptr += 2;
+        memcpy(ptr, &total_chunks, 2);
+        ptr += 2;
+
+        // Chunk payload (may span frame_header and video_data)
+        size_t written = 0;
+        while (written < chunk_payload_size) {
+            if (payload_offset < FRAME_HEADER_SIZE) {
+                // Copy from frame header
+                size_t from_header = std::min(FRAME_HEADER_SIZE - payload_offset,
+                                               chunk_payload_size - written);
+                memcpy(ptr, frame_header + payload_offset, from_header);
+                ptr += from_header;
+                payload_offset += from_header;
+                written += from_header;
+            } else {
+                // Copy from video data
+                size_t video_offset = payload_offset - FRAME_HEADER_SIZE;
+                size_t from_video = chunk_payload_size - written;
+                memcpy(ptr, data + video_offset, from_video);
+                payload_offset += from_video;
+                written += from_video;
+            }
+        }
+
+        // Send chunk
+        GBytes* bytes = g_bytes_new(chunk.data(), chunk_size);
+        gst_webrtc_data_channel_send_data(data_channel_, bytes);
+        g_bytes_unref(bytes);
     }
 
     frame_count_++;
     if (frame_count_ % 300 == 0) {  // Log every 10 seconds at 30fps
-        std::cout << "[WebRTC] Pushed " << frame_count_ << " frames" << std::endl;
+        std::cout << "[WebRTC] Sent " << frame_count_ << " frames (" << total_chunks
+                  << " chunks/frame) via data channel" << std::endl;
     }
+}
+
+void GstWebRTCPeer::send_binary(const uint8_t* data, size_t size)
+{
+    if (!data_channel_ || shutting_down_.load()) {
+        std::cerr << "[WebRTC] Cannot send binary - no data channel" << std::endl;
+        return;
+    }
+
+    GBytes* bytes = g_bytes_new(data, size);
+    gst_webrtc_data_channel_send_data(data_channel_, bytes);
+    g_bytes_unref(bytes);
 }
 
 void GstWebRTCPeer::send_data(const std::string& message)
@@ -596,6 +604,12 @@ void GstWebRTCPeer::on_negotiation_needed(GstElement* webrtc, gpointer user_data
 
     // Check if we're shutting down (early check - detailed check in callback)
     if (self->shutting_down_.load()) {
+        return;
+    }
+
+    // Prevent duplicate offers - create_offer() already handles this
+    if (self->offer_sent_.load()) {
+        std::cout << "[WebRTC] Negotiation needed but offer already sent, ignoring" << std::endl;
         return;
     }
 
@@ -802,7 +816,12 @@ void GstWebRTCPeer::on_data_channel(GstElement* webrtc, GObject* channel, gpoint
 
 void GstWebRTCPeer::on_data_channel_open(GstWebRTCDataChannel* channel, gpointer user_data)
 {
+    auto* self = static_cast<GstWebRTCPeer*>(user_data);
     std::cout << "[WebRTC] Data channel opened" << std::endl;
+
+    // Data channel opening means connection is established - set connected flag
+    // This is more reliable than waiting for ICE state callback
+    self->connected_.store(true);
 }
 
 void GstWebRTCPeer::on_data_channel_message(GstWebRTCDataChannel* channel, gchar* message,

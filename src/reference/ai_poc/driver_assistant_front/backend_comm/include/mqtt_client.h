@@ -84,7 +84,11 @@ public:
     bool publish(const std::string& topic, const std::string& payload, int qos, bool retained = false);
 
     // Video streaming - push to all active WebRTC sessions
-    void push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe);
+    // type: opaque byte (e.g., 0=P-frame, 1=keyframe, 2=header)
+    void push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, uint8_t type);
+
+    // Remove a session (can be called by StreamSession when client sends stop)
+    void remove_session(const std::string& user_id, const std::string& session_id);
 
 private:
     class CallbackHandler;
@@ -104,7 +108,6 @@ private:
     void handle_stream_start(const std::string& cmd_id, const std::string& params);
     void handle_stream_stop(const std::string& cmd_id, const std::string& params);
     std::shared_ptr<StreamSession> find_session(const std::string& user_id, const std::string& session_id);
-    void remove_session(const std::string& user_id, const std::string& session_id);
 
     MqttConfig config_;
     std::string serial_;

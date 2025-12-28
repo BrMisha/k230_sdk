@@ -61,9 +61,10 @@ public:
     bool is_active() const { return active_.load(); }
 
     /**
-     * Push video frame to WebRTC peer (if connected)
+     * Push video frame to WebRTC peer via data channel (if connected)
+     * type: opaque byte passed through to receiver (e.g., keyframe/P-frame/header)
      */
-    void push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe);
+    void push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, uint8_t type);
 
 private:
     // Message handlers
@@ -88,8 +89,4 @@ private:
     // WebRTC
     std::vector<IceServer> ice_servers_;
     std::unique_ptr<GstWebRTCPeer> webrtc_peer_;
-
-    // Wait for keyframe before pushing any frames to WebRTC
-    // h265parse needs VPS/SPS/PPS before it can parse P-frames
-    std::atomic<bool> waiting_for_keyframe_{true};
 };

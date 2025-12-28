@@ -151,6 +151,10 @@ void DatafifoHelper::read_fifo_task()
 
             auto frame = reinterpret_cast<DataFifoFrame_t*>(pBuf);
 
+            // Push raw frame to WebRTC sessions immediately - Android will parse H.265 on its own
+            if (mqtt_client_)
+                mqtt_client_->push_video_to_sessions(frame->data, frame->data_len, frame->pts, frame->type);
+
             /*uint64_t microseconds = pts;
             uint64_t milliseconds = microseconds / 1000;
             uint64_t seconds = milliseconds / 1000;
@@ -200,9 +204,6 @@ void DatafifoHelper::read_fifo_task()
                         ret = streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts,
                             true);
 
-                    if (mqtt_client_)
-                        mqtt_client_->push_video_to_sessions(combined.data(), combined.size(), frame->pts, true);
-
                     if (ret == 0) {
                         recording_started = true;
                         printf("First frame written (header+IDR), total size=%zu bytes, recording started\n",
@@ -233,8 +234,6 @@ void DatafifoHelper::read_fifo_task()
                         streamer_file->write_video_frame(combined.data(), combined.size(), frame->pts, true);
                     if (streamer_rtsp.is_ready())
                         streamer_rtsp.write_video_frame(combined.data(), combined.size(), frame->pts, true);
-                    if (mqtt_client_)
-                        mqtt_client_->push_video_to_sessions(combined.data(), combined.size(), frame->pts, true);
 
                     periodic_header_buffer.clear();
                 }
@@ -244,8 +243,6 @@ void DatafifoHelper::read_fifo_task()
                         streamer_file->write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
                     if (streamer_rtsp.is_ready())
                         streamer_rtsp.write_video_frame(frame->data, frame->data_len, frame->pts, frame->type == 2);
-                    if (mqtt_client_)
-                        mqtt_client_->push_video_to_sessions(frame->data, frame->data_len, frame->pts, frame->type == 2);
 
                     // Log standalone I-frames (shouldn't happen)
                     if (frame->type == 2) {

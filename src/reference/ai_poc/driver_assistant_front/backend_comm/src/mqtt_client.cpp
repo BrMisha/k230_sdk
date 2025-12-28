@@ -531,11 +531,11 @@ void MqttClient::remove_session(const std::string& user_id, const std::string& s
     }
 }
 
-void MqttClient::push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe) {
+void MqttClient::push_video_to_sessions(const uint8_t* data, size_t size, uint64_t pts_us, uint8_t type) {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     for (auto& session : sessions_) {
         if (session && session->is_active()) {
-            session->push_video_frame(data, size, pts_us, is_keyframe);
+            session->push_video_frame(data, size, pts_us, type);
         }
     }
 }

@@ -26,8 +26,7 @@ public:
     using OnStateChange = std::function<void(bool connected)>;
     using OnDataChannelMessage = std::function<void(const std::string& message)>;
 
-    explicit GstWebRTCPeer(const std::vector<IceServer>& ice_servers,
-                           int video_width = 1920, int video_height = 1080);
+    explicit GstWebRTCPeer(const std::vector<IceServer>& ice_servers);
     ~GstWebRTCPeer();
 
     // Non-copyable
@@ -45,11 +44,15 @@ public:
     void set_remote_description(const std::string& type, const std::string& sdp);
     void add_ice_candidate(guint mlineindex, const std::string& candidate);
 
-    // Video streaming
-    void push_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, bool is_keyframe);
+    // Video streaming over data channel
+    // Sends binary: [8 bytes pts][4 bytes len][1 byte type][data]
+    void send_video_frame(const uint8_t* data, size_t size, uint64_t pts_us, uint8_t type);
 
-    // Data channel
+    // Data channel (text)
     void send_data(const std::string& message);
+
+    // Data channel (binary)
+    void send_binary(const uint8_t* data, size_t size);
 
     bool is_connected() const { return connected_.load(); }
 
@@ -78,12 +81,9 @@ private:
 
     GstElement* pipeline_ = nullptr;
     GstElement* webrtc_ = nullptr;
-    GstElement* appsrc_ = nullptr;
     GstWebRTCDataChannel* data_channel_ = nullptr;
 
     std::vector<IceServer> ice_servers_;
-    int video_width_;
-    int video_height_;
     std::atomic<bool> connected_{false};
     uint64_t frame_count_ = 0;
 
@@ -100,6 +100,9 @@ private:
 
     // Flag to indicate shutdown in progress
     std::atomic<bool> shutting_down_{false};
+
+    // Flag to prevent duplicate offers
+    std::atomic<bool> offer_sent_{false};
 
     // Track rejected m-lines (port=0 in SDP answer)
     std::set<guint> rejected_mlines_;
