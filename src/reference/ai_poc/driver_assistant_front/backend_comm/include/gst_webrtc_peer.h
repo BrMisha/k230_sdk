@@ -86,6 +86,7 @@ private:
     std::vector<IceServer> ice_servers_;
     std::atomic<bool> connected_{false};
     uint64_t frame_count_ = 0;
+    uint64_t pframe_count_ = 0;  // Separate counter for P-frame skipping
 
     // GLib main loop for proper GStreamer threading
     GMainContext* main_context_ = nullptr;

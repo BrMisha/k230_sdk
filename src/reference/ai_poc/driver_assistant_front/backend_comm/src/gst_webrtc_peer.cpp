@@ -481,20 +481,23 @@ void GstWebRTCPeer::send_video_frame(const uint8_t* data, size_t size,
         return;
     }
 
-    // Flow control: check buffered amount to prevent unbounded queue growth
-    // If too much data is queued, skip this frame to prevent memory leak
+    // Skip every 2nd and 3rd P-frame to reduce bandwidth (~10fps instead of 30fps for P-frames)
+    // Always send headers (type=2) and keyframes (type=1)
+    if (type == 0) {
+        pframe_count_++;
+        if ((pframe_count_ % 3) != 1) {  // Send only 1st of every 3 P-frames
+            frame_count_++;
+            return;
+        }
+    }
+
+    // Memory protection: drop frames if SCTP buffer is too full (prevents OOM)
     guint64 buffered = 0;
     g_object_get(data_channel_, "buffered-amount", &buffered, nullptr);
-
-    // Max 2MB buffered (about 1 second of video at 60KB/frame @ 30fps)
-    constexpr guint64 MAX_BUFFERED = 2 * 1024 * 1024;
+    constexpr guint64 MAX_BUFFERED = 2 * 1024 * 1024;  // 2MB max
     if (buffered > MAX_BUFFERED) {
-        // Log occasionally to avoid spam
-        if (frame_count_ % 30 == 0) {
-            std::cerr << "[WebRTC] Dropping frame - buffer full (" << buffered << " bytes)" << std::endl;
-        }
         frame_count_++;
-        return;
+        return;  // Silent drop to prevent memory growth
     }
 
     // Chunking protocol for WebRTC data channel (16KB limit)
