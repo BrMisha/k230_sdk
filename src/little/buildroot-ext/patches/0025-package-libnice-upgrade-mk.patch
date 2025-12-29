@@ -1,0 +1,49 @@
+From: Claude Code <noreply@anthropic.com>
+Subject: [PATCH] package/libnice: switch to meson for 0.1.23
+ 
+libnice 0.1.18+ uses meson instead of autotools.
+ 
+---
+diff --git a/package/libnice/libnice.mk b/package/libnice/libnice.mk
+--- a/package/libnice/libnice.mk
++++ b/package/libnice/libnice.mk
+@@ -4,30 +4,26 @@
+ #
+ ################################################################################
+ 
+-LIBNICE_VERSION = 0.1.16
+-LIBNICE_SITE = http://nice.freedesktop.org/releases
++LIBNICE_VERSION = 0.1.23
++LIBNICE_SITE = https://libnice.freedesktop.org/releases
+ LIBNICE_LICENSE = MPL-1.1 or LGPL-2.1
+ LIBNICE_LICENSE_FILES = COPYING COPYING.MPL COPYING.LGPL
+-LIBNICE_DEPENDENCIES = libglib2 host-pkgconf
++LIBNICE_DEPENDENCIES = host-pkgconf libglib2
+ LIBNICE_INSTALL_STAGING = YES
+-LIBNICE_CONF_OPTS = --without-gstreamer-0.10
++LIBNICE_CONF_OPTS = -Dtests=disabled -Dexamples=disabled -Dintrospection=disabled
+ 
+ ifeq ($(BR2_PACKAGE_GNUTLS),y)
+-LIBNICE_CONF_OPTS += --with-crypto-library=gnutls
++LIBNICE_CONF_OPTS += -Dcrypto-library=gnutls
+ LIBNICE_DEPENDENCIES += gnutls
+ else
+-LIBNICE_CONF_OPTS += \
+-	--with-crypto-library=openssl \
+-	--with-openssl=$(STAGING_DIR)/usr
++LIBNICE_CONF_OPTS += -Dcrypto-library=openssl
+ LIBNICE_DEPENDENCIES += openssl
+ endif
+ 
+ ifeq ($(BR2_PACKAGE_GST1_PLUGINS_BASE),y)
+-LIBNICE_CONF_OPTS += --with-gstreamer
++LIBNICE_CONF_OPTS += -Dgstreamer=enabled
+ LIBNICE_DEPENDENCIES += gst1-plugins-base
+ else
+-LIBNICE_CONF_OPTS += --without-gstreamer
++LIBNICE_CONF_OPTS += -Dgstreamer=disabled
+ endif
+ 
+-$(eval $(autotools-package))
++$(eval $(meson-package))
+
