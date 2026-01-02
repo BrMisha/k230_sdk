@@ -31,7 +31,6 @@
 #include "media_streamer_rtsp.h"  // From media_streaming module
 #include "websocket_server.h"
 #include "mqtt_client.h"          // From backend_comm module
-#include <gst/gst.h>              // GStreamer initialization
 
 // LVGL includes
 extern "C" {
@@ -261,9 +260,6 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
 int main(int argc, char *argv[]) {
     std::cout << "Built at " << __DATE__ << " " << __TIME__ << std::endl;
 
-    // Initialize GStreamer (required for WebRTC)
-    gst_init(&argc, &argv);
-
     // Parse command line arguments using argparse
     std::optional<std::string> bb_dir_path;
     std::optional<std::string> mqtt_broker;
@@ -367,7 +363,7 @@ int main(int argc, char *argv[]) {
             usleep(1000000);
 
             lv_lock();
-/*
+
             // Set IP address on display
             std::string ip = utils::get_ip_address();
             snprintf(ip_buffer, sizeof(ip_buffer), "%s", ip.c_str());
@@ -400,7 +396,7 @@ int main(int argc, char *argv[]) {
             lv_label_set_text(ui_cpu, cpu_buffer);
 
             lv_label_set_text(ui_moving, is_moving ? "M" : "");
-*/
+
             //lv_refr_now(NULL);
             lv_unlock();
         }
@@ -502,9 +498,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Start status publishing thread (every 60 seconds) + reconnection
-    auto start_time = std::chrono::steady_clock::now();
     std::thread status_thread;
     if (mqtt_client) {
+        auto start_time = std::chrono::steady_clock::now();
         status_thread = std::thread([&mqtt_client, start_time]() {
             while (!send_stop.load()) {
                 // Sleep for 60 seconds (checking send_stop every second)

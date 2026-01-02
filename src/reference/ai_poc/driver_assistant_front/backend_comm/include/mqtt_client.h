@@ -18,6 +18,13 @@ class StreamSession;
 
 namespace backend_comm {
 
+// ICE server configuration (for JSON parsing)
+struct IceServer {
+    std::vector<std::string> urls;
+    std::string username;
+    std::string credential;
+};
+
 struct MqttConfig {
     std::string broker_uri;          // e.g., "ssl://emqx.example.com:8883"
     std::string client_id;           // Device serial number

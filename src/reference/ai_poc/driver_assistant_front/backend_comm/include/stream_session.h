@@ -5,7 +5,7 @@
 #include <atomic>
 #include <vector>
 #include "mqtt_client.h"
-#include "gst_webrtc_peer.h"
+#include "datachannel_peer.h"
 
 /**
  * StreamSession - Handles streaming session over MQTT (signaling + WebRTC)
@@ -29,7 +29,7 @@ public:
     StreamSession(std::shared_ptr<backend_comm::MqttClient> mqtt,
                   std::string user_id,
                   std::string session_id,
-                  std::vector<IceServer> ice_servers);
+                  std::vector<std::string> ice_servers);
     ~StreamSession();
 
     // Non-copyable
@@ -87,6 +87,6 @@ private:
     std::atomic<bool> active_{false};
 
     // WebRTC
-    std::vector<IceServer> ice_servers_;
-    std::unique_ptr<GstWebRTCPeer> webrtc_peer_;
+    std::vector<std::string> ice_servers_;
+    std::unique_ptr<backend_comm::DataChannelPeer> webrtc_peer_;
 };

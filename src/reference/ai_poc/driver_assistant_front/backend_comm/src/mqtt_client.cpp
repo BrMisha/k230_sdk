@@ -53,11 +53,16 @@ public:
 
     // mqtt::iaction_listener interface (for async operations)
     void on_failure(const mqtt::token& tok) override {
-        std::cerr << "[MQTT] Action failed: " << tok.get_message_id() << std::endl;
+        std::cerr << "[MQTT] Action failed: msg_id=" << tok.get_message_id() << std::endl;
+        if (tok.get_type() == mqtt::token::Type::SUBSCRIBE) {
+            std::cerr << "[MQTT] SUBSCRIBE failed!" << std::endl;
+        }
     }
 
     void on_success(const mqtt::token& tok) override {
-        // Action succeeded
+        if (tok.get_type() == mqtt::token::Type::SUBSCRIBE) {
+            std::cout << "[MQTT] SUBSCRIBE success" << std::endl;
+        }
     }
 
 private:
@@ -140,7 +145,7 @@ void MqttClient::disconnect() {
 
     try {
         // Publish offline status before disconnecting
-        publish_status(false, "", 0);
+        //publish_status(false, "", 0);
 
         auto tok = client_->disconnect();
         tok->wait();
@@ -300,6 +305,7 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload,
 
 bool MqttClient::subscribe(const std::string& topic, int qos) {
     if (!client_) {
+        std::cerr << "[MQTT] Subscribe failed: client is null" << std::endl;
         return false;
     }
 
@@ -425,27 +431,46 @@ void MqttClient::handle_stream_start(const std::string& cmd_id, const std::strin
     std::cout << "[MQTT] stream_start params: " << params << std::endl;
 
     std::string user_id, session_id;
-    std::vector<IceServer> ice_servers;
+    std::vector<std::string> ice_server_urls;
 
     try {
         auto json = nlohmann::json::parse(params);
         user_id = json.value("user_id", "");
         session_id = json.value("session_id", "");
 
-        // Parse ICE servers
+        // Parse ICE servers and convert to URL strings for libdatachannel
+        // Format: "stun:host:port" or "turn:user:pass@host:port"
         if (json.contains("ice_servers")) {
             for (const auto& server : json["ice_servers"]) {
-                IceServer ice;
+                std::string username = server.value("username", "");
+                std::string credential = server.value("credential", "");
+
                 if (server.contains("urls")) {
                     for (const auto& url : server["urls"]) {
-                        ice.urls.push_back(url.get<std::string>());
+                        std::string url_str = url.get<std::string>();
+                        // If TURN server with credentials, embed them in URL
+                        if (!username.empty() && !credential.empty() &&
+                            (url_str.find("turn:") == 0 || url_str.find("turns:") == 0)) {
+                            // Parse scheme and host:port from URL
+                            // Handles both "turn:host:port" and "turn://host:port"
+                            size_t scheme_end = url_str.find(':');
+                            if (scheme_end != std::string::npos) {
+                                std::string scheme = url_str.substr(0, scheme_end);  // "turn" or "turns"
+                                std::string rest = url_str.substr(scheme_end + 1);
+                                // Remove leading "//" if present
+                                if (rest.size() >= 2 && rest[0] == '/' && rest[1] == '/') {
+                                    rest = rest.substr(2);
+                                }
+                                // Build URL: turn:user:pass@host:port
+                                url_str = scheme + ":" + username + ":" + credential + "@" + rest;
+                            }
+                        }
+                        std::cout << "[MQTT] ICE server: " << url_str << std::endl;
+                        ice_server_urls.push_back(url_str);
                     }
                 }
-                ice.username = server.value("username", "");
-                ice.credential = server.value("credential", "");
-                ice_servers.push_back(ice);
             }
-            std::cout << "[MQTT] Parsed " << ice_servers.size() << " ICE servers" << std::endl;
+            std::cout << "[MQTT] Parsed " << ice_server_urls.size() << " ICE server URLs" << std::endl;
         }
     } catch (const nlohmann::json::exception& e) {
         std::cerr << "[MQTT] stream_start JSON parse error: " << e.what() << std::endl;
@@ -468,13 +493,13 @@ void MqttClient::handle_stream_start(const std::string& cmd_id, const std::strin
         return;
     }
 
-    // Create new session with ICE servers
+    // Create new session with ICE server URLs
     // Note: We need shared_from_this, but MqttClient doesn't inherit from enable_shared_from_this
     // So we pass 'this' wrapped in a shared_ptr with a no-op deleter for now
     // This is safe because sessions_ is owned by MqttClient and cleaned up before destruction
     auto session = std::make_shared<StreamSession>(
         std::shared_ptr<MqttClient>(this, [](MqttClient*){}),  // non-owning shared_ptr
-        user_id, session_id, std::move(ice_servers));
+        user_id, session_id, std::move(ice_server_urls));
 
     if (session->start()) {
         {

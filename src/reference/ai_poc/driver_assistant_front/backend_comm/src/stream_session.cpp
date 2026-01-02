@@ -5,7 +5,7 @@
 StreamSession::StreamSession(std::shared_ptr<backend_comm::MqttClient> mqtt,
                              std::string user_id,
                              std::string session_id,
-                             std::vector<IceServer> ice_servers)
+                             std::vector<std::string> ice_servers)
     : user_id(std::move(user_id))
     , session_id(std::move(session_id))
     , mqtt_(std::move(mqtt))
@@ -104,7 +104,7 @@ void StreamSession::handle_watch(const std::string& payload)
 
     // Create WebRTC peer if not already created
     if (!webrtc_peer_) {
-        webrtc_peer_ = std::make_unique<GstWebRTCPeer>(ice_servers_);
+        webrtc_peer_ = std::make_unique<backend_comm::DataChannelPeer>(ice_servers_);
 
         // Use weak_ptr to safely capture session lifetime in callbacks
         // This prevents crashes if callbacks fire after session destruction
@@ -118,7 +118,7 @@ void StreamSession::handle_watch(const std::string& payload)
             }
         });
 
-        webrtc_peer_->set_on_ice_candidate([weak_self](guint mlineindex, const std::string& candidate) {
+        webrtc_peer_->set_on_ice_candidate([weak_self](uint32_t mlineindex, const std::string& candidate) {
             if (auto self = weak_self.lock()) {
                 nlohmann::json j = {{"mlineindex", mlineindex}, {"candidate", candidate}};
                 self->send_signaling_message("ice", j.dump());
@@ -183,7 +183,7 @@ void StreamSession::handle_ice(const std::string& payload)
 
     try {
         auto j = nlohmann::json::parse(payload);
-        guint mlineindex = j.value("sdpMLineIndex", 0u);
+        uint32_t mlineindex = j.value("sdpMLineIndex", 0u);
         std::cout << "[StreamSession] payload " << payload << std::endl;
         std::string candidate = j.value("candidate", "");
 
