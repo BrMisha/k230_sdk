@@ -1,0 +1,8 @@
+config BR2_PACKAGE_LIBJUICE
+	bool "libjuice"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  JUICE is a UDP Interactive Connectivity Establishment library.
+	  A lightweight STUN/TURN client library for ICE.
+
+	  https://github.com/paullouisageneau/libjuice

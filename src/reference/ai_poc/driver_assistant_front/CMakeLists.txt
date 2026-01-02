@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.16)
+cmake_policy(SET CMP0135 NEW)
 include(./cmake/Riscv64.cmake)
 
 project(driver_assistant_front C CXX)
@@ -6,7 +7,7 @@ project(driver_assistant_front C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Set up SDK paths first (needed for FetchContent dependencies to find OpenSSL, etc.)
+# Set up SDK paths first
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
 set(CDK_SRC_DIR ${k230_sdk}/src/common/cdk)
@@ -24,25 +25,24 @@ else()
     message(FATAL_ERROR "Cannot find .last_conf - please build SDK first with 'make CONF=...'")
 endif()
 
-# Buildroot paths (using staging for proper cross-compilation sysroot)
+# Buildroot paths (using sysroot for proper cross-compilation)
 set(BUILDROOT_DIR "${k230_sdk}/output/${CONF}/little/buildroot-ext")
-set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
+set(BUILDROOT_SYSROOT "${BUILDROOT_DIR}/host/riscv64-buildroot-linux-gnu/sysroot")
+set(BUILDROOT_STAGING "${BUILDROOT_SYSROOT}")
 
-# Configure OpenSSL for cross-compilation (required by libdatachannel)
+# Require libdatachannel from buildroot
+if(NOT EXISTS "${BUILDROOT_STAGING}/usr/include/rtc/rtc.hpp")
+    message(FATAL_ERROR "libdatachannel not found in buildroot. Run 'make CONF=${CONF}' to build SDK first.")
+endif()
+
+# Configure OpenSSL for cross-compilation
 set(OPENSSL_ROOT_DIR "${BUILDROOT_STAGING}/usr")
 set(OPENSSL_INCLUDE_DIR "${BUILDROOT_STAGING}/usr/include")
 set(OPENSSL_CRYPTO_LIBRARY "${BUILDROOT_DIR}/target/usr/lib/libcrypto.so")
 set(OPENSSL_SSL_LIBRARY "${BUILDROOT_DIR}/target/usr/lib/libssl.so")
 
-# Configure pkg-config for cross-compilation (for libnice)
-set(ENV{PKG_CONFIG_PATH} "${BUILDROOT_STAGING}/usr/lib/pkgconfig:${BUILDROOT_STAGING}/usr/share/pkgconfig")
-set(ENV{PKG_CONFIG_SYSROOT_DIR} "${BUILDROOT_STAGING}")
-
-# Fetch dependencies from GitHub (after project() so toolchain is set up)
+# Fetch dependencies from GitHub
 include(FetchContent)
-
-# Allow FetchContent_Populate for patching libdatachannel before building
-cmake_policy(SET CMP0169 OLD)
 
 FetchContent_Declare(
     argparse
@@ -53,7 +53,7 @@ FetchContent_Declare(
     fusion
     GIT_REPOSITORY https://github.com/xioTechnologies/Fusion.git
     GIT_TAG        v1.2.11
-    SOURCE_SUBDIR  Fusion  # Only include the Fusion library, not examples
+    SOURCE_SUBDIR  Fusion
 )
 
 FetchContent_Declare(
@@ -61,104 +61,24 @@ FetchContent_Declare(
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
 )
 
-# libdatachannel for WebRTC data channels (replaces GStreamer webrtcbin)
-FetchContent_Declare(
-    libdatachannel
-    GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-    GIT_TAG v0.24.0
-)
-# Use libjuice (built-in, lighter) instead of libnice for ICE
-set(USE_NICE OFF CACHE BOOL "Use libnice for ICE")
-set(NO_MEDIA ON CACHE BOOL "Disable media transport")
-set(NO_WEBSOCKET ON CACHE BOOL "Disable WebSocket support")
-set(NO_EXAMPLES ON CACHE BOOL "Disable examples")
-set(NO_TESTS ON CACHE BOOL "Disable tests")
-
-# Ensure pthread is found for cross-compilation
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-set(CMAKE_THREAD_LIBS_INIT "-lpthread")
-set(CMAKE_HAVE_THREADS_LIBRARY 1)
-set(CMAKE_USE_WIN32_THREADS_INIT 0)
-set(CMAKE_USE_PTHREADS_INIT 1)
-set(THREADS_FOUND TRUE)
-
-# Make non-libdatachannel dependencies available first
 FetchContent_MakeAvailable(argparse fusion json)
 
-# libdatachannel needs patching for RISC-V (usrsctp uses BSD types not in glibc)
-FetchContent_GetProperties(libdatachannel)
-if(NOT libdatachannel_POPULATED)
-    FetchContent_Populate(libdatachannel)
-
-    # Patch usrsctp's sctp_os_userspace.h to include netinet/ip.h and define BSD types
-    # The BSD types (u_int, u_long, u_short, u_char, caddr_t) are not in glibc headers
-    set(SCTP_OS_FILE "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib/netinet/sctp_os_userspace.h")
-    file(READ "${SCTP_OS_FILE}" SCTP_OS_CONTENT)
-
-    # Add includes and typedefs at the very beginning after the include guard
-    # Note: The actual include guard is __sctp_os_userspace_h__ not _NETINET_SCTP_OS_USERSPACE_H_
-    # _GNU_SOURCE is needed for pthread_rwlock_t and other POSIX extensions in glibc
-    string(REPLACE
-        "#define __sctp_os_userspace_h__"
-        "#define __sctp_os_userspace_h__
-
-/* BSD types for RISC-V/Linux glibc - patched by CMake */
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-#include <sys/types.h>
-#include <pthread.h>
-#include <netinet/ip.h>
-#include <net/if.h>
-#ifndef u_long
-typedef unsigned long u_long;
-#endif
-#ifndef u_int
-typedef unsigned int u_int;
-#endif
-#ifndef u_short
-typedef unsigned short u_short;
-#endif
-#ifndef u_char
-typedef unsigned char u_char;
-#endif
-#ifndef caddr_t
-typedef char* caddr_t;
-#endif
-/* End of BSD types patch */"
-        SCTP_OS_CONTENT "${SCTP_OS_CONTENT}")
-    file(WRITE "${SCTP_OS_FILE}" "${SCTP_OS_CONTENT}")
-
-    # Also patch user_malloc.h - it's included by user_mbuf.h before sctp_os_userspace.h
-    # so it needs its own BSD type definitions
-    set(USER_MALLOC_FILE "${libdatachannel_SOURCE_DIR}/deps/usrsctp/usrsctplib/user_malloc.h")
-    file(READ "${USER_MALLOC_FILE}" USER_MALLOC_CONTENT)
-    string(REPLACE
-        "#include <sys/types.h>"
-        "#include <sys/types.h>
-/* BSD types for RISC-V/Linux glibc - patched by CMake */
-#ifndef u_long
-typedef unsigned long u_long;
-#endif
-#ifndef u_int
-typedef unsigned int u_int;
-#endif
-#ifndef u_short
-typedef unsigned short u_short;
-#endif
-#ifndef u_char
-typedef unsigned char u_char;
-#endif
-/* End of BSD types patch */"
-        USER_MALLOC_CONTENT "${USER_MALLOC_CONTENT}")
-    file(WRITE "${USER_MALLOC_FILE}" "${USER_MALLOC_CONTENT}")
-
-    add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR})
-
-    # usrsctp's CMakeLists.txt only adds _GNU_SOURCE when CMAKE_SYSTEM_NAME is "Linux"
-    # but our toolchain sets it to "Generic". Add it manually for pthread_rwlock_t support.
-    target_compile_definitions(usrsctp PRIVATE _GNU_SOURCE)
-endif()
+# libdatachannel from buildroot (with usrsctp and libjuice dependencies)
+add_library(usrsctp SHARED IMPORTED)
+set_target_properties(usrsctp PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libusrsctp.so"
+)
+add_library(juice SHARED IMPORTED)
+set_target_properties(juice PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libjuice.so"
+)
+add_library(datachannel SHARED IMPORTED)
+set_target_properties(datachannel PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libdatachannel.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${BUILDROOT_STAGING}/usr/include"
+    INTERFACE_LINK_LIBRARIES "usrsctp;juice"
+)
+add_library(LibDataChannel::LibDataChannelStatic ALIAS datachannel)
 
 # libwebsockets from buildroot build
 set(LIBWEBSOCKETS_ROOT "${BUILDROOT_DIR}/build/libwebsockets-4.0.21")

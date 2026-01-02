@@ -1,0 +1,69 @@
+From: AI Driver Assistant <noreply@example.com>
+Subject: [PATCH] Fix BSD types for RISC-V glibc
+
+RISC-V glibc doesn't define BSD types (u_long, u_int, u_short, u_char, caddr_t)
+that usrsctp expects. Add typedefs for these types.
+
+Signed-off-by: AI Driver Assistant <noreply@example.com>
+---
+ usrsctplib/netinet/sctp_os_userspace.h | 20 ++++++++++++++++++++
+ usrsctplib/user_malloc.h               | 15 +++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/usrsctplib/netinet/sctp_os_userspace.h b/usrsctplib/netinet/sctp_os_userspace.h
+index 1234567..abcdefg 100644
+--- a/usrsctplib/netinet/sctp_os_userspace.h
++++ b/usrsctplib/netinet/sctp_os_userspace.h
+@@ -31,6 +31,26 @@
+ #ifndef __sctp_os_userspace_h__
+ #define __sctp_os_userspace_h__
+
++/* BSD types for RISC-V/Linux glibc */
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
++#include <sys/types.h>
++#include <pthread.h>
++#ifndef u_long
++typedef unsigned long u_long;
++#endif
++#ifndef u_int
++typedef unsigned int u_int;
++#endif
++#ifndef u_short
++typedef unsigned short u_short;
++#endif
++#ifndef u_char
++typedef unsigned char u_char;
++#endif
++/* End of BSD types */
++
+ #include <errno.h>
+ #include <sys/types.h>
+ #if defined(__FreeBSD__) || defined(__DragonFly__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+diff --git a/usrsctplib/user_malloc.h b/usrsctplib/user_malloc.h
+index 1234567..abcdefg 100644
+--- a/usrsctplib/user_malloc.h
++++ b/usrsctplib/user_malloc.h
+@@ -37,6 +37,21 @@
+ /*__Userspace__*/
+ #include <stdlib.h>
+ #include <sys/types.h>
++/* BSD types for RISC-V/Linux glibc */
++#ifndef u_long
++typedef unsigned long u_long;
++#endif
++#ifndef u_int
++typedef unsigned int u_int;
++#endif
++#ifndef u_short
++typedef unsigned short u_short;
++#endif
++#ifndef u_char
++typedef unsigned char u_char;
++#endif
++/* End of BSD types */
++
+ #if !defined(_WIN32)
+ #include <strings.h>
+ #include <stdint.h>
