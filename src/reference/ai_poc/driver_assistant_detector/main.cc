@@ -245,6 +245,42 @@ static void venc_output(k_u32 venc_ch) {
     free(datafifo_buf);
 }
 
+// Drain streaming encoder to prevent buffer backpressure
+// Frames are discarded - this keeps the encoder running without stalling VICAP
+static void venc_stream_drain(k_u32 venc_ch) {
+    printf("venc_stream_drain... started (ch %u)\n", venc_ch);
+
+    k_venc_stream output;
+    k_s32 ret;
+
+    while (running) {
+        k_venc_chn_status status;
+        ret = kd_mpi_venc_query_status(venc_ch, &status);
+        if (ret != 0) {
+            usleep(10000);  // 10ms
+            continue;
+        }
+
+        if (status.cur_packs == 0) {
+            usleep(5000);  // 5ms - wait for frames
+            continue;
+        }
+
+        output.pack_cnt = status.cur_packs;
+        output.pack = static_cast<k_venc_pack *>(malloc(sizeof(k_venc_pack) * output.pack_cnt));
+
+        ret = kd_mpi_venc_get_stream(venc_ch, &output, 100);  // 100ms timeout
+        if (ret == 0) {
+            // Just release - don't process
+            kd_mpi_venc_release_stream(venc_ch, &output);
+        }
+
+        free(output.pack);
+    }
+
+    printf("venc_stream_drain... stopped\n");
+}
+
 std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, std::vector<DetectionNormalized> *pre_processed_detections = nullptr) {
     auto results = pre_processed_detections ? pre_processed_detections : new std::vector<DetectionNormalized> ;
 
@@ -634,7 +670,8 @@ int main(int argc, char *argv[]) {
             .sensor_height = 1080,
             .rgb888_width = 768,
             .rgb888_height = 432,
-            .bitrate_kbps = 4000,
+            .bitrate_kbps = 12000,
+            .stream_bitrate_kbps = 1000,
             .rotate_camera = rotate_camera
         };
         Media media(config);
@@ -643,12 +680,14 @@ int main(int argc, char *argv[]) {
         std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, ipcmsg_handle);
 
         std::thread venc_output_thread(venc_output, media.venc_get_channel());
+        std::thread venc_stream_thread(venc_stream_drain, media.venc_get_stream_channel());
 
         wait_for_exit();
         running = false;
 
         isp_ai_detector_thread.join();
         venc_output_thread.join();
+        venc_stream_thread.join();
     }
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
