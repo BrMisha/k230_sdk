@@ -157,23 +157,22 @@ void datafifo_deinit(void) {
 
 
 /**
-* Encoder output thread logic
+* Encoder output thread - handles both SD card (ch0) and streaming (ch1) encoders
 */
-static void venc_output(k_u32 venc_ch) {
+static void venc_output(k_u32 venc_ch_sd, k_u32 venc_ch_stream) {
     k_char *datafifo_buf = (k_char *) malloc(DATAFIFO_DETECTOR_BLOCK_LEN);
     memset(datafifo_buf, 0, DATAFIFO_DETECTOR_BLOCK_LEN);
 
     k_venc_stream output;
     k_s32 ret;
-    int i;
+    int channel_to_process = 0;  // Alternate between 0 (SD) and 1 (stream)
 
-    printf("venc_output... started\n");
+    printf("venc_output... started (SD ch%u, Stream ch%u)\n", venc_ch_sd, venc_ch_stream);
 
     while (running) {
-        // datafifo
+        // Check datafifo availability for SD card writes
         k_u32 availWriteLen = 0;
-        // call write NULL to flush
-        ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);
+        ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], NULL);  // flush
         if (K_SUCCESS != ret) {
             printf("venc_output...write error:%x\n", ret);
         }
@@ -183,102 +182,63 @@ static void venc_output(k_u32 venc_ch) {
             break;
         }
 
+        // Select channel based on alternating variable
+        k_u32 current_ch = (channel_to_process == 0) ? venc_ch_sd : venc_ch_stream;
+
         k_venc_chn_status status;
-        ret = kd_mpi_venc_query_status(venc_ch, &status);
-        CHECK_RET(ret, __func__, __LINE__);
+        ret = kd_mpi_venc_query_status(current_ch, &status);
 
-        if (status.cur_packs > 0)
-            output.pack_cnt = status.cur_packs;
-        else
-            output.pack_cnt = 1;
-        output.pack = static_cast<k_venc_pack *>(malloc(sizeof(k_venc_pack) * output.pack_cnt));
+        // If no frames on current channel, try the other one
+        if (ret != 0 || status.cur_packs == 0) {
+            channel_to_process = (channel_to_process == 0) ? 1 : 0;
+            current_ch = (channel_to_process == 0) ? venc_ch_sd : venc_ch_stream;
+            ret = kd_mpi_venc_query_status(current_ch, &status);
 
-        // // Set keyframe frequency
-        // if (index % 4 == 0)
-        // {
-        //     index = 0;
-        //     ret = kd_mpi_venc_request_idr(0);
-        // }
-        // index ++;
-
-        // Get encoded stream
-        ret = kd_mpi_venc_get_stream(venc_ch, &output, -1);
-        CHECK_RET(ret, __func__, __LINE__);
-
-        for (i = 0; i < output.pack_cnt; i++) {
-            k_u8 *pData;
-            pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
-            //printf("venc_output... size %lu, type %d, pts %lu\n", output.pack[i].len, output.pack[i].type, output.pack[i].pts);
-
-            if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
-                auto dff = reinterpret_cast<DataFifoFrame_t *>(datafifo_buf);
-                dff->type = output.pack[i].type;
-                dff->pts = output.pack[i].pts;
-                dff->data_len = output.pack[i].len;
-                if (DATAFIFO_DETECTOR_BLOCK_LEN >= sizeof(DataFifoFrame_t) + dff->data_len) {
-                    memcpy(dff->data, static_cast<void *>(pData), dff->data_len);
-                } else {
-                    printf("data fifo size IS INVALID %lu !!!!!!!!!!!!!!!!!!!\n", sizeof(DataFifoFrame_t) + dff->data_len);
-                }
-
-                ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
-                if (K_SUCCESS != ret) {
-                    printf("venc_output...write error:%x\n", ret);
-                    break;
-                }
-                ret = kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
-                if (K_SUCCESS != ret) {
-                    printf("venc_output...write done error:%x\n", ret);
-                    break;
-                }
+            // If still no frames, delay and continue
+            if (ret != 0 || status.cur_packs == 0) {
+                usleep(2000);
+                continue;
             }
-
-            kd_mpi_sys_munmap(pData, output.pack[i].len);
         }
 
-        ret = kd_mpi_venc_release_stream(venc_ch, &output);
-        CHECK_RET(ret, __func__, __LINE__);
-
-        free(output.pack);
-    }
-
-    free(datafifo_buf);
-}
-
-// Drain streaming encoder to prevent buffer backpressure
-// Frames are discarded - this keeps the encoder running without stalling VICAP
-static void venc_stream_drain(k_u32 venc_ch) {
-    printf("venc_stream_drain... started (ch %u)\n", venc_ch);
-
-    k_venc_stream output;
-    k_s32 ret;
-
-    while (running) {
-        k_venc_chn_status status;
-        ret = kd_mpi_venc_query_status(venc_ch, &status);
-        if (ret != 0) {
-            usleep(10000);  // 10ms
-            continue;
-        }
-
-        if (status.cur_packs == 0) {
-            usleep(5000);  // 5ms - wait for frames
-            continue;
-        }
-
+        // Process frames from current_ch
         output.pack_cnt = status.cur_packs;
         output.pack = static_cast<k_venc_pack *>(malloc(sizeof(k_venc_pack) * output.pack_cnt));
 
-        ret = kd_mpi_venc_get_stream(venc_ch, &output, 100);  // 100ms timeout
+        ret = kd_mpi_venc_get_stream(current_ch, &output, 50);
         if (ret == 0) {
-            // Just release - don't process
-            kd_mpi_venc_release_stream(venc_ch, &output);
-        }
+            for (int i = 0; i < output.pack_cnt; i++) {
+                k_u8 *pData = (k_u8 *) kd_mpi_sys_mmap(output.pack[i].phys_addr, output.pack[i].len);
 
+                // Write to datafifo (for SD card recording via front app)
+                if (availWriteLen >= DATAFIFO_DETECTOR_BLOCK_LEN) {
+                    auto dff = reinterpret_cast<DataFifoFrame_t *>(datafifo_buf);
+                    dff->channel = current_ch;
+                    dff->type = output.pack[i].type;
+                    dff->pts = output.pack[i].pts;
+                    dff->data_len = output.pack[i].len;
+                    if (DATAFIFO_DETECTOR_BLOCK_LEN >= sizeof(DataFifoFrame_t) + dff->data_len) {
+                        memcpy(dff->data, static_cast<void *>(pData), dff->data_len);
+
+                        ret = kd_datafifo_write(hDataFifo[WRITER_INDEX], datafifo_buf);
+                        if (K_SUCCESS == ret) {
+                            kd_datafifo_cmd(hDataFifo[WRITER_INDEX], DATAFIFO_CMD_WRITE_DONE, NULL);
+                        }
+                    }
+                }
+
+                kd_mpi_sys_munmap(pData, output.pack[i].len);
+            }
+            kd_mpi_venc_release_stream(current_ch, &output);
+        }
         free(output.pack);
+
+        // Alternate to other channel for next iteration
+        channel_to_process = (channel_to_process == 0) ? 1 : 0;
     }
 
-    printf("venc_stream_drain... stopped\n");
+    free(datafifo_buf);
+    printf("venc_output... stopped\n");
 }
 
 std::vector<DetectionNormalized> detect(SAHI &sahi, cv::Mat &rgb_frame, std::vector<DetectionNormalized> *pre_processed_detections = nullptr) {
@@ -679,15 +639,13 @@ int main(int argc, char *argv[]) {
 
         std::thread isp_ai_detector_thread(isp_ai_detector, &media, debug_mode, ipcmsg_handle);
 
-        std::thread venc_output_thread(venc_output, media.venc_get_channel());
-        std::thread venc_stream_thread(venc_stream_drain, media.venc_get_stream_channel());
+        std::thread venc_output_thread(venc_output, media.venc_get_channel(), media.venc_get_stream_channel());
 
         wait_for_exit();
         running = false;
 
         isp_ai_detector_thread.join();
         venc_output_thread.join();
-        venc_stream_thread.join();
     }
 
     kd_ipcmsg_disconnect(ipcmsg_handle);
