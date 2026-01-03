@@ -1,5 +1,6 @@
 #include "datachannel_peer.h"
 #include <iostream>
+#include <iomanip>
 #include <cstring>
 #include <algorithm>
 
@@ -232,95 +233,57 @@ void DataChannelPeer::send_video_frame(const uint8_t* data, size_t size,
         return;
     }
 
-    // Skip every 2nd and 3rd P-frame to reduce bandwidth (~10fps instead of 30fps for P-frames)
-    // Always send headers (type=2) and keyframes (type=1)
-    if (type == 0) {
-        pframe_count_++;
-        if ((pframe_count_ % 3) != 1) {  // Send only 1st of every 3 P-frames
-            frame_count_++;
-            return;
-        }
+    // Input bandwidth measurement
+    bytes_received_ += size;
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_bw_print_).count();
+    if (elapsed_ms >= 1000) {
+        double in_mbps = (bytes_received_ * 8.0) / (elapsed_ms * 1000.0);
+        double out_mbps = (bytes_sent_ * 8.0) / (elapsed_ms * 1000.0);
+        double drop_mbps = (bytes_dropped_ * 8.0) / (elapsed_ms * 1000.0);
+        size_t buf = dc_->bufferedAmount();
+        std::cout << "[DataChannel] In: " << std::fixed << std::setprecision(2) << in_mbps
+                  << " Mbps, Out: " << out_mbps
+                  << " Mbps, Drop: " << drop_mbps << " Mbps, Buf: " << (buf / 1024) << " KB" << std::endl;
+        bytes_received_ = 0;
+        bytes_sent_ = 0;
+        bytes_dropped_ = 0;
+        last_bw_print_ = now;
     }
 
-    // Memory protection: check buffered amount
+    // Flow control: skip P-frames when buffer is building up
+    // Frame types: 1=P-frame, 2=header (VPS/SPS/PPS), 3=keyframe (I-frame)
     size_t buffered = dc_->bufferedAmount();
-    constexpr size_t MAX_BUFFERED = 2 * 1024 * 1024;  // 2MB max
-    if (buffered > MAX_BUFFERED) {
-        frame_count_++;
-        return;  // Silent drop to prevent memory growth
+    constexpr size_t BUFFER_THRESHOLD = 256 * 1024;  // 256KB
+    if (buffered > BUFFER_THRESHOLD && type == 1) {
+        bytes_dropped_ += size;
+        return;
     }
 
-    // Chunking protocol for WebRTC data channel (16KB limit)
-    // Chunk format: [4B frame_id][2B chunk_idx][2B total_chunks][payload]
-    // First chunk payload: [8B pts][4B len][1B type][video_data...]
-    // Subsequent chunks: [video_data...]
+    // Simple frame format: [8B pts][1B type][video_data...]
+    // SCTP delivers complete messages with known size, so len field is redundant
+    const size_t HEADER_SIZE = 9;  // pts(8) + type(1)
 
-    const size_t CHUNK_HEADER_SIZE = 8;      // frame_id(4) + chunk_idx(2) + total_chunks(2)
-    const size_t FRAME_HEADER_SIZE = 13;     // pts(8) + len(4) + type(1)
-    const size_t MAX_CHUNK_SIZE = 15000;     // Safe limit below 16KB
-    const size_t MAX_PAYLOAD = MAX_CHUNK_SIZE - CHUNK_HEADER_SIZE;
+    // Build message_variant directly to avoid copy in send()
+    rtc::message_variant msg = rtc::binary(HEADER_SIZE + size);
+    auto& frame = std::get<rtc::binary>(msg);
+    std::byte* ptr = frame.data();
 
-    // Total payload = frame header + video data
-    const size_t total_payload = FRAME_HEADER_SIZE + size;
+    // Header
+    memcpy(ptr, &pts_us, 8);
+    ptr += 8;
+    *ptr++ = static_cast<std::byte>(type);
 
-    // Calculate number of chunks needed
-    uint16_t total_chunks = static_cast<uint16_t>((total_payload + MAX_PAYLOAD - 1) / MAX_PAYLOAD);
-    uint32_t frame_id = static_cast<uint32_t>(frame_count_);
+    // Video data
+    memcpy(ptr, data, size);
 
-    // Build frame header once
-    uint8_t frame_header[FRAME_HEADER_SIZE];
-    memcpy(frame_header, &pts_us, 8);          // PTS (8 bytes, little-endian)
-    uint32_t data_len = static_cast<uint32_t>(size);
-    memcpy(frame_header + 8, &data_len, 4);    // Data length (4 bytes)
-    frame_header[12] = type;                    // Type (1 byte)
-
-    size_t payload_offset = 0;  // Offset into logical payload (frame_header + video_data)
-
-    for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {
-        size_t remaining = total_payload - payload_offset;
-        size_t chunk_payload_size = (remaining > MAX_PAYLOAD) ? MAX_PAYLOAD : remaining;
-        size_t chunk_size = CHUNK_HEADER_SIZE + chunk_payload_size;
-
-        std::vector<std::byte> chunk(chunk_size);
-        std::byte* ptr = chunk.data();
-
-        // Chunk header
-        memcpy(ptr, &frame_id, 4);
-        ptr += 4;
-        memcpy(ptr, &chunk_idx, 2);
-        ptr += 2;
-        memcpy(ptr, &total_chunks, 2);
-        ptr += 2;
-
-        // Chunk payload (may span frame_header and video_data)
-        size_t written = 0;
-        while (written < chunk_payload_size) {
-            if (payload_offset < FRAME_HEADER_SIZE) {
-                // Copy from frame header
-                size_t from_header = std::min(FRAME_HEADER_SIZE - payload_offset,
-                                               chunk_payload_size - written);
-                memcpy(ptr, frame_header + payload_offset, from_header);
-                ptr += from_header;
-                payload_offset += from_header;
-                written += from_header;
-            } else {
-                // Copy from video data
-                size_t video_offset = payload_offset - FRAME_HEADER_SIZE;
-                size_t from_video = chunk_payload_size - written;
-                memcpy(ptr, data + video_offset, from_video);
-                payload_offset += from_video;
-                written += from_video;
-            }
-        }
-
-        // Send chunk
-        dc_->send(chunk);
-    }
+    // Send with move - no copy inside libdatachannel
+    dc_->send(std::move(msg));
+    bytes_sent_ += HEADER_SIZE + size;
 
     frame_count_++;
-    if (frame_count_ % 300 == 0) {  // Log every 10 seconds at 30fps
-        std::cout << "[DataChannel] Sent " << frame_count_ << " frames (" << total_chunks
-                  << " chunks/frame)" << std::endl;
+    if (frame_count_ % 300 == 0) {
+        std::cout << "[DataChannel] Sent " << frame_count_ << " frames" << std::endl;
     }
 }
 

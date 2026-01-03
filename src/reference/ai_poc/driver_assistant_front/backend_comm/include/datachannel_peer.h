@@ -8,6 +8,7 @@
 #include <atomic>
 #include <mutex>
 #include <cstdint>
+#include <chrono>
 
 namespace backend_comm {
 
@@ -67,6 +68,12 @@ private:
     uint32_t frame_count_ = 0;
     uint64_t pframe_count_ = 0;
     static constexpr size_t MAX_CHUNK_SIZE = 15 * 1024;  // 15KB chunks (under 16KB SCTP limit)
+
+    // Bandwidth measurement
+    uint64_t bytes_received_ = 0;
+    uint64_t bytes_sent_ = 0;
+    uint64_t bytes_dropped_ = 0;
+    std::chrono::steady_clock::time_point last_bw_print_{std::chrono::steady_clock::now()};
 };
 
 }  // namespace backend_comm
