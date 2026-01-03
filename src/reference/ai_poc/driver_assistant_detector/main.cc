@@ -632,8 +632,8 @@ int main(int argc, char *argv[]) {
         MediaInputConfig config {
             .sensor_width = 1920,
             .sensor_height = 1080,
-            .small_rgb888_width = 768,
-            .small_rgb888_height = 432,
+            .rgb888_width = 768,
+            .rgb888_height = 432,
             .bitrate_kbps = 4000,
             .rotate_camera = rotate_camera
         };
