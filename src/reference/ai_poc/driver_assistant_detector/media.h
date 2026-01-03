@@ -69,9 +69,7 @@ class Media {
     const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
     const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_1;
 
-    static const k_u32 _pool_id_venc = 2;
-    //static const k_u32 _pool_id_rgb = 3;
-    static const k_u32 _pool_id_rgb888 = 4;
+    static const k_u32 _pool_id_rgb888 = 2;
 
     //k_video_frame_info _venc_vf_info;
     //void    *_venc_pic_vaddr = nullptr;
@@ -100,8 +98,6 @@ private:
     k_s32 vivcap_init();
     k_s32 vivcap_start();
     k_s32 vivcap_stop();
-
-    k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr);
 
 };
 
