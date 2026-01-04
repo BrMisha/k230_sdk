@@ -94,36 +94,42 @@ bool MqttClient::connect() {
     }
 
     try {
-        // Build connection options (MQTT 5)
-        mqtt::connect_options conn_opts;
-        conn_opts.set_mqtt_version(MQTTVERSION_5);
-        conn_opts.set_clean_start(true);
-        conn_opts.set_keep_alive_interval(config_.keep_alive_sec);
-        conn_opts.set_automatic_reconnect(
-            config_.reconnect_min_interval_sec,
-            config_.reconnect_max_interval_sec
-        );
+        // Set Last Will Testament (LWT) - offline status
+        std::string lwt_topic = topic_from_device("status");
+        std::string lwt_payload = "{\"online\":false}";
+
+        // Build connection options using builder (MQTT 5)
+        auto conn_opts_builder = mqtt::connect_options_builder()
+            .mqtt_version(MQTTVERSION_5)
+            .clean_start(true)
+            .keep_alive_interval(std::chrono::seconds(config_.keep_alive_sec))
+            .automatic_reconnect(
+                std::chrono::seconds(config_.reconnect_min_interval_sec),
+                std::chrono::seconds(config_.reconnect_max_interval_sec))
+            .will(mqtt::message(lwt_topic, lwt_payload, config_.qos_status, true));
 
         // Configure TLS if using ssl://
         if (config_.broker_uri.find("ssl://") == 0 ||
             config_.broker_uri.find("mqtts://") == 0) {
 
-            mqtt::ssl_options ssl_opts;
-            ssl_opts.set_trust_store(config_.ca_path);
-            ssl_opts.set_key_store(config_.cert_path);
-            ssl_opts.set_private_key(config_.key_path);
-            ssl_opts.set_enable_server_cert_auth(true);
+            std::cout << "[MQTT] Configuring TLS..." << std::endl;
+            std::cout << "[MQTT]   CA:   " << config_.ca_path << std::endl;
+            std::cout << "[MQTT]   Cert: " << config_.cert_path << std::endl;
+            std::cout << "[MQTT]   Key:  " << config_.key_path << std::endl;
 
-            conn_opts.set_ssl(ssl_opts);
+            auto ssl_opts = mqtt::ssl_options_builder()
+                .trust_store(config_.ca_path)
+                .key_store(config_.cert_path)
+                .private_key(config_.key_path)
+                .enable_server_cert_auth(true)
+                .verify(false)  // Skip certificate date validation (device time may be wrong)
+                .finalize();
+
+            conn_opts_builder.ssl(std::move(ssl_opts));
+            std::cout << "[MQTT] TLS configured" << std::endl;
         }
 
-        // Set Last Will Testament (LWT) - offline status
-        std::string lwt_topic = topic_from_device("status");
-        std::string lwt_payload = "{\"online\":false}";
-        mqtt::message_ptr lwt_msg = mqtt::make_message(lwt_topic, lwt_payload);
-        lwt_msg->set_qos(config_.qos_status);
-        lwt_msg->set_retained(true);
-        conn_opts.set_will_message(lwt_msg);
+        auto conn_opts = conn_opts_builder.finalize();
 
         std::cout << "[MQTT] Connecting to " << config_.broker_uri << "..." << std::endl;
 
