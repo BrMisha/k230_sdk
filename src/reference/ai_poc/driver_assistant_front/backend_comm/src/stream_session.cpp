@@ -128,6 +128,10 @@ void StreamSession::handle_watch(const std::string& payload)
         webrtc_peer_->set_on_state_change([weak_self](bool connected) {
             if (auto self = weak_self.lock()) {
                 std::cout << "[StreamSession] WebRTC " << (connected ? "connected" : "disconnected") << std::endl;
+                if (!connected) {
+                    // Clean up session when WebRTC disconnects (peer lost connection)
+                    self->mqtt_->remove_session(self->user_id, self->session_id);
+                }
             }
         });
 
