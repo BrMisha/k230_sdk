@@ -94,9 +94,10 @@ bool MqttClient::connect() {
     }
 
     try {
-        // Build connection options (MQTT 3.1.1)
+        // Build connection options (MQTT 5)
         mqtt::connect_options conn_opts;
-        conn_opts.set_clean_session(true);
+        conn_opts.set_mqtt_version(MQTTVERSION_5);
+        conn_opts.set_clean_start(true);
         conn_opts.set_keep_alive_interval(config_.keep_alive_sec);
         conn_opts.set_automatic_reconnect(
             config_.reconnect_min_interval_sec,
