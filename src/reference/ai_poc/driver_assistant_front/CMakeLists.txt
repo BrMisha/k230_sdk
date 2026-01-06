@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.16)
+cmake_policy(SET CMP0135 NEW)
 include(./cmake/Riscv64.cmake)
 
 project(driver_assistant_front C CXX)
@@ -6,23 +7,7 @@ project(driver_assistant_front C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Fetch dependencies from GitHub (after project() so toolchain is set up)
-include(FetchContent)
-
-FetchContent_Declare(
-    argparse
-    URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
-)
-
-FetchContent_Declare(
-    fusion
-    GIT_REPOSITORY https://github.com/xioTechnologies/Fusion.git
-    GIT_TAG        v1.2.11
-    SOURCE_SUBDIR  Fusion  # Only include the Fusion library, not examples
-)
-
-FetchContent_MakeAvailable(argparse fusion)
-
+# Set up SDK paths first
 set(nncase_sdk_root "${PROJECT_SOURCE_DIR}/../../../big/nncase")
 set(k230_sdk ${nncase_sdk_root}/../../../)
 set(CDK_SRC_DIR ${k230_sdk}/src/common/cdk)
@@ -40,9 +25,60 @@ else()
     message(FATAL_ERROR "Cannot find .last_conf - please build SDK first with 'make CONF=...'")
 endif()
 
-# Buildroot paths (using staging for proper cross-compilation sysroot)
+# Buildroot paths (using sysroot for proper cross-compilation)
 set(BUILDROOT_DIR "${k230_sdk}/output/${CONF}/little/buildroot-ext")
-set(BUILDROOT_STAGING "${BUILDROOT_DIR}/staging")
+set(BUILDROOT_SYSROOT "${BUILDROOT_DIR}/host/riscv64-buildroot-linux-gnu/sysroot")
+set(BUILDROOT_STAGING "${BUILDROOT_SYSROOT}")
+
+# Require libdatachannel from buildroot
+if(NOT EXISTS "${BUILDROOT_STAGING}/usr/include/rtc/rtc.hpp")
+    message(FATAL_ERROR "libdatachannel not found in buildroot. Run 'make CONF=${CONF}' to build SDK first.")
+endif()
+
+# Configure OpenSSL for cross-compilation
+set(OPENSSL_ROOT_DIR "${BUILDROOT_STAGING}/usr")
+set(OPENSSL_INCLUDE_DIR "${BUILDROOT_STAGING}/usr/include")
+set(OPENSSL_CRYPTO_LIBRARY "${BUILDROOT_DIR}/target/usr/lib/libcrypto.so")
+set(OPENSSL_SSL_LIBRARY "${BUILDROOT_DIR}/target/usr/lib/libssl.so")
+
+# Fetch dependencies from GitHub
+include(FetchContent)
+
+FetchContent_Declare(
+    argparse
+    URL https://github.com/p-ranav/argparse/archive/refs/tags/v3.2.tar.gz
+)
+
+FetchContent_Declare(
+    fusion
+    GIT_REPOSITORY https://github.com/xioTechnologies/Fusion.git
+    GIT_TAG        v1.2.11
+    SOURCE_SUBDIR  Fusion
+)
+
+FetchContent_Declare(
+    json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+)
+
+FetchContent_MakeAvailable(argparse fusion json)
+
+# libdatachannel from buildroot (with usrsctp and libjuice dependencies)
+add_library(usrsctp SHARED IMPORTED)
+set_target_properties(usrsctp PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libusrsctp.so"
+)
+add_library(juice SHARED IMPORTED)
+set_target_properties(juice PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libjuice.so"
+)
+add_library(datachannel SHARED IMPORTED)
+set_target_properties(datachannel PROPERTIES
+    IMPORTED_LOCATION "${BUILDROOT_DIR}/target/usr/lib/libdatachannel.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${BUILDROOT_STAGING}/usr/include"
+    INTERFACE_LINK_LIBRARIES "usrsctp;juice"
+)
+add_library(LibDataChannel::LibDataChannelStatic ALIAS datachannel)
 
 # libwebsockets from buildroot build
 set(LIBWEBSOCKETS_ROOT "${BUILDROOT_DIR}/build/libwebsockets-4.0.21")
@@ -56,6 +92,9 @@ endif()
 
 # Add media streaming submodule
 add_subdirectory(media_streaming)
+
+# Add backend communication submodule (MQTT, WebRTC signaling)
+add_subdirectory(backend_comm)
 
 file(GLOB APP_SOURCES ${src_root}/*.cpp ${src_root}/*.c)
 
@@ -95,6 +134,8 @@ include_directories(${LIBWEBSOCKETS_ROOT}/include)
 
 # Buildroot staging includes (OpenSSL, GLib, etc.)
 include_directories(${BUILDROOT_STAGING}/usr/include)
+include_directories(${BUILDROOT_STAGING}/usr/include/glib-2.0)
+include_directories(${BUILDROOT_STAGING}/usr/lib/glib-2.0/include)
 
 # LVGL includes
 include_directories(${k230_sdk}/src/big/mpp/userapps/src/lvgl)
@@ -142,8 +183,11 @@ set_target_properties(lvgl PROPERTIES SOURCES "${LVGL_SOURCES}")
 file(GLOB FUSION_SOURCES ${fusion_SOURCE_DIR}/Fusion/*.c)
 
 add_executable(${BIN} ${APP_SOURCES} ${UI_SOURCES} ${FUSION_SOURCES})
+target_link_libraries(${BIN} nlohmann_json::nlohmann_json)
 target_link_libraries(${BIN} -Wl,--start-group
     media_streaming
+    backend_comm
+    LibDataChannel::LibDataChannelStatic
     datafifo
     pthread
     sys
@@ -157,11 +201,12 @@ target_link_libraries(${BIN} -Wl,--start-group
     websockets
     ssl
     crypto
-    glib-2.0
     z
     pcre
+    glib-2.0
     lvgl
     argparse
+    atomic
     m
     -Wl,--end-group)
 

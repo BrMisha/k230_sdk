@@ -16,13 +16,9 @@ case "$1" in
       echo "Starting wpa_supplicant..."
       wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
 
-      # Wait for connection
-      sleep 3
-
-      echo "Getting IP address..."
-      # Send hostname to DHCP server
+      # Start DHCP in background after brief delay for wpa_supplicant to initialize
       HOSTNAME=$(cat /etc/hostname 2>/dev/null || hostname)
-      udhcpc -i wlan0 -h "$HOSTNAME"
+      (sleep 3 && udhcpc -i wlan0 -h "$HOSTNAME") &
     else
       echo "Warning: /etc/wpa_supplicant.conf not found, skipping WiFi connection"
     fi

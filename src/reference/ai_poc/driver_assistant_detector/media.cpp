@@ -29,15 +29,24 @@ _input_config(config)
 }
 
 Media::~Media() {
+    // Unbind streaming encoder (channel 1)
+    kd_mpi_sys_unbind(&_vi_mpp_chn, &_venc_stream_mpp_chn);
+
+    // Unbind SD card encoder (channel 0)
     kd_mpi_sys_unbind(&_vi_mpp_chn, &_venc_mpp_chn);
 
     auto ret = vivcap_stop();
     if (ret)
         printf("Media. vivcap_stop failed ret:%d\n", ret);
 
-    //kd_mpi_vb_release_block(_block_enc);
+    // Stop and destroy streaming encoder (channel 1)
+    kd_mpi_venc_stop_chn(_venc_ch_stream);
+    kd_mpi_venc_destroy_chn(_venc_ch_stream);
+
+    // Stop and destroy SD card encoder (channel 0)
     kd_mpi_venc_stop_chn(_venc_ch);
     kd_mpi_venc_destroy_chn(_venc_ch);
+
     ret = kd_mpi_venc_close_fd();
     if (ret)
         printf("Media. kd_mpi_venc_close_fd failed ret:%d\n", ret);
@@ -51,12 +60,6 @@ k_s32 Media::init() {
     init_vb();
 
     init_encoder();
-    memset(&_venc_vf_info, 0, sizeof(k_video_frame_info));
-    _venc_vf_info.v_frame.width = _input_config.sensor_width;
-    _venc_vf_info.v_frame.height = _input_config.sensor_height;
-    _venc_vf_info.v_frame.stride[0] = _input_config.sensor_width;
-    _venc_vf_info.v_frame.pixel_format = PIXEL_FORMAT_ARGB_8888;
-    //_block_enc = init_venc_frame(_venc_vf_info, &_venc_pic_vaddr);
 
     k_s32 ret;
 
@@ -66,22 +69,41 @@ k_s32 Media::init() {
             printf("ERROR vivcap_init %lu\n", ret);
             vivcap_stop();
         } else {
-            // Bind YUV camera channel to encoder channel
+            // Bind YUV camera channel to SD card encoder (channel 0)
             {
                 // Source: VI (camera) YUV420 channel
                 _vi_mpp_chn.mod_id = K_ID_VI;
                 _vi_mpp_chn.dev_id = _vicap_dev;
                 _vi_mpp_chn.chn_id = _vicap_chn_yuv420;
 
-                // Destination: VENC (encoder) channel
+                // Destination: VENC SD card encoder channel
                 _venc_mpp_chn.mod_id = K_ID_VENC;
                 _venc_mpp_chn.dev_id = 0;
                 _venc_mpp_chn.chn_id = _venc_ch;
 
+                // Unbind first in case previous run didn't clean up (e.g., Ctrl+C)
+                kd_mpi_sys_unbind(&_vi_mpp_chn, &_venc_mpp_chn);
+
                 ret = kd_mpi_sys_bind(&_vi_mpp_chn, &_venc_mpp_chn);
                 if (ret)
                 {
-                    printf("kd_mpi_sys_bind failed:0x%x\n", ret);
+                    printf("kd_mpi_sys_bind SD failed:0x%x\n", ret);
+                }
+            }
+
+            // Bind YUV camera channel to streaming encoder (channel 1)
+            {
+                _venc_stream_mpp_chn.mod_id = K_ID_VENC;
+                _venc_stream_mpp_chn.dev_id = 0;
+                _venc_stream_mpp_chn.chn_id = _venc_ch_stream;
+
+                // Unbind first in case previous run didn't clean up
+                kd_mpi_sys_unbind(&_vi_mpp_chn, &_venc_stream_mpp_chn);
+
+                ret = kd_mpi_sys_bind(&_vi_mpp_chn, &_venc_stream_mpp_chn);
+                if (ret)
+                {
+                    printf("kd_mpi_sys_bind stream failed:0x%x\n", ret);
                 }
             }
 
@@ -94,18 +116,18 @@ k_s32 Media::init() {
                 sleep(2);
                 k_video_frame_info dump_info;
                 memset(&dump_info, 0, sizeof(k_video_frame_info));
-                ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_small_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
+                ret = kd_mpi_vicap_dump_frame(_vicap_dev, _vicap_chn_rgb888, VICAP_DUMP_YUV, &dump_info, 1000);
                 if (ret) {
                     printf("ERROR kd_mpi_vicap_dump_frame %lu\n", ret);
 
-                    ret = kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_small_rgb888, &dump_info);
+                    ret = kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
                     if (ret) {
                         printf("ERROR kd_mpi_vicap_dump_release %lu\n", ret);
                     }
 
                     vivcap_stop();
                 } else {
-                    kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_small_rgb888, &dump_info);
+                    kd_mpi_vicap_dump_release(_vicap_dev, _vicap_chn_rgb888, &dump_info);
                     break;
                 }
             }
@@ -116,7 +138,7 @@ k_s32 Media::init() {
 }
 
 std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump_small_rgb888(k_video_frame_info &dump_info, k_u32 timeout_ms) {
-    k_vicap_chn vicap_chn = _vicap_chn_small_rgb888;
+    k_vicap_chn vicap_chn = _vicap_chn_rgb888;
 
     memset(&dump_info, 0, sizeof(k_video_frame_info));
     auto ret = kd_mpi_vicap_dump_frame(_vicap_dev, vicap_chn, VICAP_DUMP_RGB, &dump_info, timeout_ms);
@@ -160,42 +182,36 @@ std::optional<std::unique_ptr<MediaIspDump>> Media::isp_dump_yuv420(k_video_fram
     return std::unique_ptr<MediaIspDump>(d);
 }
 
-k_s32 Media::venc_push(k_u64 time_pts) {
-    _venc_vf_info.v_frame.pts = time_pts;
-    return kd_mpi_venc_send_frame(0, &_venc_vf_info, -1);
-}
-
 k_s32 Media::init_vb() {
     k_s32 ret = 0;
     k_vb_config vb_config;
     memset(&vb_config, 0, sizeof(vb_config));
 
-    vb_config.max_pool_cnt = 5;
+    vb_config.max_pool_cnt = 5;  // 4 pools used (0-3)
 
     k_u64 pic_size = _input_config.sensor_width * _input_config.sensor_height * 2;
     k_u64 stream_size = _input_config.sensor_width * _input_config.sensor_height / 2;
+
+    // Pool 0: VICAP YUV420 input
     vb_config.comm_pool[0].blk_cnt = 6;
     vb_config.comm_pool[0].blk_size = VICAP_ALIGN_UP(pic_size, 0x1000);
     vb_config.comm_pool[0].mode = VB_REMAP_MODE_NOCACHE;
+
+    // Pool 1: SD card encoder output (channel 0)
     vb_config.comm_pool[1].blk_cnt = 30;
     vb_config.comm_pool[1].blk_size = VICAP_ALIGN_UP(stream_size, 0x1000);
     vb_config.comm_pool[1].mode = VB_REMAP_MODE_NOCACHE;
-    static_assert(_pool_id_venc == 2);
-    vb_config.comm_pool[_pool_id_venc].blk_cnt = 4;
-    vb_config.comm_pool[_pool_id_venc].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 4, 0x1000);
-    vb_config.comm_pool[_pool_id_venc].mode = VB_REMAP_MODE_NOCACHE;
 
-    //VB for RGB888 output
-    /*static_assert(_pool_id_rgb == 3);
-    vb_config.comm_pool[_pool_id_rgb].blk_cnt = 3;
-    vb_config.comm_pool[_pool_id_rgb].mode = VB_REMAP_MODE_NOCACHE;
-    vb_config.comm_pool[_pool_id_rgb].blk_size = VICAP_ALIGN_UP(_input_config.sensor_width * _input_config.sensor_height * 3, 0x1000);*/
+    // Pool 2: Streaming encoder output (channel 1)
+    vb_config.comm_pool[2].blk_cnt = 15;
+    vb_config.comm_pool[2].blk_size = VICAP_ALIGN_UP(stream_size, 0x1000);
+    vb_config.comm_pool[2].mode = VB_REMAP_MODE_NOCACHE;
 
-    //VB for RGB888_2 output
-    static_assert(_pool_id_small_rgb == 4);
-    vb_config.comm_pool[_pool_id_small_rgb].blk_cnt = 3;
-    vb_config.comm_pool[_pool_id_small_rgb].mode = VB_REMAP_MODE_CACHED;
-    vb_config.comm_pool[_pool_id_small_rgb].blk_size = VICAP_ALIGN_UP(_input_config.small_rgb888_width * _input_config.small_rgb888_height * 3, 0x1000);
+    // Pool 3: RGB888 for AI processing
+    static_assert(_pool_id_rgb888 == 3);
+    vb_config.comm_pool[_pool_id_rgb888].blk_cnt = 3;
+    vb_config.comm_pool[_pool_id_rgb888].mode = VB_REMAP_MODE_CACHED;
+    vb_config.comm_pool[_pool_id_rgb888].blk_size = VICAP_ALIGN_UP(_input_config.rgb888_width * _input_config.rgb888_height * 3, 0x1000);
 
     ret = kd_mpi_vb_set_config(&vb_config);
     if (ret) {
@@ -220,15 +236,14 @@ k_s32 Media::init_vb() {
 }
 
 k_s32 Media::init_encoder() {
-    k_venc_rc_mode rc_mode = K_VENC_RC_MODE_VBR;
+    k_venc_rc_mode rc_mode = K_VENC_RC_MODE_CBR;  // CBR for predictable SD card file sizes
     k_payload_type ve_type = K_PT_H265;
     k_venc_profile profile = VENC_PROFILE_H265_MAIN;
 
     k_s32 ret = 0;
     k_u64 stream_size = _input_config.sensor_width * _input_config.sensor_height / 2;
 
-
-    // Configure encoding channel attributes
+    // Configure encoding channel attributes for SD card recording
     {
         k_venc_chn_attr ve_attr;
         memset(&ve_attr, 0, sizeof(ve_attr));
@@ -237,10 +252,10 @@ k_s32 Media::init_encoder() {
         ve_attr.venc_attr.stream_buf_size = stream_size;
         ve_attr.venc_attr.stream_buf_cnt = 15;
         ve_attr.rc_attr.rc_mode = rc_mode;
-        ve_attr.rc_attr.vbr.src_frame_rate = 10;
-        ve_attr.rc_attr.vbr.dst_frame_rate = 10;
-        ve_attr.rc_attr.vbr.bit_rate = _input_config.bitrate_kbps;
-        ve_attr.rc_attr.vbr.max_bit_rate = _input_config.bitrate_kbps * 2;
+        ve_attr.rc_attr.cbr.gop = 60;  // Keyframe every 2 seconds at 30fps
+        ve_attr.rc_attr.cbr.src_frame_rate = 30;
+        ve_attr.rc_attr.cbr.dst_frame_rate = 30;
+        ve_attr.rc_attr.cbr.bit_rate = _input_config.bitrate_kbps;
         ve_attr.venc_attr.type = ve_type;
         ve_attr.venc_attr.profile = profile;
 
@@ -252,16 +267,53 @@ k_s32 Media::init_encoder() {
         }
     }
 
-    // Keyframe
+    // Enable IDR frame request for SD card encoder
     ret = kd_mpi_venc_enable_idr(_venc_ch, K_TRUE);
     if (ret) {
         printf("Media. kd_mpi_venc_enable_idr failed ret:%d\n", ret);
         return ret;
     }
-    // Start encoding channel
+    // Start SD card encoding channel
     ret = kd_mpi_venc_start_chn(_venc_ch);
-    if (ret)
+    if (ret) {
         printf("Media. kd_mpi_venc_start_chn failed ret:%d\n", ret);
+        return ret;
+    }
+
+    // Configure streaming encoder (channel 1) with VBR for adaptive streaming
+    {
+        k_venc_chn_attr ve_attr;
+        memset(&ve_attr, 0, sizeof(ve_attr));
+        ve_attr.venc_attr.pic_width = _input_config.sensor_width;
+        ve_attr.venc_attr.pic_height = _input_config.sensor_height;
+        ve_attr.venc_attr.stream_buf_size = stream_size;
+        ve_attr.venc_attr.stream_buf_cnt = 15;
+        ve_attr.rc_attr.rc_mode = K_VENC_RC_MODE_VBR;
+        ve_attr.rc_attr.vbr.gop = 30*2;  // Keyframe every 1 second at 30fps
+        ve_attr.rc_attr.vbr.src_frame_rate = 30;
+        ve_attr.rc_attr.vbr.dst_frame_rate = 30;
+        ve_attr.rc_attr.vbr.bit_rate = _input_config.stream_bitrate_kbps;
+        ve_attr.rc_attr.vbr.max_bit_rate = _input_config.stream_bitrate_kbps * 2;
+        ve_attr.venc_attr.type = ve_type;
+        ve_attr.venc_attr.profile = profile;
+
+        ret = kd_mpi_venc_create_chn(_venc_ch_stream, &ve_attr);
+        if (ret) {
+            printf("Media. kd_mpi_venc_create_chn stream failed ret:%d\n", ret);
+            return ret;
+        }
+    }
+
+    // Enable IDR frame request for streaming encoder
+    ret = kd_mpi_venc_enable_idr(_venc_ch_stream, K_TRUE);
+    if (ret) {
+        printf("Media. kd_mpi_venc_enable_idr stream failed ret:%d\n", ret);
+        return ret;
+    }
+    // Start streaming encoding channel
+    ret = kd_mpi_venc_start_chn(_venc_ch_stream);
+    if (ret)
+        printf("Media. kd_mpi_venc_start_chn stream failed ret:%d\n", ret);
 
     return ret;
 }
@@ -391,11 +443,11 @@ k_s32 Media::vivcap_init()
     }*/
 
     //set chn2 output rgb888p
-    chn_attr.out_win.width = _input_config.small_rgb888_width;
-    chn_attr.out_win.height = _input_config.small_rgb888_height;
-    chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.small_rgb888_height * _input_config.small_rgb888_width * 3 ), 0x1000);
+    chn_attr.out_win.width = _input_config.rgb888_width;
+    chn_attr.out_win.height = _input_config.rgb888_height;
+    chn_attr.buffer_size = VICAP_ALIGN_UP((_input_config.rgb888_height * _input_config.rgb888_width * 3 ), 0x1000);
     chn_attr.buffer_num = 30;
-    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_small_rgb888, chn_attr);
+    ret = kd_mpi_vicap_set_chn_attr(_vicap_dev, _vicap_chn_rgb888, chn_attr);
     if (ret) {
         printf("Media. kd_mpi_vicap_set_chn_attr failed.\n");
         return ret;
@@ -445,61 +497,4 @@ k_s32 Media::vivcap_stop()
     }
 
     return ret;
-}
-
-k_vb_blk_handle Media::init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr) {
-    k_u64 phys_addr = 0;
-    k_u32 *virt_addr;
-    k_vb_blk_handle handle;
-    k_s32 size;
-
-    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_8888 || vf_info.v_frame.pixel_format ==
-        PIXEL_FORMAT_ARGB_8888)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 4;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_565 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_BGR_565)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ABGR_4444 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_ARGB_4444)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_RGB_888 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_BGR_888)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 3;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_ARGB_1555 || vf_info.v_frame.pixel_format ==
-             PIXEL_FORMAT_ABGR_1555)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 2;
-    else if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        size = vf_info.v_frame.height * vf_info.v_frame.width * 3 / 2;
-
-    printf("vb block size is %x \n", size);
-
-    handle = kd_mpi_vb_get_block(_pool_id_venc, size, NULL);
-    if (handle == VB_INVALID_HANDLE) {
-        printf("%s get vb block error\n", __func__);
-        return K_FAILED;
-    }
-
-    phys_addr = kd_mpi_vb_handle_to_phyaddr(handle);
-    if (phys_addr == 0) {
-        printf("%s get phys addr error\n", __func__);
-        return K_FAILED;
-    }
-
-    virt_addr = (k_u32 *) kd_mpi_sys_mmap(phys_addr, size);
-
-    if (virt_addr == NULL) {
-        printf("%s mmap error\n", __func__);
-        return K_FAILED;
-    }
-
-    vf_info.mod_id = K_ID_VO;
-    vf_info.pool_id = _pool_id_venc;
-    vf_info.v_frame.phys_addr[0] = phys_addr;
-    if (vf_info.v_frame.pixel_format == PIXEL_FORMAT_YVU_PLANAR_420)
-        vf_info.v_frame.phys_addr[1] = phys_addr + (vf_info.v_frame.height * vf_info.v_frame.stride[0]);
-    *pic_vaddr = virt_addr;
-
-    printf("phys_addr is %lx g_pool_id is %d \n", phys_addr, _pool_id_venc);
-
-    return handle;
 }

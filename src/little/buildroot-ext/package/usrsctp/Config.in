@@ -1,0 +1,8 @@
+config BR2_PACKAGE_USRSCTP
+	bool "usrsctp"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  A portable SCTP userland stack.
+	  Used by libdatachannel for WebRTC data channels.
+
+	  https://github.com/sctplab/usrsctp

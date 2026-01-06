@@ -1,0 +1,14 @@
+From: Claude Code <noreply@anthropic.com>
+Subject: [PATCH 1/2] package/libnice: upgrade hash to 0.1.23
+ 
+---
+diff --git a/package/libnice/libnice.hash b/package/libnice/libnice.hash
+--- a/package/libnice/libnice.hash
++++ b/package/libnice/libnice.hash
+@@ -1,4 +1,4 @@
+-# Locally computed after checking pgp signature
+-sha256 06b678066f94dde595a4291588ed27acd085ee73775b8c4e8399e28c01eeefdf libnice-0.1.16.tar.gz
++# Locally computed
++sha256 618fc4e8de393b719b1641c1d8eec01826d4d39d15ade92679d221c7f5e4e70d libnice-0.1.23.tar.gz
+ 
+ # Hash for license files:

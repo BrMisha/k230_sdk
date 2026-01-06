@@ -19,9 +19,10 @@
 struct MediaInputConfig {
     int sensor_width = 1920;
     int sensor_height = 1080;
-    int small_rgb888_width = 1920;
-    int small_rgb888_height = 1080;
-    int bitrate_kbps = 4000;
+    int rgb888_width = 1920;
+    int rgb888_height = 1080;
+    int bitrate_kbps = 12000;         // 12 Mbps for good 1080p30 SD card quality
+    int stream_bitrate_kbps = 4000;   // 4 Mbps for streaming
     bool rotate_camera = false;
 };
 
@@ -61,23 +62,20 @@ public:
 class Media {
     MediaInputConfig _input_config;
 
+    // SD card encoder (channel 0)
     const k_u32 _venc_ch = 0;
-
-    const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
-    //const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
-    const k_vicap_chn _vicap_chn_small_rgb888 = VICAP_CHN_ID_1;
-    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_2;
-
-    static const k_u32 _pool_id_venc = 2;
-    //static const k_u32 _pool_id_rgb = 3;
-    static const k_u32 _pool_id_small_rgb = 4;
-
-    k_video_frame_info _venc_vf_info;
-    void    *_venc_pic_vaddr = nullptr;
-    k_vb_blk_handle _block_enc = 0;
-
     k_mpp_chn _venc_mpp_chn;
     k_mpp_chn _vi_mpp_chn;
+
+    // Streaming encoder (channel 1)
+    const k_u32 _venc_ch_stream = 1;
+    k_mpp_chn _venc_stream_mpp_chn;
+
+    const k_vicap_dev _vicap_dev = VICAP_DEV_ID_0;
+    const k_vicap_chn _vicap_chn_rgb888 = VICAP_CHN_ID_0;
+    const k_vicap_chn _vicap_chn_yuv420 = VICAP_CHN_ID_1;
+
+    static const k_u32 _pool_id_rgb888 = 3;  // Pool 3 for RGB888 (after encoder pools)
 
 public:
     Media(MediaInputConfig config);
@@ -90,9 +88,8 @@ public:
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump_small_rgb888(k_video_frame_info &dump_info, k_u32 timeout_ms = 1000);
     std::optional<std::unique_ptr<MediaIspDump>> isp_dump_yuv420(k_video_frame_info &dump_info);
 
-    k_u32 venc_get_channel() const {return _venc_ch;}
-    void *venc_get_pic_vaddr() const {return _venc_pic_vaddr;}
-    k_s32 venc_push(k_u64 time_pts);
+    k_u32 venc_get_channel() const { return _venc_ch; }
+    k_u32 venc_get_stream_channel() const { return _venc_ch_stream; }
 
 private:
     k_s32 init_vb();
@@ -102,8 +99,6 @@ private:
     k_s32 vivcap_init();
     k_s32 vivcap_start();
     k_s32 vivcap_stop();
-
-    k_vb_blk_handle init_venc_frame(k_video_frame_info &vf_info, void **pic_vaddr);
 
 };
 

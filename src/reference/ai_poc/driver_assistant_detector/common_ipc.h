@@ -26,10 +26,11 @@ namespace driver_assistant_detector {
     static const size_t DATAFIFO_FRONT_BLOCK_LEN = 1024*1024*20;
 
     struct DataFifoFrame_t {
+        uint8_t channel;
+        uint8_t type;
+        uint8_t reserved[2];
         uint64_t pts;
         uint32_t data_len;
-        uint8_t type;
-        uint8_t reserved[3];
         uint8_t data[];
     } __attribute__((packed));
     static_assert(sizeof(DataFifoFrame_t) == 16);
