@@ -147,6 +147,11 @@ void DatafifoHelper::read_fifo_task()
             s32Ret = kd_datafifo_read(reader_handle, reinterpret_cast<void **>(&pBuf));
             if (K_SUCCESS != s32Ret) {
                 printf("read error:%x\n", s32Ret);
+                // Race condition between length check and read - retry
+                if (s32Ret == K_DATAFIFO_ERR_NO_DATA) {
+                    usleep(1000);
+                    continue;
+                }
                 break;
             }
 
