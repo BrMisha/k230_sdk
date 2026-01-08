@@ -211,20 +211,20 @@ static void ipcmsg_recv(k_s32 s32Id, k_ipcmsg_message_t* msg)
                 if (color_timeout == 0 || last_situation.color != DetectedSituationColor::NONE) {
                     switch (last_situation.color) {
                         case DetectedSituationColor::RED:
-                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_RED), LV_PART_MAIN);
+                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0xFF0000), LV_PART_MAIN);
                             color_timeout = 2;
                             break;
                         case DetectedSituationColor::GREEN:
-                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_GREEN), LV_PART_MAIN);
+                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x00FF00), LV_PART_MAIN);
                             color_timeout = 2;
                             break;
                         case DetectedSituationColor::YELLOW:
-                            lv_obj_set_style_bg_color(ui_color, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_MAIN);
+                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0xFFFF00), LV_PART_MAIN);
                             color_timeout = 2;
                             break;
                         case DetectedSituationColor::NONE:
                         default:
-                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x404040), LV_PART_MAIN);
+                            lv_obj_set_style_bg_color(ui_color, lv_color_hex(0x000000), LV_PART_MAIN);
                             color_timeout = 0;
                             break;
                     }
