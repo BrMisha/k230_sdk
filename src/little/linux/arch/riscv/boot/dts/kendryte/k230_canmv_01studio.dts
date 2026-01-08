@@ -90,6 +90,11 @@
 		compatible = "st,lsm6ds3";
 		reg = <0x6a>;
 	};
+
+	ds3231: rtc@68 {
+		compatible = "maxim,ds3231";
+		reg = <0x68>;
+	};
 };
 
 &spi1 {
